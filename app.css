@@ -152,3 +152,9 @@ tbody tr:hover{background:var(--pen-soft)}
 .loading{padding:40px;text-align:center;color:var(--muted)}
 .chk{display:flex;align-items:center;gap:8px}
 .dim{opacity:.55}
+
+/* Correcciones */
+[hidden]{display:none!important}
+:root[data-theme="dark"] .btn.ghost{color:var(--pen)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.ghost{color:var(--pen)}}
+.dh-meta em{font-style:italic;color:#1C2B4A}
