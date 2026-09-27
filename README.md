@@ -1,4 +1,4 @@
-# MiColegIA
+# Genesis
 
 Software de gestión escolar para colegios de Colombia (preescolar a media): boletines, calificaciones, asistencia, matrícula y accesos por perfil (rector, coordinación, secretaría, docente, acudiente y estudiante).
 
