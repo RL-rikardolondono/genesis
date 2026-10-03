@@ -215,3 +215,5 @@ td.num,th.num{text-align:center}
   .doc{break-after:page}
   .dgrid{grid-template-columns:repeat(3,1fr)!important}
 }
+.demo-box{margin-top:16px;border:1px solid var(--line);border-top:4px solid var(--wa);border-radius:8px;padding:12px 14px;text-align:center;background:var(--paper)}
+.demo-box .btn{margin-top:8px}
