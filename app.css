@@ -190,3 +190,28 @@ td.num,th.num{text-align:center}
   .side.open .side-foot{display:block}
   .side.open .who{display:block}
 }
+
+/* v0.5: calificaciones con estado, bloqueo, hoja de matrícula en una página */
+.califs th.actual,.califs td.actual{background:#FFF4D6}
+.califs th.actual small{font-weight:400;color:var(--muted)}
+.califs td.actual input{width:74px;font-weight:700}
+.periodo-sel select{border:2px solid var(--pencil);font-weight:700}
+.note.bloqueo{border-left-color:var(--red);background:#FCEDEB}
+@media print{
+  @page{size:letter;margin:10mm}
+  .doc.compacta{font-size:9.5pt;line-height:1.25;padding:0}
+  .doc.compacta .dh{margin-bottom:6px;padding-bottom:4px}
+  .doc.compacta .dh-inst{font-size:13pt}
+  .doc.compacta .dh-meta{font-size:8pt}
+  .doc.compacta h3{font-size:10pt!important;margin:5px 0 3px!important}
+  .doc.compacta .dgrid{grid-template-columns:repeat(4,1fr)!important;gap:2px 10px;margin-bottom:4px}
+  .doc.compacta .dgrid span{font-size:7.5pt}
+  .doc.compacta .dobs{margin-top:4px;padding:3px 6px}
+  .doc.compacta .dobs p{margin:1px 0 0}
+  .doc.compacta table{font-size:8.5pt}
+  .doc.compacta th,.doc.compacta td{padding:2px 4px}
+  .doc.compacta .firmas{margin-top:26px;font-size:9pt}
+  .doc.compacta .firmas div{min-width:150px}
+  .doc{break-after:page}
+  .dgrid{grid-template-columns:repeat(3,1fr)!important}
+}
