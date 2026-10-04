@@ -217,3 +217,13 @@ td.num,th.num{text-align:center}
 }
 .demo-box{margin-top:16px;border:1px solid var(--line);border-top:4px solid var(--wa);border-radius:8px;padding:12px 14px;text-align:center;background:var(--paper)}
 .demo-box .btn{margin-top:8px}
+/* Marca SkyNet Genesis */
+.sg-firma{display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--muted);font-size:.72rem;line-height:1.15}
+.sg-firma .sg-ico svg{width:28px;height:28px;display:block}
+.sg-firma b{font-family:'Barlow Condensed','Public Sans',sans-serif;font-weight:700;letter-spacing:.04em;font-size:.95rem}
+.sg-a{color:#1E3A4C}.sg-b{color:#E0A21A}
+.sg-firma.oscuro{color:#C9D6DC}.sg-firma.oscuro .sg-a{color:#fff}
+.auth-sg{margin-top:18px;padding-top:12px;border-top:1px solid var(--line);text-align:center}
+.pie-sg{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:14px;padding-top:6px;border-top:1px solid #ddd;font-size:9.5px;color:#555}
+.pie-sg svg{width:14px;height:14px;flex:none}
+@media print{.pie-sg{font-size:8pt}}
