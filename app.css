@@ -226,3 +226,6 @@ td.num,th.num{text-align:center}
 .pie-sg{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:14px;padding-top:6px;border-top:1px solid #ddd;font-size:9.5px;color:#555}
 .pie-sg svg{width:14px;height:14px;flex:none}
 @media print{.pie-sg{font-size:8pt}}
+/* Suscripción: pantalla de acceso suspendido */
+.panel.cerrado{max-width:720px;margin:40px auto;border-top:6px solid var(--red)}
+.panel.cerrado h1{color:var(--red);font-size:1.8rem}
