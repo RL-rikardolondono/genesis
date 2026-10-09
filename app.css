@@ -229,3 +229,6 @@ td.num,th.num{text-align:center}
 /* Suscripción: pantalla de acceso suspendido */
 .panel.cerrado{max-width:720px;margin:40px auto;border-top:6px solid var(--red)}
 .panel.cerrado h1{color:var(--red);font-size:1.8rem}
+/* Nombre: Genesis-IA con subtítulo */
+.brand-txt{display:flex;flex-direction:column;line-height:1.05}
+.brand-sub{font-family:'Public Sans',system-ui,sans-serif;font-size:.72rem;font-weight:600;color:var(--muted);letter-spacing:.02em}
