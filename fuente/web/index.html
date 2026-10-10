@@ -20,7 +20,7 @@
 <div class="app" id="app" hidden>
   <aside class="side">
     <div class="side-top">
-      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-txt"><span class="brand-name">Genesis-IA</span><span class="brand-sub">Instituciones Educativas</span></span></div>
+      <div class="brand" role="button" tabindex="0" title="Ir al inicio" onclick="window.go && document.getElementById('app').hidden===false && go('inicio')"><span class="brand-mark" aria-hidden="true"></span><span class="brand-txt"><span class="brand-name">Genesis-IA</span><span class="brand-sub">Instituciones Educativas</span></span></div>
       <div id="ctxBox"></div>
       <button class="menu-btn" type="button" onclick="document.querySelector('.side').classList.toggle('open')" aria-label="Abrir menú">Menú</button>
     </div>
