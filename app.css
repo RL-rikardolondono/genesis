@@ -232,3 +232,15 @@ td.num,th.num{text-align:center}
 /* Nombre: Genesis-IA con subtítulo */
 .brand-txt{display:flex;flex-direction:column;line-height:1.05}
 .brand-sub{font-family:'Public Sans',system-ui,sans-serif;font-size:.72rem;font-weight:600;color:var(--muted);letter-spacing:.02em}
+/* Familias con varios hijos y acceso restringido */
+.hijos{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 14px}
+.hijos button{font:inherit;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:999px;padding:6px 14px;cursor:pointer}
+.hijos button[aria-selected="true"]{background:var(--pencil);border-color:var(--pencil);color:#fff;font-weight:700}
+.panel.restringido{border-left:5px solid var(--pen)}
+.demo-bar .toolbar{align-items:center}
+.brand-name{white-space:nowrap}
+@media (max-width:860px){ .side .role{display:none} .side.open .role{display:block;max-width:none} }
+.medios{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.medio{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--paper)}
+.medio h3{margin-top:0}
+#cVal,#pVal{width:150px}
