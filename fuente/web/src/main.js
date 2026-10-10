@@ -328,6 +328,7 @@ async function entrarContexto(id) {
   let ir = 'inicio';
   try { ir = sessionStorage.getItem('genesis:ir') || 'inicio'; } catch {}
   if (!VIEWS.some(x => x.id === ir && x.ok())) ir = 'inicio';
+  prepararAtras();
   await go(ir);
 }
 function irColegio() { entrarContexto((ctx || ctxs[0]).id); }
@@ -343,12 +344,16 @@ const VIEWS = [
   { id: 'estudiantes', label: 'Estudiantes y matrícula', ok: isDir, prep: prepEstudiantes, fn: vEstudiantes },
   { id: 'notas', label: 'Calificaciones', ok: () => isDir() || isDoc(), prep: prepGrupoSel, fn: vNotas },
   { id: 'asistencia', label: 'Asistencia', ok: () => isDir() || isDoc(), prep: prepGrupoSel, fn: vAsistencia },
-  { id: 'boletines', label: 'Boletines', ok: () => !isTes(), prep: prepGrupoSel, fn: vBoletines },
+  { id: 'boletines', label: 'Boletines', ok: () => !isTes(), prep: async () => { await prepGrupoSel(); if (propio()) await cargarFotoEst([propio()]); }, fn: vBoletines },
   { id: 'observador', label: 'Observador', ok: () => isDir() || isDoc() || isFam(), prep: prepObservador, fn: vObservador },
   { id: 'piar', label: 'PIAR e inclusión', ok: () => isDir() || isDoc() || isAcud(), prep: prepPiar, fn: vPiar },
   { id: 'comunicados', label: 'Comunicados', ok: () => true, prep: prepComunicados, fn: vComunicados, badge: () => isFam() ? noLeidos() : 0 },
+  { id: 'cronograma', label: 'Cronograma', ok: () => true, prep: prepCronograma, fn: vCronograma },
+  { id: 'galeria', label: 'Fotos de la semana', ok: () => !isTes(), prep: prepGaleria, fn: vGaleria },
   { id: 'horario', label: 'Horario', ok: () => isDir() || isDoc() || isFam(), prep: prepHorario, fn: vHorario },
   { id: 'excusas', label: 'Excusas', ok: () => isDir() || isDoc() || isAcud(), prep: prepExcusas, fn: vExcusas },
+  { id: 'familia', label: 'Carnet y contactos', ok: isFam, prep: prepFamilia, fn: vFamilia },
+  { id: 'contactos', label: 'Contactos y recogida', ok: () => isDir() || isDoc(), prep: prepContactos, fn: vContactos },
   { id: 'academico', label: 'Informes académicos', ok: () => isDir() || (isDoc() && S.dirGrupos.length > 0), prep: prepAcademico, fn: vAcademico },
   { id: 'pagos', label: 'Pagos y cartera', ok: manejaPagos, prep: prepPagos, fn: vPagos },
   { id: 'cuenta', label: 'Estado de cuenta', ok: isAcud, prep: prepCuenta, fn: vCuenta },
@@ -401,13 +406,36 @@ function renderSide() {
     <button class="btn ghost sm" type="button" onclick="doLogout()">Cerrar sesión</button>
     <div style="margin-top:10px">${sgFirma()}</div><div style="margin-top:6px">Genesis-IA v${VERSION}</div>`;
 }
+// Barra superior fija en todas las pantallas: volver al inicio, ver y cambiar de perfil, y salir
+function barraSup() {
+  const per = ctx.estudiantes && isFam() ? `${ROL_TXT[ctx.rol]} de ${esc(est(propio())?.nombres || ctx.estudiantes.nombres)}` : ROL_TXT[ctx.rol];
+  return `<div class="topbar">
+    <button class="btn ghost sm" type="button" onclick="go('inicio')" ${view === 'inicio' ? 'aria-current="page"' : ''}>Inicio</button>
+    <button class="btn ghost sm tb-perfil" type="button" onclick="elegirPerfil()" title="Cambiar de perfil o de colegio"><span class="muted tb-l">Perfil:</span> ${per}<span class="tb-l">${S?.k?.demo ? ' <span class="tag">Demostración</span>' : ''}</span> <span aria-hidden="true">▾</span></button>
+    <button class="btn ghost sm tb-salir" type="button" onclick="salirApp()"><span class="tb-l">${S?.k?.demo ? 'Salir de la demostración' : 'Cerrar sesión'}</span><span class="tb-s">Salir</span></button></div>`;
+}
+function elegirPerfil() {
+  const demo = S?.k?.demo, rolesDemo = [['rector', 'Rector(a)'], ['coordinador', 'Coordinador(a)'], ['docente', 'Docente'], ['acudiente', 'Acudiente']];
+  const ORD = Object.keys(ROL_TXT), propios = ctxs.slice().sort((a, b) => a.colegios.nombre.localeCompare(b.colegios.nombre) || ORD.indexOf(a.rol) - ORD.indexOf(b.rol) || (a.estudiantes?.nombres || '').localeCompare(b.estudiantes?.nombres || ''));
+  const faltan = demo ? rolesDemo.filter(([r]) => !ctxs.some(m => m.colegio_id === ctx.colegio_id && m.rol === r)) : [];
+  openModal('Cambiar de perfil', `<p class="muted">Elija con qué perfil quiere trabajar. Puede volver a cambiarlo cuando quiera desde la barra de arriba.</p>
+    <div class="perfiles">${propios.map(m => `<button type="button" class="perfil ${m.id === ctx.id ? 'act' : ''}" onclick="closeModal();entrarContexto('${m.id}')"><strong>${esc(ROL_TXT[m.rol])}${m.estudiantes ? ' de ' + esc(m.estudiantes.nombres) : ''}</strong><span>${esc(m.colegios.nombre)}${m.id === ctx.id ? ' · perfil actual' : ''}</span></button>`).join('')}
+      ${faltan.map(([r, l]) => `<button type="button" class="perfil" onclick="closeModal();cambiarPerfilDemo('${r}')"><strong>${l}</strong><span>Colegio de demostración</span></button>`).join('')}
+      ${superadmin ? `<button type="button" class="perfil" onclick="closeModal();irPlataforma()"><strong>Panel de la plataforma</strong><span>Administración de SkyNet Genesis</span></button>` : ''}</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal();setAuth('activar')">Tengo un código de otro colegio</button><button class="btn ghost" type="button" onclick="closeModal();salirApp()">${demo ? 'Salir de la demostración' : 'Cerrar sesión'}</button></div>`);
+}
+function salirApp() {
+  if (S?.k?.demo) { const real = ctxs.find(m => m.colegio_id !== ctx.colegio_id); return real ? entrarContexto(real.id) : setAuth('activar'); }
+  if (confirm('¿Cerrar sesión?')) doLogout();
+}
 function render() {
   renderSide();
   const v = modo === 'plataforma' ? VIEW_PLAT : (VIEWS.find(x => x.id === view && x.ok()) || VIEWS[0]);
   try { $('#view').innerHTML = (modo === 'colegio' && isFam() && !alDia() && VISTAS_RESTRINGIDAS.includes(v.id)) ? head(v.label) + avisoRestringido() : v.fn(); } catch (e) { console.error(e); $('#view').innerHTML = `<div class="panel empty">${esc(msg(e))}</div>`; }
-  if (modo === 'colegio' && S?.k?.demo && !superadmin) $('#view').insertAdjacentHTML('afterbegin', barraDemo());
+  if (modo === 'colegio' && S?.k?.demo && view === 'inicio') $('#view').insertAdjacentHTML('afterbegin', barraDemo());
   if (modo === 'colegio' && isFam()) $('#view').insertAdjacentHTML('afterbegin', barraHijos());
   if (modo === 'colegio' && S?.estado?.cobro === 'aviso' && (isDir() || isTes())) $('#view').insertAdjacentHTML('afterbegin', avisoCobro());
+  if (modo === 'colegio' && ctx) $('#view').insertAdjacentHTML('afterbegin', barraSup());
   if (v.id === 'estudiantes') drawEst();
 }
 /* ---------- Sesión: evita mostrar datos vacíos cuando la sesión venció ---------- */
@@ -415,22 +443,43 @@ const VENCE_MS = 10 * 60 * 1000;
 let ultimaActividad = Date.now();
 const sesionVieja = () => Date.now() - ultimaActividad > VENCE_MS;
 function recargarEn(v) { try { sessionStorage.setItem('genesis:ir', v || view); } catch {} location.reload(); }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx && sesionVieja()) recargarEn(view); });
+// Al volver después de un rato no se recarga la página (eso obligaba a iniciar sesión otra vez en algunos celulares):
+// se confirma la sesión y se actualizan los datos de la pantalla. Solo si la sesión ya no existe se vuelve a la entrada.
+async function sesionViva() { try { const r = await db.auth.getSession(); return !!r?.data?.user; } catch { return false; } }
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden || !ctx || !sesionVieja()) return;
+  if (!(await sesionViva())) return recargarEn(view);
+  ultimaActividad = Date.now(); if (modo === 'colegio') { navAtras = true; go(view); }
+});
 setInterval(async () => {
   if (document.hidden || !ctx || sesionVieja()) return;
   try { await db.auth.getSession(); ultimaActividad = Date.now(); } catch {}
 }, 4 * 60 * 1000);
 // Botón "atrás" del celular o del navegador: cierra la ventana abierta o vuelve a la pantalla anterior, sin salir de la app
 let navAtras = false;
+// En la primera pantalla hay una entrada "base": al llegar a ella se avisa y solo un segundo "atrás" seguido sale de la app.
+let atrasBase = 0, baseLista = false;
+function prepararAtras() {
+  if (baseLista) return; baseLista = true;
+  history.replaceState({ v: '__base' }, ''); history.pushState({ v: view }, '');
+}
 window.addEventListener('popstate', e => {
   if (!$('#modal').hidden) { closeModal(); history.pushState({ v: view }, ''); return; }
+  const side = document.querySelector('.side.open'); if (side) { side.classList.remove('open'); history.pushState({ v: view }, ''); return; }
+  if (e.state?.v === '__base') {
+    if (Date.now() - atrasBase < 2500) { history.back(); return; }
+    atrasBase = Date.now(); history.pushState({ v: view }, '');
+    if (modo === 'colegio' && ctx && view !== 'inicio') { navAtras = true; go('inicio'); history.replaceState({ v: 'inicio' }, ''); }
+    else toast('Oprima "atrás" otra vez para salir de Genesis-IA');
+    return;
+  }
   if (modo !== 'colegio' || !ctx) return;
   const v = e.state?.v || 'inicio';
   if (v !== view) { navAtras = true; go(v); }
   if (!e.state) history.pushState({ v: 'inicio' }, '');
 });
 async function go(v) {
-  if (ctx && sesionVieja()) return recargarEn(v);
+  if (ctx && sesionVieja() && !(await sesionViva())) return recargarEn(v);
   ultimaActividad = Date.now();
   if (modo === 'colegio') { if (!navAtras && history.state?.v !== v) history.pushState({ v }, ''); navAtras = false; }
   if (modo === 'colegio') { view = v; try { sessionStorage.setItem('genesis:ir', v); } catch {} }
@@ -468,7 +517,7 @@ function vInicio() {
        <div class="stat"><div class="n">${c.filter(x => +x.saldo_vencido > 0).length}</div><div class="l">Estudiantes en mora</div></div></div>
        <button class="btn" type="button" onclick="go('pagos')">Ir a pagos y cartera</button>`;
   }
-  if (isFam() && !alDia()) return head(`Hola, ${esc((ctx.nombre || '').split(' ')[0])}`, esc(S.k.nombre)) + avisoRestringido();
+  if (isFam() && !alDia()) return head(`Hola, ${esc((ctx.nombre || '').split(' ')[0])}`, esc(S.k.nombre)) + avisoRestringido() + redesHTML();
   if (isDir()) {
     const r = resumen || {}; const pct = r.esperadas ? Math.round(r.registradas / r.esperadas * 100) : 0;
     return head(`Buen día, ${esc(ctx.nombre.split(' ')[0])}`, `${esc(S.k.nombre)}. Año lectivo ${S.k.anio}, periodo ${pa} en curso.`) +
@@ -495,7 +544,7 @@ function vInicio() {
         return `<section class="panel"><h2>${esc(g.nombre)}</h2><p class="muted">${es.length} estudiantes, ${as.length} ${g.nivel === 'preescolar' ? 'dimensiones' : 'asignaturas'}</p>
           <p>Calificaciones del periodo ${pa}: ${r} de ${t}</p><div class="bar"><i style="width:${pc}%"></i></div>
           <div class="toolbar" style="margin-top:14px"><button class="btn sm" type="button" onclick="sel.g='${g.id}';sel.a='';go('notas')">Registrar calificaciones</button><button class="btn ghost sm" type="button" onclick="sel.g='${g.id}';go('asistencia')">Tomar asistencia</button></div></section>`;
-      }).join('')}</div>` : '<div class="panel empty">Aún no tiene grupos asignados. Pida a coordinación que se los asigne.</div>');
+      }).join('')}</div>` : '<div class="panel empty">Aún no tiene grupos asignados. Pida a coordinación que se los asigne.</div>') + redesHTML();
   }
   const e = est(propio());
   if (!e) return head('Inicio') + '<div class="panel empty">No encontramos la información del estudiante.</div>';
@@ -512,13 +561,14 @@ function vInicio() {
 
     <section class="panel"><h2>Calificaciones por ${g.nivel === 'preescolar' ? 'dimensión' : 'asignatura'}</h2><div class="tbl"><table><thead><tr><th>${g.nivel === 'preescolar' ? 'Dimensión' : 'Asignatura'}</th><th>Acumulado</th><th></th></tr></thead><tbody>
     ${asigsDe(g).map(a => { const d = defin(e.id, a.id); return `<tr><td>${esc(a.nombre)}${porClase() && fallasAsig(e.id, a.id) ? ` <span class="muted">(${fallasAsig(e.id, a.id)} fallas)</span>` : ''}</td><td>${g.nivel === 'preescolar' ? (d == null ? '<span class="muted">Sin valorar</span>' : desem(d)) : chip(d)}</td><td><button class="linkbtn" type="button" onclick="detalleAsig('${a.id}')">Ver detalle</button></td></tr>`; }).join('')}</tbody></table></div>
-    <div class="toolbar" style="margin-top:12px"><button class="btn sm" type="button" onclick="go('boletines')">Ver boletín</button></div></section>`;
+    <div class="toolbar" style="margin-top:12px"><button class="btn sm" type="button" onclick="go('boletines')">Ver boletín</button></div></section>${redesHTML()}`;
 }
 
 /* =====================================================================
    Estudiantes y matrícula (directivos)
    ===================================================================== */
 async function prepEstudiantes() {
+  contEst = {};
   await cargarMiembros();
   S.acud = await all(() => db.from('acudientes').select('*').eq('colegio_id', ctx.colegio_id).order('orden'));
 }
@@ -553,6 +603,7 @@ function drawEst() {
 }
 async function accionEst(id, a) {
   if (a === 'editar') return formEst(id);
+  if (['hoja', 'constancia', 'certificado'].includes(a) && !(await guard(async () => { await prepDocsEst([id], a === 'hoja'); return true; }))) return;
   if (a === 'hoja') return showDocs(hojaMatricula(id), 'Hoja de matrícula', nomArchivo('Hoja de matrícula', est(id)));
   if (a === 'constancia') return showDocs(constancia(id), 'Constancia de estudio', nomArchivo('Constancia de estudio', est(id)));
   if (a === 'certificado') { const e = est(id); await guard(() => cargarGrupo(e.grupo_id)); return showDocs(certificado(id), 'Constancia con calificaciones', nomArchivo('Constancia con calificaciones', est(id))); }
@@ -1032,10 +1083,21 @@ const firmas = (...f) => `<div class="firmas">${f.map(([c, n]) => `<div>${esc(n 
 const dato = (l, v) => `<div><span>${l}</span>${esc(v ?? '') || '—'}</div>`;
 const fechaLarga = f => { const d = new Date((f || hoy()) + 'T12:00:00'); return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' }); };
 
+// Foto del estudiante y contactos registrados por la familia, para los documentos del colegio
+let contEst = {};
+const fotoDoc = eid => fotoEst[eid] ? `<img class="dfoto" src="${fotoEst[eid]}" alt="Foto">` : '';
+async function prepDocsEst(ids, conContactos) {
+  await cargarFotoEst(ids);
+  if (!conContactos) return;
+  const faltan = ids.filter(id => !(id in contEst));
+  faltan.forEach(id => contEst[id] = []);
+  for (const part of chunks(faltan, 80)) (await all(() => db.from('contactos_est').select('*').in('estudiante_id', part).order('estudiante_id').order('creado_en').order('id'))).forEach(c => contEst[c.estudiante_id].push(c));
+}
 function hojaMatricula(eid) {
   const e = est(eid), g = grupo(e.grupo_id), ac = acudDe(eid);
+  const ce = contEst[eid] || [];
   return `<section class="doc compacta">${docHead('Hoja de matrícula', `Año lectivo ${S.k.anio}<br>Folio ${e.folio} · Matrícula ${esc(e.matricula || '')}`)}
-  <h3 style="color:#0B4F8A;margin:0 0 6px">Datos del estudiante</h3>
+  ${fotoDoc(eid)}<h3 style="color:#0B4F8A;margin:0 0 6px">Datos del estudiante</h3>
   <div class="dgrid">${dato('Apellidos', e.apellidos)}${dato('Nombres', e.nombres)}${dato('Documento', `${e.tipo_doc} ${e.doc}`)}
     ${dato('Lugar de expedición', e.lugar_expedicion)}${dato('Fecha de nacimiento', fmtF(e.fnac))}${dato('Lugar de nacimiento', e.lugar_nacimiento)}
     ${dato('Sexo', e.sexo)}${dato('País de origen', e.pais_origen)}${dato('Grupo étnico', e.etnia)}
@@ -1050,6 +1112,8 @@ function hojaMatricula(eid) {
   <div class="dgrid">${dato('Curso', g?.nombre)}${dato('Jornada', e.jornada)}${dato('Situación', e.situacion)}${dato('Fecha de matrícula', fmtF(e.fecha_matricula))}${dato('Institución de procedencia', e.institucion_procedencia)}${dato('Estado', e.estado + (e.fecha_retiro ? ` (${fmtF(e.fecha_retiro)})` : ''))}</div>
   <h3 style="color:#0B4F8A;margin:8px 0 6px">Acudientes</h3>
   ${ac.length ? `<table><thead><tr><th>Parentesco</th><th>Nombre</th><th>Documento</th><th>Teléfono</th><th>Correo</th><th>Dirección</th><th>Ocupación</th></tr></thead><tbody>${ac.map(a => `<tr><td>${esc(a.parentesco)}${a.responsable_pago ? ' (resp. pagos)' : ''}</td><td>${esc(a.nombres)}</td><td>${esc(a.tipo_doc || '')} ${esc(a.doc || '')}</td><td>${esc(a.telefono || '')}</td><td>${esc(a.email || '')}</td><td>${esc(a.direccion || '')}</td><td>${esc(a.ocupacion || '')}</td></tr>`).join('')}</tbody></table>` : '<p>Sin acudientes registrados.</p>'}
+  ${ce.length ? `<h3 style="color:#0B4F8A;margin:8px 0 6px">Contactos registrados por la familia</h3>
+  <table><thead><tr><th>Tipo</th><th>Nombre</th><th>Parentesco</th><th>Teléfono</th><th>Documento</th></tr></thead><tbody>${ce.map(c => `<tr><td>${c.tipo === 'emergencia' ? 'Emergencia' : 'Autorizado(a) para recoger'}</td><td>${esc(c.nombre)}</td><td>${esc(c.parentesco || '')}</td><td>${esc(c.telefono || '')}</td><td>${esc(c.doc || '')}</td></tr>`).join('')}</tbody></table>` : ''}
   <div class="dobs"><span>Autorización de tratamiento de datos personales</span><p>${esc(textoAutorizacion(e, ac))}</p>
     <p style="margin-top:6px">Tratamiento de datos: <strong>${e.autoriza_datos ? 'Autorizado' : 'No autorizado'}</strong> · Uso de imagen: <strong>${e.autoriza_imagen ? 'Autorizado' : 'No autorizado'}</strong>${e.autoriza_fecha ? ` · Fecha: ${fmtF(e.autoriza_fecha)}` : ''}</p></div>
   ${e.motivo_retiro ? `<div class="dobs"><span>Retiro</span><p>${esc(fmtF(e.fecha_retiro))}: ${esc(e.motivo_retiro)}</p></div>` : ''}
@@ -1059,8 +1123,10 @@ function textoAutorizacion(e, ac) {
   const quien = e.autoriza_por || ac?.[0]?.nombres || 'El acudiente';
   return `En cumplimiento de la Ley 1581 de 2012 y el Decreto 1377 de 2013, ${quien}, en calidad de acudiente de ${nom(e)}, autoriza a ${S.k.nombre} como responsable del tratamiento para recolectar, almacenar, usar y actualizar los datos personales del estudiante y de su familia, incluidos los datos sensibles de salud, con fines exclusivamente académicos, administrativos, de inclusión y de bienestar. Los datos no se entregarán a terceros salvo obligación legal (por ejemplo, el reporte al SIMAT). El titular puede conocer, actualizar, rectificar y solicitar la supresión de sus datos ante la secretaría académica.${S.k.politica_datos ? ' Política de tratamiento de datos: ' + S.k.politica_datos : ''}`;
 }
-function libroMatricula() {
+async function libroMatricula() {
   const l = S.ests.filter(e => e.estado !== 'Graduado').sort((a, b) => a.folio - b.folio);
+  toast('Preparando el libro de matrícula…');
+  if (!(await guard(async () => { await prepDocsEst(l.map(e => e.id), true); return true; }))) return;
   const indice = `<section class="doc">${docHead('Libro de matrícula', `Año lectivo ${S.k.anio}`)}<table><thead><tr><th>Folio</th><th>Matrícula</th><th>Estudiante</th><th>Documento</th><th>Curso</th><th>Estado</th></tr></thead><tbody>
     ${l.map(e => `<tr><td>${e.folio}</td><td>${esc(e.matricula || '')}</td><td>${esc(e.apellidos)} ${esc(e.nombres)}</td><td>${e.tipo_doc} ${esc(e.doc)}</td><td>${esc(grupo(e.grupo_id)?.nombre || '')}</td><td>${e.estado}</td></tr>`).join('')}</tbody></table>
     ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`;
@@ -1071,7 +1137,7 @@ function constancia(eid) {
   const estado = e.estado === 'Activo' ? `se encuentra matriculado(a) y cursa actualmente el grado <strong>${esc(g?.nombre || '')}</strong>, jornada ${esc((e.jornada || '').toLowerCase())}, en el año lectivo ${S.k.anio}`
     : e.estado === 'Retirado' ? `estuvo matriculado(a) en el grado <strong>${esc(g?.nombre || '')}</strong> durante el año lectivo ${S.k.anio} y se retiró el ${fechaLarga(e.fecha_retiro)}`
     : `culminó sus estudios en esta institución`;
-  return `<section class="doc">${docHead('Constancia de estudio', `Año lectivo ${S.k.anio}`)}
+  return `<section class="doc">${docHead('Constancia de estudio', `Año lectivo ${S.k.anio}`)}${fotoDoc(eid)}
   <p style="margin-top:18px">El suscrito rector(a) y la secretaría académica de <strong>${esc(S.k.nombre)}</strong> hacen constar que <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, ${estado}, con matrícula No. ${esc(e.matricula || '')}, folio ${e.folio}.</p>
   <p>Se expide a solicitud del interesado en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
   ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`;
@@ -1079,7 +1145,7 @@ function constancia(eid) {
 function certificado(eid) {
   const e = est(eid), g = grupo(e.grupo_id); if (!g) return constancia(eid);
   const as = asigsDe(g), pre = g.nivel === 'preescolar', pa = S.k.periodo_actual;
-  return `<section class="doc">${docHead('Constancia de estudio con calificaciones', `Año lectivo ${S.k.anio}`)}
+  return `<section class="doc">${docHead('Constancia de estudio con calificaciones', `Año lectivo ${S.k.anio}`)}${fotoDoc(eid)}
   <p style="margin-top:14px">El suscrito rector(a) de <strong>${esc(S.k.nombre)}</strong> hace constar que <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, ${e.estado === 'Activo' ? 'cursa' : 'cursó'} el grado <strong>${esc(g.nombre)}</strong> en el año lectivo ${S.k.anio}, con las siguientes valoraciones acumuladas a la fecha:</p>
   <table><thead><tr><th>${pre ? 'Dimensión' : 'Asignatura'}</th><th>IH</th>${pre ? '' : periodos().filter(p => p.n <= pa).map(p => `<th>P${p.n}</th>`).join('')}<th>Valoración</th><th>Desempeño</th></tr></thead><tbody>
   ${as.map(a => { const v = defin(eid, a.id); return `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : periodos().filter(p => p.n <= pa).map(p => { const x = nota(eid, a.id, p.n); return `<td>${x == null ? '—' : x.toFixed(1)}</td>`; }).join('')}<td>${v == null || pre ? '—' : v.toFixed(1)}</td><td>${v == null ? 'Sin valorar' : desem(v)}</td></tr>`; }).join('')}</tbody></table>
@@ -1094,7 +1160,7 @@ function boletinHTML(eid, per) {
   const body = pre ? `<table><thead><tr><th>Dimensión</th><th>Desempeño</th><th>Descripción</th></tr></thead><tbody>${as.map(a => { const v = nota(eid, a.id, per), d = desem(v); const lo = S.logros[`${g.id}|${a.id}|${per}`]; return `<tr><td>${esc(a.nombre)}</td><td>${v == null ? 'Sin valorar' : d}</td><td>${lo ? logroLista(lo) + (v == null ? '' : `<span class="logro">${DESC[d] || ''}</span>`) : (v == null ? '' : DESC[d] || '')}</td></tr>`; }).join('')}</tbody></table>`
     : `<table><thead><tr><th>Asignatura</th><th>IH</th>${ps.map(p => `<th>P${p.n}</th>`).join('')}<th>Acum.</th><th>Desempeño</th></tr></thead><tbody>${as.map(a => { const d = defin(eid, a.id, per), lo = S.logros[`${g.id}|${a.id}|${per}`]; return `<tr><td>${esc(a.nombre)}${logroLista(lo)}</td><td>${a.ih}</td>${ps.map(p => { const v = nota(eid, a.id, p.n), r = S.rec[`${eid}|${a.id}|${p.n}`]; return `<td>${v == null ? '—' : v.toFixed(1)}${r?.nota != null && v === +r.nota ? '<sup>R</sup>' : ''}</td>`; }).join('')}<td><strong>${d == null ? '—' : d.toFixed(1)}</strong></td><td>${d == null ? '' : desem(d)}</td></tr>`; }).join('')}</tbody></table>`;
   return `<section class="doc">${docHead('Informe académico', `Periodo ${per} de ${periodos().length}, año ${S.k.anio}`)}
-  <div class="dgrid"><div><span>Estudiante</span>${esc(nom(e))}</div><div><span>Documento</span>${e.tipo_doc} ${esc(e.doc)}</div><div><span>Grado y grupo</span>${esc(g.nombre)}</div>
+  ${fotoDoc(eid)}<div class="dgrid"><div><span>Estudiante</span>${esc(nom(e))}</div><div><span>Documento</span>${e.tipo_doc} ${esc(e.doc)}</div><div><span>Grado y grupo</span>${esc(g.nombre)}</div>
   <div><span>Director(a) de grupo</span>${esc(g.director_nombre || '')}</div><div><span>${porClase() ? 'Fallas (horas de clase)' : 'Fallas a la fecha'}</span>${fallas(eid)}</div>${pre ? '' : `<div><span>Promedio acumulado</span>${pr == null ? '—' : pr.toFixed(2) + ' ' + desem(pr)}</div>`}</div>
   ${body}
   ${!pre && Object.keys(S.rec).some(k => k.startsWith(eid + '|') && S.rec[k].nota != null) ? '<p class="dnote"><sup>R</sup> Calificación obtenida en actividad de recuperación (Decreto 1290 de 2009).</p>' : ''}
@@ -1120,9 +1186,9 @@ function vBoletines() {
       <select class="acc" aria-label="Agregar frase frecuente" onchange="agregarFrase('${e.id}',this.value);this.value=''"><option value="">Agregar frase frecuente…</option>${BANCO_OBS.map((f, i) => `<option value="${i}">${esc(f.length > 70 ? f.slice(0, 70) + '…' : f)}</option>`).join('')}</select></li>`).join('')}</ul>` : '<div class="empty">Este grupo no tiene estudiantes activos.</div>'}</div>`;
 }
 const nomArchivo = (t, e) => `${t} ${e ? e.apellidos + ' ' + e.nombres : ''} ${S.k.anio}`.replace(/\s+/g, ' ').trim();
-function verBoletin(eid) { showDocs(boletinHTML(eid, sel.p), 'Boletín', nomArchivo(`Boletín P${sel.p}`, est(eid))); }
-function imprimirBoletin(eid) { lastDocs = boletinHTML(eid, sel.p); lastTitulo = nomArchivo(`Boletín P${sel.p}`, est(eid)); printDocs(); }
-function boletinesGrupo() { showDocs(estsDe(sel.g).map(e => boletinHTML(e.id, sel.p)).join(''), 'Boletines del grupo', `Boletines P${sel.p} ${grupo(sel.g)?.nombre || ''} ${S.k.anio}`); }
+async function verBoletin(eid) { await guard(() => cargarFotoEst([eid])); showDocs(boletinHTML(eid, sel.p), 'Boletín', nomArchivo(`Boletín P${sel.p}`, est(eid))); }
+async function imprimirBoletin(eid) { await guard(() => cargarFotoEst([eid])); lastDocs = boletinHTML(eid, sel.p); lastTitulo = nomArchivo(`Boletín P${sel.p}`, est(eid)); printDocs(); }
+async function boletinesGrupo() { await guard(() => cargarFotoEst(estsDe(sel.g).map(e => e.id))); showDocs(estsDe(sel.g).map(e => boletinHTML(e.id, sel.p)).join(''), 'Boletines del grupo', `Boletines P${sel.p} ${grupo(sel.g)?.nombre || ''} ${S.k.anio}`); }
 async function setObs(eid, el) {
   const t = el.value.trim(), p = sel.p;
   const ok = await guard(async () => {
@@ -1203,7 +1269,7 @@ function paramInst() {
         ${r ? `<div><p class="muted" style="margin:0 0 8px">Imagen PNG o JPG. Aparece en boletines, constancias y hojas de matrícula.</p>
         <label class="btn ghost" style="display:inline-block">Subir logo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onchange="subirLogo(this)"></label>
         ${k.logo ? '<button class="btn ghost" type="button" onclick="quitarLogo()">Quitar</button>' : ''}</div>` : ''}
-      </div></div>`;
+      </div></div>${panelRedes()}`;
 }
 async function guardarColegio(d, okMsg) {
   const r = await guard(() => q(db.from('colegios').update(d).eq('id', S.k.id).select().single()), okMsg);
@@ -2056,9 +2122,10 @@ function detalleAsig(aid) {
    Comunicados y circulares con confirmación de lectura
    ===================================================================== */
 const TIPOS_COM = ['Circular', 'Citación', 'Recordatorio', 'Evento'];
+const COM_COLS = 'id,colegio_id,tipo,titulo,cuerpo,destino,grupo_id,estudiante_id,fecha_evento,requiere_confirmacion,creado_por,autor_nombre,creado_en,con_imagen';
 let lectAll = {};
 async function cargarComs() {
-  S.coms = await all(() => db.from('comunicados').select('*').eq('colegio_id', ctx.colegio_id).order('creado_en', { ascending: false }));
+  S.coms = await all(() => db.from('comunicados').select(COM_COLS).eq('colegio_id', ctx.colegio_id).order('creado_en', { ascending: false }));
   S.lect = {}; lectAll = {};
   if (isFam()) (await q(db.from('lecturas').select('comunicado_id').eq('user_id', me.id))).forEach(x => S.lect[x.comunicado_id] = true);
   else for (const part of chunks(S.coms.map(c => c.id), 80)) (await all(() => db.from('lecturas').select('comunicado_id,user_id,nombre,leido_en').in('comunicado_id', part).order('comunicado_id').order('user_id'))).forEach(x => (lectAll[x.comunicado_id] ||= []).push(x));
@@ -2088,6 +2155,7 @@ function agendaHTML() {
   return items.length ? `<section class="panel"><h2>Próximas fechas</h2><ul class="list">${items.slice(0, 8).map(x => `<li><strong>${x.h || fechaLarga(x.f)}</strong> · ${esc(x.t)}</li>`).join('')}</ul></section>` : '';
 }
 function vComunicados() {
+  setTimeout(() => cargarImgs('comunicados', 'imagen', 'img.foto-com'), 0);
   const l = isFam() ? comsMios() : (S.coms || []).filter(c => isDir() || isTes() || c.destino === 'todos' || gruposVis().some(g => g.id === c.grupo_id || g.id === est(c.estudiante_id)?.grupo_id));
   return head('Comunicados', isFam() ? 'Circulares, citaciones y avisos del colegio. Confirme la lectura de los que lo solicitan.' : 'Envíe circulares, citaciones y recordatorios, y vea quién los ha leído.',
     puedeComunicar() ? '<button class="btn" type="button" onclick="formComunicado()">Nuevo comunicado</button>' : '') + agendaHTML() +
@@ -2097,6 +2165,7 @@ function vComunicados() {
         <div class="meta">${fechaHora(c.creado_en)} · ${esc(c.autor_nombre || '')}${isFam() ? '' : ' · ' + esc(destinoTxt(c))}</div>
         ${c.fecha_evento ? `<p><strong>Fecha:</strong> ${fechaHora(c.fecha_evento)}</p>` : ''}
         <p style="white-space:pre-wrap">${esc(c.cuerpo)}</p>
+        ${c.con_imagen && Date.now() - new Date(c.creado_en) < 15 * 864e5 ? `<div class="foto-box com-foto"><img class="foto-com" data-id="${c.id}" alt="Foto del comunicado" onclick="verFotoEl(this)"></div>` : ''}
         <div class="toolbar" style="margin:6px 0 0">${isFam()
           ? (leido ? `<span class="ok">Leído</span>` : `<button class="btn sm" type="button" onclick="marcarLeido('${c.id}')">Confirmar que lo leí</button>`)
           : `<span class="muted">Leído por ${lects.length}</span> <button class="btn ghost sm" type="button" onclick="verLecturas('${c.id}')">Ver quién leyó</button>
@@ -2113,19 +2182,20 @@ async function copiarCom(id) {
   const t = textoCom(S.coms.find(c => c.id === id));
   try { await navigator.clipboard.writeText(t); toast('Texto copiado. Péguelo en el grupo de WhatsApp'); } catch { openModal('Copiar texto', `<textarea id="cpT" style="width:100%;min-height:200px">${esc(t)}</textarea><div class="modal-foot"><button class="btn" type="button" onclick="copiar('#cpT')">Copiar</button></div>`); }
 }
-function formComunicado() {
+function formComunicado(tipo0 = 'Circular') {
   const gs = isDir() ? S.grupos : gruposVis();
   if (!gs.length && !isDir()) return toast('No tiene grupos asignados');
   openModal('Nuevo comunicado', `<div class="formgrid">
-    <label class="field"><span>Tipo</span><select id="cTipo" onchange="document.getElementById('cFevBox').hidden=!['Citación','Evento'].includes(this.value)">${TIPOS_COM.map(t => opt(t, t, 'Circular')).join('')}</select></label>
+    <label class="field"><span>Tipo</span><select id="cTipo" onchange="document.getElementById('cFevBox').hidden=!['Citación','Evento'].includes(this.value)">${TIPOS_COM.map(t => opt(t, t, tipo0)).join('')}</select></label>
     <label class="field"><span>Para</span><select id="cDest" onchange="destCom()">${isDir() ? opt('todos', 'Toda la comunidad', 'todos') : ''}${opt('grupo', 'Un curso')}${opt('estudiante', 'La familia de un estudiante')}</select></label>
     <label class="field" id="cGBox" ${isDir() ? 'hidden' : ''}><span>Curso</span><select id="cGrupo" onchange="destCom()">${gs.map(g => opt(g.id, g.nombre, sel.g)).join('')}</select></label>
     <label class="field" id="cEBox" hidden><span>Estudiante</span><select id="cEst"></select></label>
     ${fIn('cTit', 'Título', '', 'maxlength="120"')}
-    <label class="field" id="cFevBox" hidden><span>Fecha y hora</span><input id="cFev" type="datetime-local"></label>
+    <label class="field" id="cFevBox" ${['Citación', 'Evento'].includes(tipo0) ? '' : 'hidden'}><span>Fecha y hora</span><input id="cFev" type="datetime-local"></label>
     ${fTa('cCue', 'Mensaje', '', 'Escriba el comunicado…')}
+    <label class="field full"><span>Foto (opcional): afiche, invitación o imagen del evento. Se borra sola a los 15 días</span><input type="file" id="cImg" accept="image/*"></label>
     <label class="chk full"><input type="checkbox" id="cConf" checked> Pedir confirmación de lectura a las familias</label></div>
-    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarComunicado()">Enviar</button></div>`);
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="cEnv" onclick="guardarComunicado()">Enviar</button></div>`);
   destCom();
 }
 function destCom() {
@@ -2140,8 +2210,9 @@ async function guardarComunicado() {
   if (!c.titulo || !c.cuerpo) return toast('Escriba el título y el mensaje');
   if (d === 'estudiante' && !c.estudiante_id) return toast('Elija el estudiante');
   if (d === 'estudiante') c.grupo_id = null;
-  const r = await guard(() => q(db.from('comunicados').insert(c).select().single()), 'Comunicado enviado');
-  if (r) { S.coms.unshift(r); closeModal(); render(); }
+  if (c.tipo === 'Evento' && !c.fecha_evento) return toast('Escriba la fecha y hora del evento');
+  const r = await busy('#cEnv', () => guard(async () => { c.imagen = await leerImagen($('#cImg')?.files[0]); return q(db.from('comunicados').insert(c).select(COM_COLS).single()); }, 'Comunicado enviado'));
+  if (r) { if (c.imagen) imgCache[r.id] = c.imagen; S.coms.unshift(r); closeModal(); render(); }
 }
 async function marcarLeido(id) {
   const ok = await guard(async () => { await q(db.from('lecturas').upsert({ comunicado_id: id, user_id: me.id, nombre: ctx.nombre }, { onConflict: 'comunicado_id,user_id', ignoreDuplicates: true })); return true; }, 'Gracias, lectura confirmada');
@@ -2161,6 +2232,223 @@ async function borrarComunicado(id) {
   if (!confirm('¿Eliminar este comunicado? Las familias ya no lo verán.')) return;
   const ok = await guard(async () => { await q(db.from('comunicados').delete().eq('id', id)); return true; }, 'Comunicado eliminado');
   if (ok) { S.coms = S.coms.filter(c => c.id !== id); render(); }
+}
+
+/* =====================================================================
+   Etapa 2: fotos de la semana, carnet digital, contactos de emergencia,
+   personas autorizadas para recoger, cronograma y redes sociales
+   ===================================================================== */
+const DIAS_SEM = ['', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+const isoDow = f => { const d = new Date(f + 'T12:00:00').getDay(); return d === 0 ? 7 : d; };
+const sumarDias = (f, n) => { const d = new Date(f + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const lunesDe = f => sumarDias(f, 1 - isoDow(f));
+const esPersonal = () => isDir() || isDoc() || isTes();
+const gruposGaleria = () => isFam() ? [grupo(est(propio())?.grupo_id)].filter(Boolean) : isDir() ? S.grupos : gruposVis();
+
+// Carga perezosa de imágenes guardadas en la base (solo las que están en pantalla)
+const imgCache = {};
+async function cargarImgs(tabla, campo, sel_) {
+  const els = [...document.querySelectorAll(sel_)].filter(x => !x.src);
+  const faltan = els.map(x => x.dataset.id).filter(id => !(id in imgCache));
+  for (const part of chunks([...new Set(faltan)], 12)) {
+    const l = await q(db.from(tabla).select(`id,${campo}`).in('id', part)).catch(() => []);
+    l.forEach(x => imgCache[x.id] = x[campo] || '');
+  }
+  els.forEach(x => { if (imgCache[x.dataset.id]) x.src = imgCache[x.dataset.id]; else x.closest('.foto-box')?.remove(); });
+}
+function verFoto(src, pie = '') { openModal('Foto', `<img src="${src}" alt="${esc(pie)}" style="width:100%;border-radius:8px">${pie ? `<p>${esc(pie)}</p>` : ''}`); }
+function verFotoEl(el) { if (el.src) verFoto(el.src, el.alt); }
+
+/* ---------- Fotos de la semana (galería de clase) ---------- */
+let fotos = [];
+async function prepGaleria() {
+  const gs = gruposGaleria();
+  if (!gs.some(g => g.id === sel.gal)) sel.gal = gs[0]?.id || '';
+  const lun = lunesDe(hoy());
+  if (!sel.gdia || sel.gdia < lun || sel.gdia > hoy()) sel.gdia = hoy();
+  fotos = sel.gal ? await all(() => db.from('fotos_clase').select('id,grupo_id,fecha,pie,autor_nombre,creado_por,creado_en').eq('grupo_id', sel.gal).gte('fecha', lun).order('creado_en').order('id')) : [];
+}
+function vGaleria() {
+  const gs = gruposGaleria(), g = grupo(sel.gal), lun = lunesDe(hoy()), h = hoy();
+  const puede = isDir() || (isDoc() && gruposVis().some(x => x.id === sel.gal));
+  if (!gs.length) return head('Fotos de la semana') + '<div class="panel empty">No hay cursos para mostrar.</div>';
+  const delDia = fotos.filter(f => f.fecha === sel.gdia);
+  setTimeout(() => cargarImgs('fotos_clase', 'imagen', 'img.foto-cl'), 0);
+  return head('Fotos de la semana', isFam() ? `Lo que hizo ${esc(est(propio())?.nombres || 'su hijo(a)')} en clase esta semana.` : 'Comparta con las familias las actividades del día. Cada curso ve solo sus fotos.') +
+    `<div class="panel">${gs.length > 1 ? `<div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.gal=this.value;go('galeria')">${gs.map(x => opt(x.id, x.nombre, sel.gal)).join('')}</select></label></div>` : ''}
+      <div class="tabs" role="tablist">${[1, 2, 3, 4, 5, 6, 7].map(n => { const f = sumarDias(lun, n - 1), c = fotos.filter(x => x.fecha === f).length; if (f > h && !c) return ''; return `<button type="button" role="tab" aria-selected="${f === sel.gdia}" onclick="sel.gdia='${f}';render()">${DIAS_SEM[n]}${c ? ` <span class="badge">${c}</span>` : ''}</button>`; }).join('')}</div>
+      <p class="muted">${fechaLarga(sel.gdia)} · ${esc(g?.nombre || '')}. Las fotos se borran automáticamente al terminar la semana (domingo a medianoche).</p>
+      ${puede && sel.gdia === h ? `<div class="toolbar"><label class="btn" id="galBtn">Subir fotos de hoy<input type="file" accept="image/*" multiple hidden onchange="subirFotosClase(this)"></label><span class="muted">Hasta 8 fotos por curso cada día.</span></div>` : ''}
+      ${delDia.length ? `<div class="galeria">${delDia.map(f => `<figure class="foto-box"><img class="foto-cl" data-id="${f.id}" alt="${esc(f.pie || 'Foto de clase')}" onclick="verFotoEl(this)">
+        <figcaption>${f.pie ? esc(f.pie) + '<br>' : ''}<span class="muted">${esc(f.autor_nombre || '')}</span>${f.creado_por === me.id || isDir() ? ` <button class="linkbtn" type="button" onclick="borrarFotoClase('${f.id}')">Borrar</button>` : ''}</figcaption></figure>`).join('')}</div>`
+        : `<p class="empty">${sel.gdia === h ? 'Aún no hay fotos de hoy.' : 'No hubo fotos este día.'}</p>`}</div>`;
+}
+async function subirFotosClase(input) {
+  const files = [...input.files]; if (!files.length) return;
+  const pie = files.length === 1 ? (prompt('Escriba una frase para la foto (opcional):') || '').slice(0, 200) : '';
+  let n = 0;
+  await busy('#galBtn', async () => {
+    for (const f of files) {
+      const r = await guard(async () => { const imagen = await leerImagen(f, 900); return q(db.from('fotos_clase').insert({ grupo_id: sel.gal, imagen, pie: pie || null }).select('id').single()); });
+      if (!r) break; n++;
+    }
+  });
+  if (n) { toast(n === 1 ? 'Foto publicada' : `${n} fotos publicadas`); await go('galeria'); }
+}
+async function borrarFotoClase(id) {
+  if (!confirm('¿Borrar esta foto?')) return;
+  const ok = await guard(async () => { await q(db.from('fotos_clase').delete().eq('id', id)); return true; }, 'Foto borrada');
+  if (ok) { fotos = fotos.filter(f => f.id !== id); render(); }
+}
+
+/* ---------- Carnet digital y contactos (familia) ---------- */
+let contactos = [], fotoEst = {};
+async function cargarFotoEst(ids) {
+  for (const part of chunks(ids.filter(id => !(id in fotoEst)), 40)) {
+    const l = await q(db.from('fotos_est').select('estudiante_id,foto').in('estudiante_id', part)).catch(() => []);
+    part.forEach(id => fotoEst[id] = ''); l.forEach(x => fotoEst[x.estudiante_id] = x.foto);
+  }
+}
+async function prepFamilia() {
+  const e = propio(); if (!e) return;
+  await cargarFotoEst([e]);
+  contactos = await q(db.from('contactos_est').select('*').eq('estudiante_id', e).order('creado_en'));
+}
+function carnetHTML(eid) {
+  const e = est(eid), g = grupo(e?.grupo_id), k = S.k, f = fotoEst[eid];
+  return `<div class="carnet">
+    <div class="carnet-top">${k.logo ? `<img src="${k.logo}" alt="">` : ''}<div><strong>${esc(k.nombre)}</strong><span>Carnet estudiantil ${k.anio}</span></div></div>
+    <div class="carnet-body"><div class="carnet-foto">${f ? `<img src="${f}" alt="Foto de ${esc(e.nombres)}">` : '<span>Sin foto</span>'}</div>
+      <div class="carnet-datos"><div class="carnet-nom">${esc(e.nombres)}<br>${esc(e.apellidos)}</div>
+        <div>${esc(e.tipo_doc)} ${esc(e.doc)}</div><div>Curso: <strong>${esc(g?.nombre || '—')}</strong></div>
+        <div class="carnet-est">${e.estado === 'Activo' ? 'Estudiante activo' : esc(e.estado)}</div></div></div>
+    <div class="carnet-pie">${esc([k.ciudad, k.telefono ? 'Tel. ' + k.telefono : ''].filter(Boolean).join(' · '))}</div></div>`;
+}
+const TIPO_CONT = { emergencia: 'Contactos de emergencia', recoger: 'Personas autorizadas para recoger' };
+function listaContactos(l, tipo, borrar) {
+  const xs = l.filter(c => c.tipo === tipo);
+  return xs.length ? `<ul class="list">${xs.map(c => `<li><strong>${esc(c.nombre)}</strong>${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br>${c.telefono ? `<a href="tel:${esc(c.telefono)}">${esc(c.telefono)}</a>` : ''}${c.doc ? ` · Doc. ${esc(c.doc)}` : ''}${borrar ? ` <button class="linkbtn" type="button" onclick="borrarContacto('${c.id}')">Quitar</button>` : ''}</li>`).join('')}</ul>`
+    : `<p class="muted">${tipo === 'emergencia' ? 'No hay contactos de emergencia registrados.' : 'No hay personas autorizadas registradas.'}</p>`;
+}
+function vFamilia() {
+  const e = est(propio()); if (!e) return head('Carnet y contactos') + '<div class="panel empty">No encontramos la información del estudiante.</div>';
+  const acud = isAcud();
+  return head(`Carnet y contactos de ${esc(e.nombres)}`, 'El carnet digital sirve para identificar al estudiante. Los contactos los ve el colegio en caso de emergencia o a la hora de la salida.') +
+    `<div class="cols"><section class="panel"><h2>Carnet digital</h2>${carnetHTML(e.id)}
+      <div class="toolbar" style="margin-top:12px">${acud ? `<label class="btn ghost" id="fotoBtn">${fotoEst[e.id] ? 'Cambiar foto' : 'Subir foto'}<input type="file" accept="image/*" hidden onchange="subirFotoEst('${e.id}',this)"></label>` : ''}<button class="btn ghost" type="button" onclick="imprimirCarnet('${e.id}')">Descargar carnet</button></div>
+      ${acud ? '<p class="muted">Use una foto tipo documento: de frente, con fondo claro y buena luz.</p>' : ''}</section>
+    <section class="panel"><h2>${TIPO_CONT.emergencia}</h2>${listaContactos(contactos, 'emergencia', acud)}
+      <h2 style="margin-top:18px">${TIPO_CONT.recoger}</h2><p class="muted">Solo estas personas pueden recoger a ${esc(e.nombres)} en el colegio. Deben presentar su documento.</p>${listaContactos(contactos, 'recoger', acud)}
+      ${acud ? `<div class="toolbar" style="margin-top:12px"><button class="btn sm" type="button" onclick="formContacto('emergencia')">Agregar contacto de emergencia</button><button class="btn sm ghost" type="button" onclick="formContacto('recoger')">Agregar persona autorizada</button></div>` : ''}</section></div>`;
+}
+async function subirFotoEst(eid, input) {
+  const f = input.files[0]; if (!f) return;
+  await busy('#fotoBtn', async () => {
+    const r = await guard(async () => { const foto = await leerImagen(f, 300); await q(db.from('fotos_est').upsert({ estudiante_id: eid, foto }, { onConflict: 'estudiante_id' })); return foto; }, 'Foto guardada');
+    if (r) { fotoEst[eid] = r; render(); }
+  });
+}
+function imprimirCarnet(eid) {
+  showDocs(`<section class="doc"><div style="display:flex;justify-content:center;padding:20px 0">${carnetHTML(eid)}</div></section>`, 'Carnet estudiantil', nomArchivo('Carnet', est(eid)));
+}
+function formContacto(tipo) {
+  openModal(tipo === 'emergencia' ? 'Contacto de emergencia' : 'Persona autorizada para recoger', `<div class="formgrid">
+    ${fIn('ctN', 'Nombre completo', '', 'maxlength="120"')}${fIn('ctP', 'Parentesco', '', 'maxlength="60" placeholder="Ejemplo: abuela, tío, vecino"')}
+    ${fIn('ctT', 'Teléfono celular', '', 'type="tel" maxlength="30"')}${tipo === 'recoger' ? fIn('ctD', 'Número de documento', '', 'maxlength="30"') : ''}</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarContacto('${tipo}')">Guardar</button></div>`);
+}
+async function guardarContacto(tipo) {
+  const d = { estudiante_id: propio(), tipo, nombre: vv('ctN'), parentesco: vv('ctP') || null, telefono: vv('ctT') || null, doc: tipo === 'recoger' ? vv('ctD') || null : null };
+  if (d.nombre.length < 3) return toast('Escriba el nombre completo');
+  if (!d.telefono) return toast('Escriba el teléfono');
+  if (tipo === 'recoger' && !d.doc) return toast('Escriba el número de documento');
+  const r = await guard(() => q(db.from('contactos_est').insert(d).select().single()), 'Guardado');
+  if (r) { contactos.push(r); closeModal(); render(); }
+}
+async function borrarContacto(id) {
+  if (!confirm('¿Quitar a esta persona de la lista?')) return;
+  const ok = await guard(async () => { await q(db.from('contactos_est').delete().eq('id', id)); return true; }, 'Quitado de la lista');
+  if (ok) { contactos = contactos.filter(c => c.id !== id); render(); }
+}
+
+/* ---------- Contactos y recogida (personal del colegio) ---------- */
+let contactosG = [];
+async function prepContactos() {
+  const gs = isDir() ? S.grupos : gruposVis();
+  if (!gs.some(g => g.id === sel.cg)) sel.cg = gs[0]?.id || '';
+  if (!sel.cg) { contactosG = []; return; }
+  await cargarGrupo(sel.cg);
+  const ids = estsDe(sel.cg).map(e => e.id);
+  contactosG = [];
+  for (const part of chunks(ids, 80)) contactosG.push(...await all(() => db.from('contactos_est').select('*').in('estudiante_id', part).order('estudiante_id').order('creado_en').order('id')));
+}
+function vContactos() {
+  const gs = isDir() ? S.grupos : gruposVis();
+  if (!gs.length) return head('Contactos y recogida') + '<div class="panel empty">No tiene cursos asignados.</div>';
+  const es = estsDe(sel.cg);
+  return head('Contactos y recogida', 'Contactos de emergencia y personas autorizadas para recoger a cada estudiante. Los registra la familia desde su cuenta.') +
+    `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.cg=this.value;go('contactos')">${gs.map(g => opt(g.id, g.nombre, sel.cg)).join('')}</select></label>
+      <label class="field"><span>Buscar</span><input type="search" placeholder="Nombre del estudiante" oninput="filtrarFilas(this.value)"></label></div>
+      <div class="tbl"><table><thead><tr><th>Estudiante</th><th>Emergencia</th><th>Autorizados para recoger</th><th></th></tr></thead><tbody>
+      ${es.map(e => { const l = contactosG.filter(c => c.estudiante_id === e.id), em = l.filter(c => c.tipo === 'emergencia'), rc = l.filter(c => c.tipo === 'recoger');
+        return `<tr class="fila-busca" data-n="${esc(nom(e).toLowerCase())}"><td><strong>${esc(e.apellidos)}</strong> ${esc(e.nombres)}</td>
+          <td>${em.length ? em.map(c => `${esc(c.nombre)}${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br>${c.telefono ? `<a href="tel:${esc(c.telefono)}">${esc(c.telefono)}</a>` : ''}`).join('<hr>') : '<span class="muted">Sin registrar</span>'}</td>
+          <td>${rc.length ? rc.map(c => `${esc(c.nombre)}${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br><span class="muted">Doc. ${esc(c.doc || '—')}</span>`).join('<hr>') : '<span class="muted">Sin registrar</span>'}</td>
+          <td><button class="btn ghost sm" type="button" onclick="verCarnet('${e.id}')">Carnet</button></td></tr>`; }).join('')}</tbody></table></div></div>`;
+}
+function filtrarFilas(t) { const x = t.toLowerCase().trim(); document.querySelectorAll('.fila-busca').forEach(r => r.hidden = !!x && !r.dataset.n.includes(x)); }
+async function verCarnet(eid) {
+  await guard(() => cargarFotoEst([eid]));
+  const puede = isDir() || ctx.rol === 'secretaria';
+  openModal('Carnet estudiantil', `<div style="display:flex;justify-content:center">${carnetHTML(eid)}</div>
+    <div class="modal-foot">${puede ? `<label class="btn ghost" id="fotoBtn">${fotoEst[eid] ? 'Cambiar foto' : 'Subir foto'}<input type="file" accept="image/*" hidden onchange="subirFotoEstModal('${eid}',this)"></label>` : ''}<button class="btn" type="button" onclick="imprimirCarnet('${eid}')">Descargar carnet</button></div>`);
+}
+async function subirFotoEstModal(eid, input) {
+  const f = input.files[0]; if (!f) return;
+  const r = await guard(async () => { const foto = await leerImagen(f, 300); await q(db.from('fotos_est').upsert({ estudiante_id: eid, foto }, { onConflict: 'estudiante_id' })); return foto; }, 'Foto guardada');
+  if (r) { fotoEst[eid] = r; verCarnet(eid); }
+}
+
+/* ---------- Cronograma del colegio ---------- */
+async function prepCronograma() { await cargarComs(); }
+function eventosCrono() {
+  const items = [], vis = isFam() ? comsMios() : (S.coms || []).filter(c => isDir() || isTes() || c.destino === 'todos' || gruposVis().some(g => g.id === c.grupo_id || g.id === est(c.estudiante_id)?.grupo_id));
+  vis.forEach(c => { if (c.fecha_evento) items.push({ f: c.fecha_evento.slice(0, 10), hora: new Date(c.fecha_evento).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }), t: c.titulo, tipo: c.tipo, d: c.destino === 'todos' ? '' : destinoTxt(c) }); });
+  periodos().forEach(p => {
+    if (p.inicio) items.push({ f: p.inicio, t: `Inicia el periodo ${p.n}`, tipo: 'Académico' });
+    if (p.fin) items.push({ f: p.fin, t: `Termina el periodo ${p.n}`, tipo: 'Académico' });
+    if (p.cierre && !isFam()) items.push({ f: p.cierre, t: `Cierre de calificaciones del periodo ${p.n}`, tipo: 'Académico' });
+  });
+  return items.sort((a, b) => a.f.localeCompare(b.f) || (a.hora || '').localeCompare(b.hora || ''));
+}
+function vCronograma() {
+  const h = hoy(), todos = eventosCrono(), l = sel.cpas ? todos : todos.filter(x => x.f >= h);
+  const meses = {}; l.forEach(x => (meses[x.f.slice(0, 7)] ||= []).push(x));
+  return head('Cronograma', 'Fechas importantes del año: eventos, citaciones, reuniones y periodos académicos.', puedeComunicar() ? `<button class="btn" type="button" onclick="formComunicado('Evento')">Nuevo evento</button>` : '') +
+    `<div class="panel"><label class="chk"><input type="checkbox" ${sel.cpas ? 'checked' : ''} onchange="sel.cpas=this.checked;render()"> Mostrar también las fechas pasadas</label>
+    ${Object.keys(meses).length ? Object.entries(meses).map(([m, xs]) => `<h2 style="margin-top:16px">${(t => t[0].toUpperCase() + t.slice(1))(new Date(m + '-15T12:00:00').toLocaleDateString('es-CO', { month: 'long', year: 'numeric' }))}</h2>
+      <ul class="list crono">${xs.map(x => `<li class="${x.f < h ? 'dim' : ''}"><span class="crono-f"><strong>${new Date(x.f + 'T12:00:00').getDate()}</strong>${DIAS_SEM[isoDow(x.f)].slice(0, 3)}</span><div><strong>${esc(x.t)}</strong> <span class="tag ${x.tipo === 'Citación' ? 't3' : x.tipo === 'Evento' ? 't2' : ''}">${esc(x.tipo)}</span><br><span class="muted">${x.hora ? x.hora : ''}${x.d ? (x.hora ? ' · ' : '') + esc(x.d) : ''}</span></div></li>`).join('')}</ul>`).join('')
+      : '<p class="empty">No hay fechas próximas. Los eventos y citaciones con fecha aparecen aquí automáticamente.</p>'}</div>`;
+}
+
+/* ---------- Redes sociales del colegio ---------- */
+const REDES = [['red_facebook', 'Facebook'], ['red_instagram', 'Instagram'], ['red_youtube', 'YouTube'], ['red_tiktok', 'TikTok']];
+const urlSegura = u => /^https:\/\/[^\s"'<>]+$/.test(u || '') ? u : '';
+function redesHTML() {
+  const k = S.k, l = REDES.filter(([c]) => urlSegura(k[c])).map(([c, n]) => `<a class="btn ghost sm" href="${esc(k[c])}" target="_blank" rel="noopener">${n}</a>`);
+  if (urlSegura(k.web)) l.push(`<a class="btn ghost sm" href="${esc(k.web)}" target="_blank" rel="noopener">Página web</a>`);
+  return l.length ? `<section class="panel redes"><h2>Síganos</h2><div class="toolbar" style="margin:0">${l.join('')}</div></section>` : '';
+}
+function panelRedes() {
+  const r = esRector(), k = S.k;
+  return `<div class="panel"><h2>Redes sociales</h2><p class="muted">Aparecen en el inicio de las familias y del personal. Pegue el enlace completo de cada red (empieza por https://).</p>
+    <div class="formgrid">${REDES.map(([c, n]) => fIn('rs_' + c, n, k[c] || '', `placeholder="https://" ${r ? '' : 'disabled'}`)).join('')}</div>
+    ${r ? '<div class="toolbar" style="margin-top:12px"><button class="btn" type="button" onclick="guardarRedes()">Guardar redes</button></div>' : ''}</div>`;
+}
+async function guardarRedes() {
+  const d = {};
+  for (const [c, n] of REDES) { const v = vv('rs_' + c); if (v && !urlSegura(v)) return toast(`El enlace de ${n} debe empezar por https://`); d[c] = v || null; }
+  await guardarColegio(d, 'Redes guardadas');
 }
 
 /* =====================================================================
@@ -2523,7 +2811,7 @@ function acCambios() {
 /* =====================================================================
    Exponer funciones usadas en el HTML y arrancar
    ===================================================================== */
-Object.assign(window, { quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
+Object.assign(window, { elegirPerfil, salirApp, verFotoEl, subirFotosClase, borrarFotoClase, subirFotoEst, imprimirCarnet, formContacto, guardarContacto, borrarContacto, filtrarFilas, verCarnet, subirFotoEstModal, guardarRedes, quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
   formActividad, guardarActividad, borrarActividad, setNotaAct, formRecup, guardarRecup, borrarRecup,
   formComunicado, destCom, guardarComunicado, marcarLeido, verLecturas, borrarComunicado, copiarCom,
   guardarHorario, verBoletin, formExcusaStaff, guardarExcusaStaff, guardarPlanColegio, formPlanColegio, previewPago, enviarExcusa, verSoporte, revisarExcusa,
