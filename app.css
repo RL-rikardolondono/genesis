@@ -244,3 +244,4 @@ td.num,th.num{text-align:center}
 .medio{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--paper)}
 .medio h3{margin-top:0}
 #cVal,#pVal{width:150px}
+.cuotas{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 14px;margin-top:6px;padding:10px;border:1px solid var(--line,#DCE5EE);border-radius:10px;background:#fff}.cuotas .chk{font-weight:400}
