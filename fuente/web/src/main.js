@@ -181,9 +181,9 @@ async function cargarMiembros() {
 const SG_ICONO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" aria-hidden="true"><rect x="4" y="4" width="192" height="192" rx="46" fill="#1E3A4C"/><g stroke="#FFFFFF" stroke-linecap="round"><polygon points="100,42 150.2,71 150.2,129 100,158 49.8,129 49.8,71" fill="none" stroke-opacity=".35" stroke-width="4"/><path d="M100 100L100 42M100 100L150.2 71M100 100L150.2 129M100 100L100 158M100 100L49.8 129M100 100L49.8 71" stroke-width="6"/></g><g fill="#FFFFFF"><circle cx="150.2" cy="71" r="10"/><circle cx="150.2" cy="129" r="10"/><circle cx="100" cy="158" r="10"/><circle cx="49.8" cy="129" r="10"/><circle cx="49.8" cy="71" r="10"/></g><circle cx="100" cy="42" r="13" fill="#E0A21A"/><circle cx="100" cy="100" r="20" fill="#E0A21A"/></svg>';
 const SG_CORREO = 'contacto@skynetgenesis.com';
 const sgFirma = (oscuro) => `<a class="sg-firma${oscuro ? ' oscuro' : ''}" href="https://skynetgenesis.com" target="_blank" rel="noopener"><span class="sg-ico">${SG_ICONO}</span><span>Una aplicación de<br><b class="sg-a">SKYNET</b> <b class="sg-b">GENESIS</b></span></a>`;
-const SG_PIE = `<div class="pie-sg">${SG_ICONO}<span>Documento generado con Genesis-IA · <b>SkyNet Genesis</b> · ${SG_CORREO} · WhatsApp 304 437 5758</span></div>`;
+const SG_PIE = `<div class="pie-sg">${SG_ICONO}<span>Documento generado con Colegio-IA · <b>SkyNet Genesis</b> · ${SG_CORREO} · WhatsApp 304 437 5758</span></div>`;
 const conPie = html => String(html).replace(/(<section class="doc[^"]*">[\s\S]*?)(<\/section>)/g, (m, a, b) => a.includes('pie-sg') ? m : a + SG_PIE + b);
-const brand = `<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-txt"><span class="brand-name">Genesis-IA</span><span class="brand-sub">Instituciones Educativas</span></span></div>`;
+const brand = `<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-txt"><span class="brand-name">Colegio-IA</span><span class="brand-sub">Instituciones Educativas</span></span></div>`;
 let authMode = 'login';
 function authScreen(extra) {
   document.body.classList.add('is-auth');
@@ -197,8 +197,8 @@ function authScreen(extra) {
       <button class="btn" type="submit">Entrar</button>
     </form>
     <p class="muted" style="margin-top:14px">¿Primera vez? El colegio le entregó un código de activación. <button class="linkbtn" type="button" onclick="setAuth('registro')">Cree su cuenta</button></p>
-    <div class="demo-box"><strong>¿Quiere conocer Genesis-IA?</strong><br><span class="muted">Pruebe gratis el colegio de demostración como directivo, docente o acudiente.</span><br><button class="btn wa" type="button" onclick="quiereDemo()">Probar la demostración</button></div>`;
-  if (authMode === 'registro') body = `<h2>${store.get('demo') ? 'Cree su cuenta para probar Genesis-IA' : 'Crear cuenta'}</h2>
+    <div class="demo-box"><strong>¿Quiere conocer Colegio-IA?</strong><br><span class="muted">Pruebe gratis el colegio de demostración como directivo, docente o acudiente.</span><br><button class="btn wa" type="button" onclick="quiereDemo()">Probar la demostración</button></div>`;
+  if (authMode === 'registro') body = `<h2>${store.get('demo') ? 'Cree su cuenta para probar Colegio-IA' : 'Crear cuenta'}</h2>
     <p class="muted">${store.get('demo') ? 'Use su correo y una contraseña. No necesita código: después elige con qué perfil entrar al colegio de demostración.' : 'Use el mismo correo que registró el colegio. Después escribirá su código de activación.'}</p>
     <form onsubmit="event.preventDefault();doRegistro()">
       <label class="field"><span>Nombre completo</span><input id="rNom" autocomplete="name" required></label>
@@ -209,7 +209,7 @@ function authScreen(extra) {
       <button class="btn" type="submit">Crear cuenta</button>
     </form>
     <p class="muted" style="margin-top:14px">¿Ya tiene cuenta? <button class="linkbtn" type="button" onclick="setAuth('login')">Inicia sesión</button></p>`;
-  const demoSel = `<div class="demo-box"><strong>Colegio de demostración</strong><br><span class="muted">Explore Genesis-IA con datos de ejemplo. Elija con qué perfil quiere entrar:</span>
+  const demoSel = `<div class="demo-box"><strong>Colegio de demostración</strong><br><span class="muted">Explore Colegio-IA con datos de ejemplo. Elija con qué perfil quiere entrar:</span>
       <div class="toolbar" style="margin:8px 0 0;justify-content:center"><button class="btn sm" type="button" onclick="entrarDemo('rector')">Rector(a)</button><button class="btn sm" type="button" onclick="entrarDemo('coordinador')">Coordinador(a)</button><button class="btn sm" type="button" onclick="entrarDemo('docente')">Docente</button><button class="btn sm" type="button" onclick="entrarDemo('acudiente')">Acudiente</button></div></div>`;
   if (authMode === 'activar' && store.get('demo') && !ctxs.length) body = `<h2>Bienvenido(a)${me?.name ? ', ' + esc(me.name.split(' ')[0]) : ''}</h2>${demoSel}
     <p class="muted" style="margin-top:14px">¿El colegio le entregó un código? <button class="linkbtn" type="button" onclick="store.del('demo');setAuth('activar')">Escribir código de activación</button> · <button class="linkbtn" type="button" onclick="doLogout()">Cerrar sesión</button></p>`;
@@ -224,7 +224,7 @@ function authScreen(extra) {
     ${demoSel}
     <p class="muted" style="margin-top:14px">Sesión: ${esc(me?.email || '')}.
       ${ctxs.length ? `<button class="linkbtn" type="button" onclick="volverApp()">Volver</button> ·` : ''}
-      ${superadmin ? `<button class="linkbtn" type="button" onclick="irPlataforma()">Panel de la plataforma</button> ·` : ''}
+      ${superadmin ? `<button class="linkbtn" type="button" onclick="irPlataforma()">Superadministrador</button> ·` : ''}
       <button class="linkbtn" type="button" onclick="doLogout()">Cerrar sesión</button></p>`;
   $('#auth').innerHTML = `<div class="auth-box">${brand}${body}<div class="auth-sg">${sgFirma()}</div></div>`;
   const f = $('#auth input'); if (f) f.focus();
@@ -391,7 +391,7 @@ function quien() { return `${ROL_TXT[ctx.rol]}: ${ctx.nombre}`; }
 function renderSide() {
   const side = $('#nav');
   if (modo === 'plataforma') {
-    $('#ctxBox').innerHTML = `<div class="who">Administración de la plataforma</div>`;
+    $('#ctxBox').innerHTML = `<div class="who">Superadministrador</div>`;
     side.innerHTML = `<button type="button" aria-current="page">Colegios${platComps.length ? `<span class="badge">${platComps.length}</span>` : ''}</button>`;
   } else {
     $('#ctxBox').innerHTML = ctxs.length > 1
@@ -401,10 +401,10 @@ function renderSide() {
   }
   $('#foot').innerHTML = `${esc(me?.email || '')}<br>
     ${modo === 'plataforma' && ctxs.length ? `<button class="btn ghost sm" type="button" onclick="irColegio()">Ir a mi colegio</button>` : ''}
-    ${modo === 'colegio' && superadmin ? `<button class="btn ghost sm" type="button" onclick="irPlataforma()">Panel de la plataforma</button>` : ''}
+    ${modo === 'colegio' && superadmin ? `<button class="btn ghost sm" type="button" onclick="irPlataforma()">Superadministrador</button>` : ''}
     <button class="btn ghost sm" type="button" onclick="setAuth('activar')">Agregar otro código</button>
     <button class="btn ghost sm" type="button" onclick="doLogout()">Cerrar sesión</button>
-    <div style="margin-top:10px">${sgFirma()}</div><div style="margin-top:6px">Genesis-IA v${VERSION}</div>`;
+    <div style="margin-top:10px">${sgFirma()}</div><div style="margin-top:6px">Colegio-IA v${VERSION}</div>`;
 }
 // Barra superior fija en todas las pantallas: volver al inicio, ver y cambiar de perfil, y salir
 function barraSup() {
@@ -421,7 +421,7 @@ function elegirPerfil() {
   openModal('Cambiar de perfil', `<p class="muted">Elija con qué perfil quiere trabajar. Puede volver a cambiarlo cuando quiera desde la barra de arriba.</p>
     <div class="perfiles">${propios.map(m => `<button type="button" class="perfil ${m.id === ctx.id ? 'act' : ''}" onclick="closeModal();entrarContexto('${m.id}')"><strong>${esc(ROL_TXT[m.rol])}${m.estudiantes ? ' de ' + esc(m.estudiantes.nombres) : ''}</strong><span>${esc(m.colegios.nombre)}${m.id === ctx.id ? ' · perfil actual' : ''}</span></button>`).join('')}
       ${faltan.map(([r, l]) => `<button type="button" class="perfil" onclick="closeModal();cambiarPerfilDemo('${r}')"><strong>${l}</strong><span>Colegio de demostración</span></button>`).join('')}
-      ${superadmin ? `<button type="button" class="perfil" onclick="closeModal();irPlataforma()"><strong>Panel de la plataforma</strong><span>Administración de SkyNet Genesis</span></button>` : ''}</div>
+      ${superadmin ? `<button type="button" class="perfil" onclick="closeModal();irPlataforma()"><strong>Superadministrador</strong><span>Panel de la plataforma Colegio-IA</span></button>` : ''}</div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal();setAuth('activar')">Tengo un código de otro colegio</button><button class="btn ghost" type="button" onclick="closeModal();salirApp()">${demo ? 'Salir de la demostración' : 'Cerrar sesión'}</button></div>`);
 }
 function salirApp() {
@@ -470,7 +470,7 @@ window.addEventListener('popstate', e => {
     if (Date.now() - atrasBase < 2500) { history.back(); return; }
     atrasBase = Date.now(); history.pushState({ v: view }, '');
     if (modo === 'colegio' && ctx && view !== 'inicio') { navAtras = true; go('inicio'); history.replaceState({ v: 'inicio' }, ''); }
-    else toast('Oprima "atrás" otra vez para salir de Genesis-IA');
+    else toast('Oprima "atrás" otra vez para salir de Colegio-IA');
     return;
   }
   if (modo !== 'colegio' || !ctx) return;
@@ -771,7 +771,7 @@ function telDe(m) {
 }
 function textoInvitacion(m) {
   const url = location.origin + location.pathname;
-  return `Hola, ${m.nombre}. ${S.k.nombre} le da acceso a Genesis-IA como ${ROL_TXT[m.rol].toLowerCase()}.\n\n1. Entre a ${url}\n2. Elija "Cree su cuenta" y regístrese con este correo: ${m.email}\n3. Escriba el código de activación: ${m.codigo}\n\nEl código es personal; no lo compartas.`;
+  return `Hola, ${m.nombre}. ${S.k.nombre} le da acceso a Colegio-IA como ${ROL_TXT[m.rol].toLowerCase()}.\n\n1. Entre a ${url}\n2. Elija "Cree su cuenta" y regístrese con este correo: ${m.email}\n3. Escriba el código de activación: ${m.codigo}\n\nEl código es personal; no lo compartas.`;
 }
 async function copiar(s) { const t = $(s); try { await navigator.clipboard.writeText(t.value); toast('Mensaje copiado'); } catch { t.select(); document.execCommand('copy'); toast('Mensaje copiado'); } }
 function filaAcceso(m, extra) {
@@ -1351,7 +1351,7 @@ function panelMediosPago() {
       ${fIn('mpEfTxt', 'Lugar y horario de la caja', k.pago_efectivo_texto || '', `placeholder="Ejemplo: Tesorería, lunes a viernes de 7:00 a. m. a 12:00 m." ${ro ? 'disabled' : ''}`)}
       <div class="field full">${chk('mpLl', '<strong>Llave Bre-B</strong>: la familia paga, oprime "Ya pagué" y sube el comprobante; la tesorería confirma que el dinero llegó.', k.pago_llave)}</div>
       ${fIn('mpLlV', 'Llave Bre-B (número, celular o correo)', k.pago_llave_valor || '', ro ? 'disabled' : '')}${fIn('mpLlT', 'Titular', k.pago_llave_titular || k.nombre, ro ? 'disabled' : '')}
-      <div class="field full">${chk('mpBo', '<strong>Bold (tarjeta, PSE, Nequi)</strong>: pago en línea. Cuando Genesis-IA quede conectado con Bold, el pago se registra solo, sin intervención de la tesorería.', k.pago_bold)}</div>
+      <div class="field full">${chk('mpBo', '<strong>Bold (tarjeta, PSE, Nequi)</strong>: pago en línea. Cuando Colegio-IA quede conectado con Bold, el pago se registra solo, sin intervención de la tesorería.', k.pago_bold)}</div>
       ${fIn('mpBoU', 'Enlace de pago de Bold del colegio', k.pago_bold_url || '', `placeholder="https://" ${ro ? 'disabled' : ''}`)}
       <div class="field full" style="margin-top:6px">${chk('mpRes', '<strong>Familias con pagos pendientes:</strong> mientras tengan cuotas sin pagar, solo ven comunicados, horario, excusas y estado de cuenta (no calificaciones, boletines, observador ni PIAR).', k.restringir_morosos)}</div>
     </div>
@@ -1525,7 +1525,7 @@ async function prepPagos() {
 }
 function avisoMora(x) {
   const l = (S.acud || []).filter(a => a.estudiante_id === x.estudiante_id), a = l.find(y => y.responsable_pago) || l[0];
-  const txt = `Hola${a?.nombres ? ', ' + a.nombres.split(' ')[0] : ''}. ${S.k.nombre} le recuerda que ${x.nombre} tiene un saldo vencido de ${cop(x.saldo_vencido)} a la fecha. Puede consultar el detalle en Genesis-IA: ${location.origin + location.pathname}. Si ya realizó el pago, por favor envíenos el comprobante. Gracias.`;
+  const txt = `Hola${a?.nombres ? ', ' + a.nombres.split(' ')[0] : ''}. ${S.k.nombre} le recuerda que ${x.nombre} tiene un saldo vencido de ${cop(x.saldo_vencido)} a la fecha. Puede consultar el detalle en Colegio-IA: ${location.origin + location.pathname}. Si ya realizó el pago, por favor envíenos el comprobante. Gracias.`;
   const tel = a?.telefono || est(x.estudiante_id)?.acudiente_tel;
   return tel ? waBtn(tel, txt, 'WhatsApp') : '';
 }
@@ -1562,7 +1562,7 @@ async function cargarCuenta(eid, anio = S.k.anio) {
   ]);
   cuenta = { eid, anio, filas, pagos, prevFilas };
 }
-// Saldos pendientes de los años anteriores (hasta 5 años atrás, desde el año en que el colegio empezó en Genesis-IA)
+// Saldos pendientes de los años anteriores (hasta 5 años atrás, desde el año en que el colegio empezó en Colegio-IA)
 async function deudasAnteriores(eid) {
   const desde = Math.max(S.k.anio - 5, new Date(S.k.creado_en || Date.now()).getFullYear());
   const anios = []; for (let a = S.k.anio - 1; a >= desde; a--) anios.push(a);
@@ -1603,7 +1603,7 @@ function modalCuenta() {
   openModal(`Estado de cuenta ${cuenta.anio}: ${nom(e)}`, `${previo > 0 ? `<div class="note bloqueo">Tiene saldos pendientes de años anteriores por <strong>${cop(previo)}</strong>: ${aniosConDeuda().map(a => `${a}: ${cop(cuenta.prevFilas.filter(x => x.anioCobro === a).reduce((s, x) => s + +x.saldo, 0))} <button class="linkbtn" type="button" onclick="abrirCuenta('${cuenta.eid}', ${a})">ver y registrar pago</button>`).join(' · ')}</div>` : ''}
     ${otro ? `<div class="note">Está viendo el año <strong>${cuenta.anio}</strong>. Los pagos que registre aquí se aplican a ese año. <button class="linkbtn" type="button" onclick="abrirCuenta('${cuenta.eid}')">Volver a ${S.k.anio}</button></div>` : ''}<p class="muted">${esc(grupo(e.grupo_id)?.nombre || '')} · Debe a la fecha: <strong style="color:${venc ? 'var(--red)' : 'inherit'}">${cop(venc)}</strong> · Saldo del año: <strong>${cop(saldo)}</strong>${e.estado !== 'Activo' ? ` · ${e.estado}${e.fecha_retiro ? ' el ' + fmtF(e.fecha_retiro) : ''}` : ''}</p>
     <h3>Registrar pago</h3>
-    <p class="muted">Escriba el valor que le entregan. Genesis-IA lo aplica solo, empezando por las cuotas más antiguas.</p>
+    <p class="muted">Escriba el valor que le entregan. Colegio-IA lo aplica solo, empezando por las cuotas más antiguas.</p>
     <div class="formgrid">${fIn('pVal', 'Valor recibido', '', 'type="number" min="1" oninput="previewPago()"')}${fIn('pFec', 'Fecha', hoy(), 'type="date"')}
       <label class="field"><span>Medio de pago</span><select id="pMed">${['Efectivo', 'Transferencia', 'Consignación', 'Tarjeta', 'Nequi', 'Daviplata', 'PSE', 'Otro'].map(x => opt(x, x)).join('')}</select></label>
       ${fIn('pRef', 'Referencia o comprobante (opcional)', '')}</div>
@@ -1817,18 +1817,18 @@ function piarHTML(eid) {
 }
 
 /* =====================================================================
-   Panel de la plataforma (administración de Genesis-IA)
+   Panel de la plataforma (administración de Colegio-IA)
    ===================================================================== */
 /* =====================================================================
-   Suscripción de Genesis-IA: aviso, pago en línea con Bold y acceso cerrado por pago
+   Suscripción de Colegio-IA: aviso, pago en línea con Bold y acceso cerrado por pago
    ===================================================================== */
 const SOPORTE_TEL = '3044375758';
 const valorDeuda = e => (e?.valor_mes || 0) * Math.max(1, e?.meses_debe || 1);
-const waSoporte = (e, l = 'WhatsApp de soporte') => waBtn(e?.whatsapp || SOPORTE_TEL, `Hola. Soy de ${ctx?.colegios?.nombre || 'un colegio'} y necesito ayuda con el pago de la suscripción de Genesis-IA.`, l);
+const waSoporte = (e, l = 'WhatsApp de soporte') => waBtn(e?.whatsapp || SOPORTE_TEL, `Hola. Soy de ${ctx?.colegios?.nombre || 'un colegio'} y necesito ayuda con el pago de la suscripción de Colegio-IA.`, l);
 async function copiarTexto(t) { try { await navigator.clipboard.writeText(t); toast('Copiado'); } catch { toast(t); } }
 function avisoCobro() {
   const e = S.estado, d = e.dias;
-  return `<div class="note bloqueo"><strong>Pago de Genesis-IA pendiente: ${d === 1 ? 'mañana' : `en ${d} días`} se suspende el acceso.</strong> La suscripción está pagada hasta el ${fechaLarga(e.pagado_hasta)}. Si el pago no se confirma, el día 10 se suspende el acceso de todo el colegio (docentes y familias incluidos).
+  return `<div class="note bloqueo"><strong>Pago de Colegio-IA pendiente: ${d === 1 ? 'mañana' : `en ${d} días`} se suspende el acceso.</strong> La suscripción está pagada hasta el ${fechaLarga(e.pagado_hasta)}. Si el pago no se confirma, el día 10 se suspende el acceso de todo el colegio (docentes y familias incluidos).
     <div class="toolbar" style="margin:8px 0 0">${isDir() || isTes() ? '<button class="btn" type="button" onclick="pagarSuscripcion()">Pagar ahora</button>' : ''}${waSoporte(e)}</div></div>`;
 }
 function panelSuscripcion(r) {
@@ -1847,7 +1847,7 @@ async function pagarSuscripcion() {
   if (!e) return toast('No se pudo consultar el estado de la suscripción');
   const meses = Math.max(1, e.meses_debe || 1), valor = valorDeuda(e);
   // El colegio le paga a SkyNet Genesis solo en línea con Bold; el pago se registra automáticamente
-  openModal('Pagar la suscripción de Genesis-IA', `<p>Valor a pagar: <strong>${cop(valor)}</strong> (${meses} ${meses === 1 ? 'mes' : 'meses'} del plan hasta ${e.plan_max} estudiantes). Pagado hasta el ${fechaLarga(e.pagado_hasta)}.</p>
+  openModal('Pagar la suscripción de Colegio-IA', `<p>Valor a pagar: <strong>${cop(valor)}</strong> (${meses} ${meses === 1 ? 'mes' : 'meses'} del plan hasta ${e.plan_max} estudiantes). Pagado hasta el ${fechaLarga(e.pagado_hasta)}.</p>
     <p><button class="btn" type="button" onclick="pagarBoldSusc(this)">Pagar en línea con Bold</button></p>
       <p class="muted">Tarjeta, PSE, Nequi o Bancolombia. El pago se registra automáticamente: apenas Bold lo apruebe (puede tardar unos minutos), la suscripción queda al día y el recibo aparece en Parametrización. No necesita enviar comprobantes.</p>
     <div class="modal-foot">${waSoporte(e)}<button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button></div>`);
@@ -1861,7 +1861,7 @@ async function pagarBoldSusc(btn) {
   if (!pl) return toast('Para planes de más de 1.000 estudiantes escríbanos por WhatsApp');
   if (btn) { btn.disabled = true; btn.textContent = 'Abriendo Bold…'; }
   try {
-    const qs = new URLSearchParams({ plan: 'genesis:' + pl, empresa: ctx.colegio_id, meses: String(m), org: (ctx.colegios?.nombre || '').slice(0, 40), volver: 'https://genesis.skynetgenesis.com/' });
+    const qs = new URLSearchParams({ plan: 'genesis:' + pl, empresa: ctx.colegio_id, meses: String(m), org: (ctx.colegios?.nombre || '').slice(0, 40), volver: location.origin + '/' });
     const r = await fetch('https://skynetgenesis.com/bold-firma.php?' + qs.toString(), { cache: 'no-store' }), d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.error || 'firma');
     if (!window.BoldCheckout) await new Promise((ok, ko) => { const sc = document.createElement('script'); sc.src = 'https://checkout.bold.co/library/boldPaymentButton.js'; sc.onload = ok; sc.onerror = ko; document.head.appendChild(sc); });
@@ -1877,7 +1877,7 @@ function pantallaCerrada() {
   $('#nav').innerHTML = '';
   $('#foot').innerHTML = `${esc(me?.email || '')}<br><button class="btn ghost sm" type="button" onclick="doLogout()">Cerrar sesión</button><div style="margin-top:10px">${sgFirma()}</div>`;
   $('#view').innerHTML = `<div class="panel cerrado"><h1>Acceso suspendido por falta de pago</h1>
-    <p>La suscripción de Genesis-IA de <strong>${esc(ctx.colegios.nombre)}</strong> está pagada hasta el ${fechaLarga(e.pagado_hasta)}. Como el pago no se registró a tiempo, desde el día 10 el acceso de todo el colegio está suspendido.</p>
+    <p>La suscripción de Colegio-IA de <strong>${esc(ctx.colegios.nombre)}</strong> está pagada hasta el ${fechaLarga(e.pagado_hasta)}. Como el pago no se registró a tiempo, desde el día 10 el acceso de todo el colegio está suspendido.</p>
     <p><strong>La información del colegio está completa y segura.</strong> El acceso se restablece en cuanto se confirme el pago.</p>
     ${e.directivo ? `<p>Valor a pagar: <strong>${cop(valorDeuda(e))}</strong>. El pago se hace en línea con Bold y el acceso se restablece automáticamente.</p><div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar ahora</button></div>`
       : '<p>Comuníquese con la rectoría del colegio.</p>'}
@@ -1886,8 +1886,8 @@ function pantallaCerrada() {
 function reciboSusc(id) {
   const p = (S.susc?.ultimos || []).find(x => x.id === id); if (!p) return;
   showDocs(`<section class="doc"><header class="dh"><div><div class="dh-inst">SkyNet Genesis</div><div class="dh-meta">contacto@skynetgenesis.com · WhatsApp 304 437 5758</div></div><div class="dh-t"><strong>Recibo de pago</strong><br>${fmtF(p.fecha)}</div></header>
-    <div class="dgrid">${dato('Cliente', S.k.nombre)}${dato('NIT', S.k.nit)}${dato('Servicio', 'Suscripción de Genesis-IA, gestión escolar')}${dato('Periodo', mesTxt(p.mes))}${dato('Medio de pago', (p.medio || '') + (p.referencia ? ` (${p.referencia})` : ''))}${dato('Valor', cop(p.valor))}</div>
-    <p class="dnote">Recibimos a satisfacción el pago de la suscripción del periodo indicado.</p></section>`, 'Recibo de suscripción', `Recibo Genesis-IA ${mesTxt(p.mes)}`);
+    <div class="dgrid">${dato('Cliente', S.k.nombre)}${dato('NIT', S.k.nit)}${dato('Servicio', 'Suscripción de Colegio-IA, gestión escolar')}${dato('Periodo', mesTxt(p.mes))}${dato('Medio de pago', (p.medio || '') + (p.referencia ? ` (${p.referencia})` : ''))}${dato('Valor', cop(p.valor))}</div>
+    <p class="dnote">Recibimos a satisfacción el pago de la suscripción del periodo indicado.</p></section>`, 'Recibo de suscripción', `Recibo Colegio-IA ${mesTxt(p.mes)}`);
 }
 
 let plat = [];
@@ -1905,7 +1905,7 @@ function vPlataforma() {
         <td>${c.demo ? '<span class="muted">No aplica</span>' : `${fmtF(c.pagado_hasta)} <button class="linkbtn" type="button" onclick="formPagadoHasta('${c.colegio_id}')">Cambiar</button>`}</td><td>${c.demo ? '' : estadoCobroTag(c)}${c.comprobante_id ? ` <button class="btn sm" type="button" onclick="revisarCompPlat('${c.comprobante_id}')">Revisar comprobante</button>` : ''}</td>
         <td>${c.activo ? 'Activo' : 'Suspendido'}</td><td style="white-space:nowrap"><button class="btn sm" type="button" onclick="formPagoSusc('${c.colegio_id}')">Registrar pago</button> <button class="btn ghost sm" type="button" onclick="formPlanColegio('${c.colegio_id}')">Plan</button> <button class="btn ghost sm" type="button" onclick="toggleColegio('${c.colegio_id}',${!c.activo})">${c.activo ? 'Suspender' : 'Reactivar'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Aún no hay colegios. Cree el primero.</div>'}</div>
     ${panelCompsPlat()}${panelCfgPlat()}
-    <div class="panel"><h2>Personas que probaron la demostración</h2>${visitas.length ? `<div class="tbl"><table><thead><tr><th>Fecha</th><th>Nombre</th><th>Correo</th><th>Perfil</th></tr></thead><tbody>${visitas.map(v => `<tr><td>${fechaHora(v.fecha)}</td><td>${esc(v.nombre || '')}</td><td>${esc(v.email || '')}</td><td>${{ coordinador: 'Directivo', docente: 'Docente', acudiente: 'Acudiente' }[v.rol] || esc(v.rol)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún nadie ha probado la demostración. Comparta el enlace de Genesis-IA y pídales que pulsen "Probar la demostración".</p>'}</div>
+    <div class="panel"><h2>Personas que probaron la demostración</h2>${visitas.length ? `<div class="tbl"><table><thead><tr><th>Fecha</th><th>Nombre</th><th>Correo</th><th>Perfil</th></tr></thead><tbody>${visitas.map(v => `<tr><td>${fechaHora(v.fecha)}</td><td>${esc(v.nombre || '')}</td><td>${esc(v.email || '')}</td><td>${{ coordinador: 'Directivo', docente: 'Docente', acudiente: 'Acudiente' }[v.rol] || esc(v.rol)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún nadie ha probado la demostración. Comparta el enlace de Colegio-IA y pídales que pulsen "Probar la demostración".</p>'}</div>
     <p class="muted">Planes: hasta 100 estudiantes $120.000; hasta 250, $220.000; hasta 500, $350.000; hasta 1.000, $550.000 al mes; más de 1.000, $40.000 adicionales por cada 100. Cada colegio puede matricular hasta el tope de su plan. Cada mes se paga por anticipado: desde el día 5 sin pago el colegio ve un aviso y el día 10 se suspende su acceso hasta confirmar el pago. Al registrar un pago o cambiar la fecha de «Pagado hasta», el acceso se restablece de inmediato.</p>`;
 }
 const estadoCobroTag = c => c.cobro === 'cerrada' ? '<span class="tag t3">Cerrada por pago</span>' : c.cobro === 'aviso' ? `<span class="tag t2">Aviso: ${c.dias} ${c.dias === 1 ? 'día' : 'días'}</span>` : c.cobro === 'suspendido' ? '<span class="tag">Suspendido</span>' : '<span class="tag">Activa</span>';
@@ -1957,7 +1957,7 @@ function formColegio() {
     <label class="field"><span>Rector(a)</span><input id="cRec"></label>
     <label class="field"><span>Correo del rector(a)</span><input id="cEmail" type="email"></label>
     <label class="field"><span>Teléfono del rector(a), para WhatsApp</span><input id="cTel" inputmode="tel"></label>
-    <label class="field"><span>Año lectivo inicial</span><select id="cAnio">${[0, 1].map(i => { const y = new Date().getFullYear() + i; return opt(y, y + (i ? ' (si el colegio inicia con Genesis-IA el próximo año)' : ' (en curso)'), new Date().getFullYear()); }).join('')}</select></label></div>
+    <label class="field"><span>Año lectivo inicial</span><select id="cAnio">${[0, 1].map(i => { const y = new Date().getFullYear() + i; return opt(y, y + (i ? ' (si el colegio inicia con Colegio-IA el próximo año)' : ' (en curso)'), new Date().getFullYear()); }).join('')}</select></label></div>
     <p class="muted">El año lectivo va del 1 de enero al 31 de diciembre.</p>
     <p class="muted">Se crea el colegio con el plan de estudios base y una invitación para el rector(a).</p>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="crearColegio()">Crear colegio</button></div>`);
@@ -1969,7 +1969,7 @@ async function crearColegio() {
   const r = await guard(() => q(db.rpc('crear_colegio', d)), 'Colegio creado');
   if (!r) return;
   const url = location.origin + location.pathname;
-  const txt = `Hola, ${d.p_rector_nombre}. Bienvenido(a) a Genesis-IA.\n\n1. Entre a ${url}\n2. Elija "Cree su cuenta" y regístrese con este correo: ${d.p_rector_email.toLowerCase()}\n3. Escriba el código de activación: ${r.codigo}\n\nEl colegio queda listo para el año lectivo ${r.anio}. Desde su cuenta podrá configurar el colegio, crear grupos, matricular estudiantes e invitar a su equipo.`;
+  const txt = `Hola, ${d.p_rector_nombre}. Bienvenido(a) a Colegio-IA.\n\n1. Entre a ${url}\n2. Elija "Cree su cuenta" y regístrese con este correo: ${d.p_rector_email.toLowerCase()}\n3. Escriba el código de activación: ${r.codigo}\n\nEl colegio queda listo para el año lectivo ${r.anio}. Desde su cuenta podrá configurar el colegio, crear grupos, matricular estudiantes e invitar a su equipo.`;
   await guard(prepPlataforma);
   openModal('Colegio creado', `<p>Envíe este mensaje al rector(a):</p><textarea id="invTxt" readonly style="min-height:170px">${esc(txt)}</textarea>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal();render()">Cerrar</button><button class="btn ghost" type="button" onclick="copiar('#invTxt')">Copiar mensaje</button>${waBtn(tel, txt)}</div>`);
@@ -2039,7 +2039,7 @@ function agregarFrase(eid, i) {
 }
 function descargarCSV(nombre, filas) {
   const c = v => { const t = v == null ? '' : String(v); return /[;"\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
-  filas = [...filas, [], [`Generado con Genesis-IA · SkyNet Genesis · ${SG_CORREO} · WhatsApp 304 437 5758`]];
+  filas = [...filas, [], [`Generado con Colegio-IA · SkyNet Genesis · ${SG_CORREO} · WhatsApp 304 437 5758`]];
   const txt = '﻿' + filas.map(f => f.map(c).join(';')).join('\r\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' }));
   a.download = nombre.replace(/[^\wáéíóúñÁÉÍÓÚÑ .-]/g, '') + '.csv'; document.body.appendChild(a); a.click();
@@ -2173,7 +2173,7 @@ function vComunicados() {
              ${mio ? `<button class="btn ghost sm" type="button" onclick="borrarComunicado('${c.id}')">Eliminar</button>` : ''}`}</div></article>`;
     }).join('')}</div>` : '<div class="panel empty">Aún no hay comunicados.</div>');
 }
-function textoCom(c) { return `*${S.k.nombre}*\n${c.tipo}: ${c.titulo}\n\n${c.cuerpo}${c.fecha_evento ? `\n\nFecha: ${fechaHora(c.fecha_evento)}` : ''}\n\nConfirme la lectura en Genesis-IA: ${location.origin + location.pathname}`; }
+function textoCom(c) { return `*${S.k.nombre}*\n${c.tipo}: ${c.titulo}\n\n${c.cuerpo}${c.fecha_evento ? `\n\nFecha: ${fechaHora(c.fecha_evento)}` : ''}\n\nConfirme la lectura en Colegio-IA: ${location.origin + location.pathname}`; }
 function waCom(c) {
   const a = (S.acud || []).filter(x => x.estudiante_id === c.estudiante_id).sort((x, y) => x.orden - y.orden)[0];
   const tel = a?.telefono || est(c.estudiante_id)?.acudiente_tel; return tel ? waBtn(tel, textoCom(c), 'WhatsApp al acudiente') : '';
@@ -2712,7 +2712,7 @@ async function certAnio(eid, anio) {
   showDocs(`<section class="doc">${docHead('Certificado de estudios', `Año lectivo ${anio}`)}
     <p style="margin-top:14px">El suscrito rector(a) de <strong>${esc(S.k.nombre)}</strong> certifica que <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, cursó en esta institución el grado <strong>${esc(gradoTxt(h.grado))}</strong>${h.grupo_nombre ? ` (${esc(h.grupo_nombre)})` : ''} durante el año lectivo ${anio}, con resultado <strong>${h.resultado.toLowerCase()}</strong>, y obtuvo las siguientes valoraciones finales:</p>
     <table><thead><tr><th>${pre ? 'Dimensión' : 'Asignatura'}</th><th>IH</th>${pre ? '' : '<th>Valoración</th>'}<th>Desempeño</th></tr></thead><tbody>
-    ${filas.length ? filas.map(({ a, v }) => `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : `<td>${v.toFixed(1)}</td>`}<td>${desem(v, escAnio)}</td></tr>`).join('') : `<tr><td colspan="4">No hay calificaciones registradas en Genesis-IA para ese año.</td></tr>`}</tbody></table>
+    ${filas.length ? filas.map(({ a, v }) => `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : `<td>${v.toFixed(1)}</td>`}<td>${desem(v, escAnio)}</td></tr>`).join('') : `<tr><td colspan="4">No hay calificaciones registradas en Colegio-IA para ese año.</td></tr>`}</tbody></table>
     <p class="dnote">Escala institucional: ${escAnio.map(s => `${s.d} de ${(+s.min).toFixed(1)} a ${(+s.max).toFixed(1)}`).join(', ')}. Decreto 1290 de 2009.</p>
     <p>Se expide a solicitud del interesado en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
     ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`, `Certificado ${anio}`, nomArchivo(`Certificado ${anio}`, e));
@@ -2795,7 +2795,7 @@ function acAvance() {
 }
 async function recordarDoc(mid) {
   const m = S.miembros.find(x => x.id === mid), ci = cierreDe(acad.p);
-  const t = `Hola, ${m.nombre.split(' ')[0]}. Le recordamos registrar en Genesis-IA las calificaciones pendientes del periodo ${acad.p}${ci ? ` antes del ${fechaLarga(ci)}` : ''}: ${location.origin + location.pathname}. Gracias.`;
+  const t = `Hola, ${m.nombre.split(' ')[0]}. Le recordamos registrar en Colegio-IA las calificaciones pendientes del periodo ${acad.p}${ci ? ` antes del ${fechaLarga(ci)}` : ''}: ${location.origin + location.pathname}. Gracias.`;
   try { await navigator.clipboard.writeText(t); toast('Recordatorio copiado. Péguelo en WhatsApp o en un correo'); } catch { openModal('Recordatorio', `<textarea id="cpT" style="width:100%;min-height:120px">${esc(t)}</textarea><div class="modal-foot"><button class="btn" type="button" onclick="copiar('#cpT')">Copiar</button></div>`); }
 }
 function acCambios() {
