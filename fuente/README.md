@@ -18,7 +18,7 @@ Software de gestión escolar para colegios de Colombia (preescolar a media): bol
 ## Estado (10 de octubre de 2026)
 
 - Esta carpeta `fuente/` es el respaldo del código fuente. Lo que se ve en https://genesis.skynetgenesis.com son los archivos compilados de la raíz del repositorio (`app.js`, `app.css`, `index.html`).
-- Publicada: versión 0.9.4 (etapa 2B: avisos, Hoy, mensajes, autorizaciones, citas; cierre por pago el día 5), con el botón de pago Bold `pagarBoldSusc()` incluido.
-- SQL aplicados en Neon: 001 a 020. Los nombres internos (proyecto Neon "genesis", planes "genesis:" del firmador Bold, repositorio genesis) no cambiaron. Lo de Bold (`plataforma_bold`, `bold_pago_aprobado`, usuario `bold_pagos`) se hizo en la conversación "Pagos automáticos Bold" y no está en `db/`.
+- Publicada: versión 0.9.5 (etapa 3: tienda del colegio con pedidos, lista de útiles por grado, gráficos que cruzan variables; antes 2B: avisos, Hoy, mensajes, autorizaciones, citas; cierre por pago el día 5), con el botón de pago Bold `pagarBoldSusc()` incluido.
+- SQL aplicados en Neon: 001 a 021. Los nombres internos (proyecto Neon "genesis", planes "genesis:" del firmador Bold, repositorio genesis) no cambiaron. Lo de Bold (`plataforma_bold`, `bold_pago_aprobado`, usuario `bold_pagos`) se hizo en la conversación "Pagos automáticos Bold" y no está en `db/`.
 - Para publicar: `cd web && npm install && node build.mjs`. Eso genera `../docs/`, y los tres archivos de esa carpeta se suben a la raíz del repositorio.
 - No borrar `pagarBoldSusc()` ni volver al enlace fijo `bold_url`. La suscripción de los colegios se paga solo con Bold automático.
