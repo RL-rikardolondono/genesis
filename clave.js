@@ -1,7 +1,7 @@
-// Genesis: recuperación de contraseña ("¿Olvidó su contraseña?")
+// Colegio-IA: recuperación de contraseña ("¿Olvidó su contraseña?")
 var AUTH = 'https://ep-weathered-breeze-b4c82o4u.neonauth.c-6.us-east-2.aws.neon.tech/neondb/auth';
 var VOLVER = location.origin + location.pathname;
-var MARCA = '<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Genesis</span></div>';
+var MARCA = '<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Colegio-IA</span></div>';
 
 function caja(html) {
   var a = document.getElementById('auth');
@@ -32,7 +32,7 @@ function pedirEnlace() {
     b.disabled = true; b.textContent = 'Enviando…';
     try {
       await post('/request-password-reset', { email: document.getElementById('oEmail').value.trim(), redirectTo: VOLVER });
-      caja('<h2>Revise su correo</h2><p>Si el correo está registrado en Genesis, en unos minutos le llegará un mensaje con el enlace para crear una contraseña nueva. Revise también la carpeta de correo no deseado.</p>' +
+      caja('<h2>Revise su correo</h2><p>Si el correo está registrado en Colegio-IA, en unos minutos le llegará un mensaje con el enlace para crear una contraseña nueva. Revise también la carpeta de correo no deseado.</p>' +
         '<p class="muted">El enlace vence en una hora.</p><button class="btn" type="button" id="bVolver">Volver a iniciar sesión</button>');
       document.getElementById('bVolver').onclick = irInicio;
     } catch (err) {
