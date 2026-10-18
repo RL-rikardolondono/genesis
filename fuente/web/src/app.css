@@ -284,3 +284,24 @@ td.num,th.num{text-align:center}
 @media (max-width:760px){.topbar .tb-salir{margin-left:0}.topbar{position:sticky;top:0;z-index:5}}
 .topbar .tb-s{display:none}
 @media (max-width:760px){.topbar{flex-wrap:nowrap;padding:6px}.topbar .tb-l{display:none}.topbar .tb-s{display:inline}.topbar .tb-perfil{flex:1 1 0}}
+/* Etapa 2B: avisos, mensajes */
+.tb-avisos{position:relative}
+.tb-avisos .badge{margin-left:4px}
+.hoy h3{margin:0 0 6px;font-size:1.05rem}
+.mensajes{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:14px;align-items:start}
+.hilos{display:flex;flex-direction:column;gap:6px;max-height:70vh;overflow:auto}
+.hilo{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;font:inherit;color:var(--ink)}
+.hilo span{font-size:.82rem;color:var(--muted)}
+.hilo.act{border-color:var(--pencil);background:var(--teal-soft)}
+.conv-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.conv-head h2{margin:0}
+.volver-hilos{display:none}
+.burbujas{display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow:auto;padding:10px 2px;margin:10px 0}
+.burbuja{max-width:80%;align-self:flex-start;background:var(--pen-soft);border-radius:12px 12px 12px 4px;padding:8px 12px}
+.burbuja.mia{align-self:flex-end;background:var(--teal-soft);border-radius:12px 12px 4px 12px}
+.burbuja p{margin:0;white-space:pre-wrap}
+.burbuja span{font-size:.78rem;color:var(--muted)}
+.enviar{display:flex;gap:8px;align-items:flex-end}
+.enviar textarea{flex:1;min-height:60px;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px}
+.malo{color:var(--red)}
+@media (max-width:760px){.mensajes{grid-template-columns:1fr}.mensajes.con-hilo .hilos{display:none}.mensajes:not(.con-hilo) .conv{display:none}.volver-hilos{display:inline-flex}}

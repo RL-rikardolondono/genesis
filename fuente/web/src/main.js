@@ -142,6 +142,7 @@ async function cargarColegio(intento = 0) {
   }
   S.estado = await q(db.rpc('estado_colegio', { p_colegio: c })).catch(() => null);
   if (isFam()) { await cargarComs().catch(() => {}); S.fam = await q(db.rpc('mi_situacion_familia', { p_colegio: c })).catch(() => []); }
+  if (isFam() || atiende()) await cargarNovedades();
 }
 async function cargarGrupo(gid, force) {
   if (!gid || (S.loadedG.has(gid) && !force)) return;
@@ -348,6 +349,9 @@ const VIEWS = [
   { id: 'observador', label: 'Observador', ok: () => isDir() || isDoc() || isFam(), prep: prepObservador, fn: vObservador },
   { id: 'piar', label: 'PIAR e inclusión', ok: () => isDir() || isDoc() || isAcud(), prep: prepPiar, fn: vPiar },
   { id: 'comunicados', label: 'Comunicados', ok: () => true, prep: prepComunicados, fn: vComunicados, badge: () => isFam() ? noLeidos() : 0 },
+  { id: 'mensajes', label: 'Mensajes', ok: () => isAcud() || atiende(), prep: prepMensajes, fn: vMensajes, badge: () => S.nov?.msg || 0 },
+  { id: 'citas', label: 'Citas', ok: () => isAcud() || atiende(), prep: prepCitas, fn: vCitas, badge: () => S.nov?.citasPend || 0 },
+  { id: 'autorizaciones', label: 'Autorizaciones', ok: () => isAcud() || isDir() || isDoc(), prep: prepAutorizaciones, fn: vAutorizaciones, badge: () => S.nov?.aut?.length || 0 },
   { id: 'cronograma', label: 'Cronograma', ok: () => true, prep: prepCronograma, fn: vCronograma },
   { id: 'galeria', label: 'Fotos de la semana', ok: () => !isTes(), prep: prepGaleria, fn: vGaleria },
   { id: 'horario', label: 'Horario', ok: () => isDir() || isDoc() || isFam(), prep: prepHorario, fn: vHorario },
@@ -411,6 +415,7 @@ function barraSup() {
   const per = ctx.estudiantes && isFam() ? `${ROL_TXT[ctx.rol]} de ${esc(est(propio())?.nombres || ctx.estudiantes.nombres)}` : ROL_TXT[ctx.rol];
   return `<div class="topbar">
     <button class="btn ghost sm" type="button" onclick="go('inicio')" ${view === 'inicio' ? 'aria-current="page"' : ''}>Inicio</button>
+    ${isFam() || atiende() ? `<button class="btn ghost sm tb-avisos" type="button" onclick="verAvisos()" title="Avisos" aria-label="Avisos"><span aria-hidden="true">🔔</span>${totalNov() ? `<span class="badge">${totalNov()}</span>` : ''}</button>` : ''}
     <button class="btn ghost sm tb-perfil" type="button" onclick="elegirPerfil()" title="Cambiar de perfil o de colegio"><span class="muted tb-l">Perfil:</span> ${per}<span class="tb-l">${S?.k?.demo ? ' <span class="tag">Demostración</span>' : ''}</span> <span aria-hidden="true">▾</span></button>
     <button class="btn ghost sm tb-salir" type="button" onclick="salirApp()"><span class="tb-l">${S?.k?.demo ? 'Salir de la demostración' : 'Cerrar sesión'}</span><span class="tb-s">Salir</span></button></div>`;
 }
@@ -505,7 +510,8 @@ async function prepInicio() {
     S.susc = await q(db.rpc('mi_suscripcion', { p_colegio: ctx.colegio_id })).catch(() => null);
   }
   if (isDoc()) { for (const g of gruposVis()) await cargarGrupo(g.id); }
-  if (isFam()) { const e = est(propio()); if (e) await cargarGrupo(e.grupo_id); }
+  if (isFam()) { const e = est(propio()); if (e) await cargarGrupo(e.grupo_id).catch(() => {}); }
+  if (isFam() || atiende()) await cargarNovedades();
 }
 function vInicio() {
   const pa = S.k.periodo_actual;
@@ -517,7 +523,7 @@ function vInicio() {
        <div class="stat"><div class="n">${c.filter(x => +x.saldo_vencido > 0).length}</div><div class="l">Estudiantes en mora</div></div></div>
        <button class="btn" type="button" onclick="go('pagos')">Ir a pagos y cartera</button>`;
   }
-  if (isFam() && !alDia()) return head(`Hola, ${esc((ctx.nombre || '').split(' ')[0])}`, esc(S.k.nombre)) + avisoRestringido() + redesHTML();
+  if (isFam() && !alDia()) return head(`Hola, ${esc((ctx.nombre || '').split(' ')[0])}`, esc(S.k.nombre)) + hoyFamilia() + avisoRestringido() + redesHTML();
   if (isDir()) {
     const r = resumen || {}; const pct = r.esperadas ? Math.round(r.registradas / r.esperadas * 100) : 0;
     return head(`Buen día, ${esc(ctx.nombre.split(' ')[0])}`, `${esc(S.k.nombre)}. Año lectivo ${S.k.anio}, periodo ${pa} en curso.`) +
@@ -551,9 +557,9 @@ function vInicio() {
   const g = grupo(e.grupo_id);
   if (!g) return head(`Hola`, '') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
   const pr = promedio(e.id), pe = perdidas(e.id);
-  return head(ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)}` : `Hola, ${esc(e.nombres)}`, `${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) +
+  return head(ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)}` : `Hola, ${esc(e.nombres)}`, `${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + hoyFamilia() +
     `<div class="stats">
-      <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : pr.toFixed(1)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado, ' + desem(pr)}</div></div>
+      <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : pr.toFixed(1)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado' + (pr == null ? '' : ', ' + desem(pr))}</div></div>
       <div class="stat"><div class="n">${pe.length}</div><div class="l">Asignaturas en bajo</div></div>
       <div class="stat"><div class="n">${fallas(e.id)}</div><div class="l">${porClase() ? 'Fallas (horas de clase)' : 'Fallas registradas'} · <button class="linkbtn" type="button" onclick="detalleFallas('${e.id}')">Ver fechas</button></div></div>
     </div>
@@ -1838,7 +1844,7 @@ function panelSuscripcion(r) {
   return `<p>Plan hasta <strong>${x.plan_max} estudiantes</strong>: <strong>${cop(x.valor)} al mes</strong>. Incluye todos los módulos y usuarios ilimitados para docentes, familias y directivos.</p>
     <p>Estudiantes activos: <strong>${x.activos} de ${x.plan_max}</strong>${x.activos >= x.plan_max ? ' <span class="tag t3">Plan completo: para matricular más, solicite la ampliación</span>' : ''}</p>
     <p>${tag} Pagado hasta el <strong>${fechaLarga(x.pagado_hasta)}</strong>.</p>
-    <p class="muted">Cada mes se paga por anticipado. Desde el día 5 sin pago aparece un aviso y el día 10 se suspende el acceso hasta que se confirme el pago.</p>
+    <p class="muted">Cada mes se paga por anticipado. Si el mes no se ha pagado, el día 5 se cierra el acceso del colegio hasta que se confirme el pago.</p>
     <div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar suscripción</button></div>
     ${x.ultimos?.length ? `<h3>Pagos recibidos</h3><div class="tbl"><table><tbody>${x.ultimos.map(p => `<tr><td>${mesTxt(p.mes)}</td><td>${cop(p.valor)}</td><td>${esc(p.medio || '')}</td><td><button class="btn ghost sm" type="button" onclick="reciboSusc('${p.id}')">Recibo</button></td></tr>`).join('')}</tbody></table></div>` : ''}`;
 }
@@ -1877,7 +1883,7 @@ function pantallaCerrada() {
   $('#nav').innerHTML = '';
   $('#foot').innerHTML = `${esc(me?.email || '')}<br><button class="btn ghost sm" type="button" onclick="doLogout()">Cerrar sesión</button><div style="margin-top:10px">${sgFirma()}</div>`;
   $('#view').innerHTML = `<div class="panel cerrado"><h1>Acceso suspendido por falta de pago</h1>
-    <p>La suscripción de Colegio-IA de <strong>${esc(ctx.colegios.nombre)}</strong> está pagada hasta el ${fechaLarga(e.pagado_hasta)}. Como el pago no se registró a tiempo, desde el día 10 el acceso de todo el colegio está suspendido.</p>
+    <p>La suscripción de Colegio-IA de <strong>${esc(ctx.colegios.nombre)}</strong> está pagada hasta el ${fechaLarga(e.pagado_hasta)}. Como el pago del mes no se registró, desde el día 5 el acceso de todo el colegio está cerrado.</p>
     <p><strong>La información del colegio está completa y segura.</strong> El acceso se restablece en cuanto se confirme el pago.</p>
     ${e.directivo ? `<p>Valor a pagar: <strong>${cop(valorDeuda(e))}</strong>. El pago se hace en línea con Bold y el acceso se restablece automáticamente.</p><div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar ahora</button></div>`
       : '<p>Comuníquese con la rectoría del colegio.</p>'}
@@ -1906,7 +1912,7 @@ function vPlataforma() {
         <td>${c.activo ? 'Activo' : 'Suspendido'}</td><td style="white-space:nowrap"><button class="btn sm" type="button" onclick="formPagoSusc('${c.colegio_id}')">Registrar pago</button> <button class="btn ghost sm" type="button" onclick="formPlanColegio('${c.colegio_id}')">Plan</button> <button class="btn ghost sm" type="button" onclick="toggleColegio('${c.colegio_id}',${!c.activo})">${c.activo ? 'Suspender' : 'Reactivar'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Aún no hay colegios. Cree el primero.</div>'}</div>
     ${panelCompsPlat()}${panelCfgPlat()}
     <div class="panel"><h2>Personas que probaron la demostración</h2>${visitas.length ? `<div class="tbl"><table><thead><tr><th>Fecha</th><th>Nombre</th><th>Correo</th><th>Perfil</th></tr></thead><tbody>${visitas.map(v => `<tr><td>${fechaHora(v.fecha)}</td><td>${esc(v.nombre || '')}</td><td>${esc(v.email || '')}</td><td>${{ coordinador: 'Directivo', docente: 'Docente', acudiente: 'Acudiente' }[v.rol] || esc(v.rol)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún nadie ha probado la demostración. Comparta el enlace de Colegio-IA y pídales que pulsen "Probar la demostración".</p>'}</div>
-    <p class="muted">Planes: hasta 100 estudiantes $120.000; hasta 250, $220.000; hasta 500, $350.000; hasta 1.000, $550.000 al mes; más de 1.000, $40.000 adicionales por cada 100. Cada colegio puede matricular hasta el tope de su plan. Cada mes se paga por anticipado: desde el día 5 sin pago el colegio ve un aviso y el día 10 se suspende su acceso hasta confirmar el pago. Al registrar un pago o cambiar la fecha de «Pagado hasta», el acceso se restablece de inmediato.</p>`;
+    <p class="muted">Planes: hasta 100 estudiantes $120.000; hasta 250, $220.000; hasta 500, $350.000; hasta 1.000, $550.000 al mes; más de 1.000, $40.000 adicionales por cada 100. Cada colegio puede matricular hasta el tope de su plan. Cada mes se paga por anticipado: si el mes no se ha pagado, el día 5 se cierra el acceso del colegio hasta confirmar el pago. Al registrar un pago o cambiar la fecha de «Pagado hasta», el acceso se restablece de inmediato.</p>`;
 }
 const estadoCobroTag = c => c.cobro === 'cerrada' ? '<span class="tag t3">Cerrada por pago</span>' : c.cobro === 'aviso' ? `<span class="tag t2">Aviso: ${c.dias} ${c.dias === 1 ? 'día' : 'días'}</span>` : c.cobro === 'suspendido' ? '<span class="tag">Suspendido</span>' : '<span class="tag">Activa</span>';
 function panelCompsPlat() {
@@ -1932,7 +1938,7 @@ async function decidirCompPlat(id, aprobar) {
 }
 function formPagadoHasta(id) {
   const c = plat.find(x => x.colegio_id === id);
-  openModal(`Pagado hasta: ${c.nombre}`, `<p class="muted">Al cambiar la fecha, el acceso del colegio se ajusta de inmediato: activo si la fecha es futura; aviso desde el día 5 y suspensión desde el día 10 después de esa fecha.</p>
+  openModal(`Pagado hasta: ${c.nombre}`, `<p class="muted">Al cambiar la fecha, el acceso del colegio se ajusta de inmediato: activo si la fecha es futura; cerrado desde el día 5 del mes siguiente a esa fecha.</p>
     <div class="formgrid">${fIn('phFec', 'Pagado hasta', c.pagado_hasta || hoy(), 'type="date"')}</div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarPagadoHasta('${id}')">Guardar</button></div>`);
 }
@@ -2452,6 +2458,304 @@ async function guardarRedes() {
 }
 
 /* =====================================================================
+   Etapa 2B: campana de avisos, "Hoy" para las familias, mensajes privados,
+   autorizaciones y citas
+   ===================================================================== */
+function llenarEsts(id, gid) { const el = document.getElementById(id); if (el) el.innerHTML = estsDe(gid).map(e => opt(e.id, `${e.apellidos} ${e.nombres}`)).join(''); }
+const atiende = () => ctx && ['rector', 'coordinador', 'docente'].includes(ctx.rol);
+const fechaHoraCorta = t => new Date(t).toLocaleString('es-CO', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+const aplicaAut = (a, eid) => a.destino === 'todos' || a.grupo_id === est(eid)?.grupo_id;
+const autAbierta = a => !a.fecha_limite || a.fecha_limite >= hoy();
+
+/* ---------- Novedades (campana) ---------- */
+async function cargarNovedades() {
+  const n = { msg: 0, aut: [], citasPend: 0, citasProx: [], fotosHoy: 0, horarioHoy: [] };
+  try {
+    if (isFam()) {
+      const e = propio(); if (!e) { S.nov = n; return; }
+      const [m, au, ra, ci] = await Promise.all([
+        q(db.from('mensajes').select('id').eq('estudiante_id', e).eq('de_familia', false).is('leido_en', null).limit(200)),
+        q(db.from('autorizaciones').select('id,titulo,detalle,fecha_evento,fecha_limite,destino,grupo_id,autor_nombre,creado_en').eq('colegio_id', ctx.colegio_id).order('creado_en', { ascending: false }).limit(60)),
+        q(db.from('respuestas_aut').select('autorizacion_id,autoriza').eq('estudiante_id', e)),
+        q(db.from('citas').select('id,fecha,estado,modalidad,personal_id,motivo').eq('estudiante_id', e).in('estado', ['Solicitada', 'Confirmada']).order('creado_en')),
+      ]);
+      n.msg = m.length;
+      const resp = new Set(ra.map(r => r.autorizacion_id));
+      if (isAcud()) n.aut = au.filter(a => aplicaAut(a, e) && autAbierta(a) && !resp.has(a.id));
+      n.citasProx = ci.filter(c => c.estado === 'Confirmada' && c.fecha && c.fecha.slice(0, 10) >= hoy());
+      const g = est(e)?.grupo_id;
+      if (g) {
+        const [fo, ho] = await Promise.all([
+          q(db.from('fotos_clase').select('id').eq('grupo_id', g).eq('fecha', hoy()).limit(20)).catch(() => []),
+          q(db.from('horario').select('*').eq('grupo_id', g).order('id')).catch(() => []),
+        ]);
+        n.fotosHoy = fo.length; n.horarioHoy = ho.filter(h => h.dia === isoDow(hoy())).sort((a, b) => a.bloque - b.bloque);
+      }
+    } else if (atiende()) {
+      const [m, ci] = await Promise.all([
+        q(db.from('mensajes').select('id').eq('personal_id', ctx.id).eq('de_familia', true).is('leido_en', null).limit(500)),
+        q(db.from('citas').select('id,fecha,estado,estudiante_id,motivo,modalidad').eq('personal_id', ctx.id).in('estado', ['Solicitada', 'Confirmada']).order('creado_en')),
+      ]);
+      n.msg = m.length; n.citasPend = ci.filter(c => c.estado === 'Solicitada').length;
+      n.citasProx = ci.filter(c => c.estado === 'Confirmada' && c.fecha && c.fecha.slice(0, 10) >= hoy());
+    }
+  } catch (e) { console.warn(e); }
+  S.nov = n;
+}
+function totalNov() {
+  const n = S.nov || {}; let t = (n.msg || 0) + (n.aut?.length || 0) + (n.citasPend || 0) + (n.citasProx || []).filter(c => c.fecha.slice(0, 10) <= sumarDias(hoy(), 1)).length;
+  if (isFam()) t += noLeidos();
+  return t;
+}
+function verAvisos() {
+  const n = S.nov || {}, items = [];
+  const it = (txt, vista, extra = '') => items.push(`<button type="button" class="perfil" onclick="closeModal();${extra}go('${vista}')"><strong>${txt}</strong></button>`);
+  if (isFam() && noLeidos()) it(`${noLeidos()} ${noLeidos() === 1 ? 'comunicado sin leer' : 'comunicados sin leer'}`, 'comunicados');
+  if (n.msg) it(`${n.msg} ${n.msg === 1 ? 'mensaje nuevo' : 'mensajes nuevos'}`, 'mensajes');
+  if (n.aut?.length) it(`${n.aut.length} ${n.aut.length === 1 ? 'autorización por responder' : 'autorizaciones por responder'}`, 'autorizaciones');
+  if (n.citasPend) it(`${n.citasPend} ${n.citasPend === 1 ? 'solicitud de cita por responder' : 'solicitudes de cita por responder'}`, 'citas');
+  (n.citasProx || []).filter(c => c.fecha.slice(0, 10) <= sumarDias(hoy(), 1)).forEach(c => it(`Cita ${c.fecha.slice(0, 10) === hoy() ? 'hoy' : 'mañana'}: ${fechaHoraCorta(c.fecha)}`, 'citas'));
+  openModal('Avisos', items.length ? `<div class="perfiles">${items.join('')}</div>` : '<p class="muted">No tiene avisos pendientes. Aquí le aparecerán los mensajes nuevos, las autorizaciones por responder y las citas próximas.</p>');
+}
+
+/* ---------- "Hoy" para la familia (arriba del inicio) ---------- */
+function hoyFamilia() {
+  const e = est(propio()); if (!e) return '';
+  const n = S.nov || {}, h = hoy(), aviso = [];
+  const a = S.asis?.[`${h}|${e.id}`];
+  if (a === 'A') aviso.push(`<div class="note bloqueo"><strong>Hoy ${esc(e.nombres)} no asistió al colegio.</strong> Si faltó por un motivo justificado, envíe la excusa. <button class="btn sm" type="button" onclick="go('excusas')">Enviar excusa</button></div>`);
+  else if (a === 'T') aviso.push(`<div class="note"><strong>Hoy ${esc(e.nombres)} llegó tarde al colegio.</strong></div>`);
+  const eventos = (S.coms ? comsMios() : []).filter(c => c.fecha_evento && c.fecha_evento.slice(0, 10) >= h && c.fecha_evento.slice(0, 10) <= sumarDias(h, 7));
+  const fil = [];
+  if (noLeidos()) fil.push(`<li><button class="linkbtn" type="button" onclick="go('comunicados')">${noLeidos()} ${noLeidos() === 1 ? 'comunicado sin leer' : 'comunicados sin leer'}</button></li>`);
+  if (n.msg) fil.push(`<li><button class="linkbtn" type="button" onclick="go('mensajes')">${n.msg} ${n.msg === 1 ? 'mensaje nuevo del colegio' : 'mensajes nuevos del colegio'}</button></li>`);
+  if (n.aut?.length) fil.push(`<li><button class="linkbtn" type="button" onclick="go('autorizaciones')">${n.aut.length} ${n.aut.length === 1 ? 'autorización por responder' : 'autorizaciones por responder'}</button></li>`);
+  (n.citasProx || []).forEach(c => fil.push(`<li><button class="linkbtn" type="button" onclick="go('citas')">Cita: ${fechaHoraCorta(c.fecha)} (${esc(c.modalidad)})</button></li>`));
+  eventos.forEach(c => fil.push(`<li><button class="linkbtn" type="button" onclick="go('cronograma')">${esc(c.tipo)}: ${esc(c.titulo)} · ${fechaHoraCorta(c.fecha_evento)}</button></li>`));
+  if (n.fotosHoy) fil.push(`<li><button class="linkbtn" type="button" onclick="sel.gdia='${h}';go('galeria')">${n.fotosHoy} ${n.fotosHoy === 1 ? 'foto nueva' : 'fotos nuevas'} de la clase de hoy</button></li>`);
+  const clases = (n.horarioHoy || []).map(x => `${x.hora ? esc(x.hora) + ' · ' : ''}${esc(nomAsig(x.asignatura_id) || '')}`).filter(t => t.trim());
+  return `${aviso.join('')}<section class="panel hoy"><h2>Hoy, ${fechaLarga(h)}</h2>
+    <div class="cols"><div><h3>Pendientes y novedades</h3>${fil.length ? `<ul class="list">${fil.join('')}</ul>` : '<p class="muted">No hay novedades por ahora.</p>'}</div>
+    <div><h3>Clases de hoy</h3>${clases.length ? `<ul class="list">${clases.map(c => `<li>${c}</li>`).join('')}</ul>` : `<p class="muted">${isoDow(h) >= 6 ? 'Hoy no hay clases.' : 'El colegio aún no ha publicado el horario.'}</p>`}</div></div>
+    <div class="toolbar" style="margin-top:10px"><button class="btn sm" type="button" onclick="go('mensajes')">Escribir al colegio</button><button class="btn ghost sm" type="button" onclick="go('citas')">Pedir una cita</button></div></section>`;
+}
+
+/* ---------- Mensajes privados ---------- */
+let msjs = [], contactos2 = [];
+async function prepMensajes() {
+  if (isFam()) {
+    const e = propio();
+    [msjs, contactos2] = await Promise.all([
+      all(() => db.from('mensajes').select('*').eq('estudiante_id', e).order('creado_en').order('id')),
+      q(db.rpc('contactos_colegio', { p_estudiante: e })).catch(() => []),
+    ]);
+    if (!sel.hilo || !contactos2.some(c => c.id === sel.hilo)) sel.hilo = (msjs.length ? msjs[msjs.length - 1].personal_id : '') || '';
+  } else {
+    msjs = await all(() => db.from('mensajes').select('*').eq('personal_id', ctx.id).order('creado_en').order('id'));
+    if (sel.hilo && !est(sel.hilo)) sel.hilo = '';
+  }
+  if (sel.hilo) await leerHilo();
+}
+async function leerHilo() {
+  const [e, p] = isFam() ? [propio(), sel.hilo] : [sel.hilo, ctx.id];
+  const sin = msjs.filter(m => m.estudiante_id === e && m.personal_id === p && !m.leido_en && m.de_familia === !isFam());
+  if (!sin.length) return;
+  await q(db.rpc('leer_mensajes', { p_estudiante: e, p_personal: p })).catch(() => {});
+  sin.forEach(m => m.leido_en = new Date().toISOString());
+  if (S.nov) S.nov.msg = Math.max(0, (S.nov.msg || 0) - sin.length);
+}
+function hilosPersonal() {
+  const map = new Map();
+  msjs.forEach(m => { const h = map.get(m.estudiante_id) || { eid: m.estudiante_id, ult: m, sin: 0 }; h.ult = m; if (m.de_familia && !m.leido_en) h.sin++; map.set(m.estudiante_id, h); });
+  return [...map.values()].sort((a, b) => b.ult.creado_en.localeCompare(a.ult.creado_en));
+}
+const ROL_CONT = c => c.director ? 'Director(a) de grupo' : c.rol === 'docente' ? 'Docente' + (c.asignaturas ? ' de ' + c.asignaturas : '') : ROL_TXT[c.rol];
+function vMensajes() {
+  const fam = isFam();
+  if (fam && !isAcud()) return head('Mensajes') + '<div class="panel empty">Los mensajes con el colegio los maneja el acudiente.</div>';
+  if (!fam && !atiende()) return head('Mensajes') + '<div class="panel empty">Esta sección es para rectoría, coordinación y docentes.</div>';
+  let lista, titulo = '', hilo = [];
+  if (fam) {
+    lista = contactos2.map(c => { const sin = msjs.filter(m => m.personal_id === c.id && !m.de_familia && !m.leido_en).length;
+      return `<button type="button" class="hilo ${c.id === sel.hilo ? 'act' : ''}" onclick="abrirHilo('${c.id}')"><strong>${esc(c.nombre)}</strong>${sin ? ` <span class="badge">${sin}</span>` : ''}<span>${esc(ROL_CONT(c))}</span></button>`; }).join('');
+    const c = contactos2.find(x => x.id === sel.hilo); if (c) { titulo = `${esc(c.nombre)} · ${esc(ROL_CONT(c))}`; hilo = msjs.filter(m => m.personal_id === c.id); }
+  } else {
+    const hs = hilosPersonal();
+    lista = hs.map(h => { const e = est(h.eid); return `<button type="button" class="hilo ${h.eid === sel.hilo ? 'act' : ''}" onclick="abrirHilo('${h.eid}')"><strong>Familia de ${esc(e ? nom(e) : 'un estudiante')}</strong>${h.sin ? ` <span class="badge">${h.sin}</span>` : ''}<span>${esc(grupo(e?.grupo_id)?.nombre || '')} · ${fechaHoraCorta(h.ult.creado_en)}</span></button>`; }).join('');
+    const e = est(sel.hilo); if (e) { titulo = `Familia de ${esc(nom(e))} · ${esc(grupo(e.grupo_id)?.nombre || '')}`; hilo = msjs.filter(m => m.estudiante_id === e.id); }
+  }
+  const sinLista = fam ? '<p class="muted">Aún no hay docentes asignados al curso.</p>' : '<p class="muted">Aún no tiene conversaciones. Use "Nuevo mensaje" para escribirle a una familia.</p>';
+  setTimeout(() => { const b = $('#hiloMsjs'); if (b) b.scrollTop = b.scrollHeight; }, 0);
+  return head('Mensajes', fam ? 'Escríbale directamente al director de grupo, a los docentes o a coordinación. Solo usted y esa persona ven la conversación.' : 'Conversaciones privadas con las familias. Solo usted y la familia ven cada conversación.',
+    fam ? '' : '<button class="btn" type="button" onclick="nuevoMensaje()">Nuevo mensaje</button>') +
+    `<div class="mensajes ${sel.hilo ? 'con-hilo' : ''}"><aside class="panel hilos">${lista || sinLista}</aside>
+      <section class="panel conv">${titulo ? `<div class="conv-head"><button class="btn ghost sm volver-hilos" type="button" onclick="sel.hilo='';render()">← Conversaciones</button><h2>${titulo}</h2></div>
+        <div class="burbujas" id="hiloMsjs">${hilo.length ? hilo.map(m => { const mio = fam ? m.de_familia : !m.de_familia; return `<div class="burbuja ${mio ? 'mia' : ''}"><p>${esc(m.texto)}</p><span>${esc(mio ? 'Usted' : m.autor_nombre || '')} · ${fechaHoraCorta(m.creado_en)}${mio && m.leido_en ? ' · Leído' : ''}</span></div>`; }).join('') : '<p class="muted">Aún no hay mensajes. Escriba el primero.</p>'}</div>
+        <div class="enviar"><textarea id="msjTxt" maxlength="2000" placeholder="Escriba su mensaje…"></textarea><button class="btn" type="button" id="msjBtn" onclick="enviarMensaje()">Enviar</button></div>
+        <p class="muted" style="font-size:.85rem;margin:6px 0 0">Para algo urgente, comuníquese con el colegio por teléfono.</p>`
+      : '<p class="empty">Elija una conversación.</p>'}</section></div>`;
+}
+async function abrirHilo(id) { sel.hilo = id; await guard(leerHilo); render(); }
+async function enviarMensaje() {
+  const t = vv('msjTxt'); if (!t) return toast('Escriba el mensaje');
+  const d = isFam() ? { estudiante_id: propio(), personal_id: sel.hilo, texto: t } : { estudiante_id: sel.hilo, personal_id: ctx.id, texto: t };
+  await busy('#msjBtn', async () => {
+    const r = await guard(() => q(db.from('mensajes').insert(d).select().single()));
+    if (r) { msjs.push(r); render(); }
+  });
+}
+function nuevoMensaje() {
+  const gs = isDir() ? S.grupos : gruposVis(); if (!gs.length) return toast('No tiene cursos asignados');
+  openModal('Nuevo mensaje a una familia', `<div class="formgrid"><label class="field"><span>Curso</span><select id="nmG" onchange="llenarEsts('nmE',this.value)">${gs.map(g => opt(g.id, g.nombre)).join('')}</select></label>
+    <label class="field"><span>Estudiante</span><select id="nmE">${estsDe(gs[0].id).map(e => opt(e.id, `${e.apellidos} ${e.nombres}`)).join('')}</select></label></div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="const e=document.getElementById('nmE').value;if(!e)return;closeModal();sel.hilo=e;render()">Abrir conversación</button></div>`);
+}
+
+/* ---------- Autorizaciones ---------- */
+let auts = [], resps = [];
+async function prepAutorizaciones() {
+  auts = await all(() => db.from('autorizaciones').select('*').eq('colegio_id', ctx.colegio_id).order('creado_en', { ascending: false }).order('id'));
+  if (isFam()) resps = await q(db.from('respuestas_aut').select('*').eq('estudiante_id', propio()));
+  else {
+    const ids = auts.map(a => a.id); resps = [];
+    for (const part of chunks(ids, 60)) resps.push(...await all(() => db.from('respuestas_aut').select('*').in('autorizacion_id', part).order('autorizacion_id').order('estudiante_id')));
+  }
+}
+function vAutorizaciones() {
+  if (isFam()) {
+    const e = propio(), l = auts.filter(a => aplicaAut(a, e));
+    return head('Autorizaciones', `Permisos que el colegio le pide para ${esc(est(e)?.nombres || 'su hijo(a)')}: salidas pedagógicas, eventos, uso de imagen. Responda Sí o No.`) +
+      (l.length ? `<div class="card-list">${l.map(a => { const r = resps.find(x => x.autorizacion_id === a.id), ab = autAbierta(a);
+        return `<article class="item ${!r && ab ? 'unread' : ''}"><h3>${esc(a.titulo)}</h3><div class="meta">${esc(a.autor_nombre || '')} · ${fechaHora(a.creado_en)}${a.fecha_evento ? ` · Fecha: ${fechaLarga(a.fecha_evento)}` : ''}${a.fecha_limite ? ` · Responder hasta: ${fechaLarga(a.fecha_limite)}` : ''}</div>
+          <p style="white-space:pre-wrap">${esc(a.detalle)}</p>
+          ${r ? `<p><span class="tag ${r.autoriza ? '' : 't3'}">${r.autoriza ? 'Usted autorizó' : 'Usted no autorizó'}</span> <span class="muted">${fechaHora(r.respondido_en)}</span></p>` : ''}
+          ${isAcud() && ab ? `<div class="toolbar" style="margin:6px 0 0"><button class="btn sm" type="button" onclick="responderAut('${a.id}', true)">${r ? 'Cambiar a: Sí autorizo' : 'Sí autorizo'}</button><button class="btn ghost sm" type="button" onclick="responderAut('${a.id}', false)">${r ? 'Cambiar a: No autorizo' : 'No autorizo'}</button></div>` : (!ab && !r ? '<p class="muted">El plazo para responder venció.</p>' : '')}</article>`; }).join('')}</div>`
+      : '<div class="panel empty">No hay autorizaciones por ahora.</div>');
+  }
+  const puede = isDir() || isDoc();
+  const vis = auts.filter(a => isDir() || isTes() || a.destino === 'todos' || gruposVis().some(g => g.id === a.grupo_id));
+  return head('Autorizaciones', 'Pida a las familias autorización para salidas pedagógicas, eventos o uso de imagen, y vea quién respondió.', puede ? '<button class="btn" type="button" onclick="formAutorizacion()">Nueva autorización</button>' : '') +
+    (vis.length ? `<div class="card-list">${vis.map(a => { const es = S.ests.filter(e => e.estado === 'Activo' && (a.destino === 'todos' || e.grupo_id === a.grupo_id)), rs = resps.filter(r => r.autorizacion_id === a.id);
+      const si = rs.filter(r => r.autoriza).length, no = rs.filter(r => !r.autoriza).length;
+      return `<article class="item"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><h3>${esc(a.titulo)}</h3><span class="tag">${a.destino === 'todos' ? 'Todo el colegio' : esc(grupo(a.grupo_id)?.nombre || '')}</span></div>
+        <div class="meta">${esc(a.autor_nombre || '')} · ${fechaHora(a.creado_en)}${a.fecha_evento ? ` · Fecha: ${fechaLarga(a.fecha_evento)}` : ''}${a.fecha_limite ? ` · Responder hasta: ${fechaLarga(a.fecha_limite)}` : ''}</div>
+        <p><span class="ok">${si} autorizaron</span> · <span class="malo">${no} no autorizaron</span> · <span class="muted">${Math.max(0, es.length - si - no)} sin responder</span></p>
+        <div class="toolbar" style="margin:6px 0 0"><button class="btn ghost sm" type="button" onclick="detalleAut('${a.id}')">Ver respuestas</button>${isDir() || a.creado_por === me.id ? `<button class="btn ghost sm" type="button" onclick="borrarAut('${a.id}')">Eliminar</button>` : ''}</div></article>`; }).join('')}</div>`
+    : '<div class="panel empty">Aún no hay autorizaciones.</div>');
+}
+function formAutorizacion() {
+  const gs = isDir() ? S.grupos : gruposVis();
+  openModal('Nueva autorización', `<div class="formgrid">
+    <label class="field"><span>Para</span><select id="auD" onchange="document.getElementById('auGB').hidden=this.value==='todos'">${isDir() ? opt('todos', 'Todo el colegio', 'todos') : ''}${opt('grupo', 'Un curso', isDir() ? '' : 'grupo')}</select></label>
+    <label class="field" id="auGB" ${isDir() ? 'hidden' : ''}><span>Curso</span><select id="auG">${gs.map(g => opt(g.id, g.nombre)).join('')}</select></label>
+    ${fIn('auT', 'Título', '', 'maxlength="150" placeholder="Ejemplo: Salida pedagógica al acuario"')}
+    ${fIn('auF', 'Fecha de la actividad (opcional)', '', 'type="date"')}${fIn('auL', 'Responder hasta (opcional)', '', 'type="date"')}
+    ${fTa('auX', 'Detalle', '', 'Lugar, horario, transporte, costo, qué deben llevar…')}</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="auBtn" onclick="guardarAut()">Enviar a las familias</button></div>`);
+}
+async function guardarAut() {
+  const d = $('#auD').value, a = { colegio_id: ctx.colegio_id, destino: d, grupo_id: d === 'grupo' ? $('#auG').value : null, titulo: vv('auT'), detalle: vv('auX'), fecha_evento: vv('auF') || null, fecha_limite: vv('auL') || null };
+  if (a.titulo.length < 3 || !a.detalle) return toast('Escriba el título y el detalle');
+  if (a.fecha_limite && a.fecha_limite < hoy()) return toast('La fecha límite no puede ser anterior a hoy');
+  const r = await busy('#auBtn', () => guard(() => q(db.from('autorizaciones').insert(a).select().single()), 'Autorización enviada'));
+  if (r) { auts.unshift(r); closeModal(); render(); }
+}
+async function responderAut(id, si) {
+  const r = await guard(() => q(db.from('respuestas_aut').upsert({ autorizacion_id: id, estudiante_id: propio(), autoriza: si }, { onConflict: 'autorizacion_id,estudiante_id' }).select().single()), si ? 'Gracias, quedó autorizado' : 'Gracias, quedó registrada su respuesta');
+  if (r) { resps = resps.filter(x => x.autorizacion_id !== id).concat(r); if (S.nov) S.nov.aut = (S.nov.aut || []).filter(a => a.id !== id); render(); }
+}
+function detalleAut(id) {
+  const a = auts.find(x => x.id === id), es = S.ests.filter(e => e.estado === 'Activo' && (a.destino === 'todos' || e.grupo_id === a.grupo_id)).sort((x, y) => (grupo(x.grupo_id)?.nombre || '').localeCompare(grupo(y.grupo_id)?.nombre || '') || nom(x).localeCompare(nom(y)));
+  const rs = resps.filter(r => r.autorizacion_id === id);
+  const fila = e => { const r = rs.find(x => x.estudiante_id === e.id); return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td><td>${esc(grupo(e.grupo_id)?.nombre || '')}</td><td>${r ? (r.autoriza ? 'Sí autoriza' : 'No autoriza') : 'Sin responder'}</td><td>${r ? esc(r.nombre || '') + '<br>' + fechaHora(r.respondido_en) : ''}</td></tr>`; };
+  lastDocs = `<section class="doc">${docHead('Autorización: ' + esc(a.titulo), a.fecha_evento ? fechaLarga(a.fecha_evento) : '')}<p style="white-space:pre-wrap">${esc(a.detalle)}</p><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Respuesta</th><th>Quién respondió</th></tr></thead><tbody>${es.map(fila).join('')}</tbody></table></section>`;
+  showDocs(lastDocs, 'Respuestas de la autorización', `Autorizacion ${a.titulo}`);
+}
+async function borrarAut(id) {
+  if (!confirm('¿Eliminar esta autorización y sus respuestas?')) return;
+  const ok = await guard(async () => { await q(db.from('autorizaciones').delete().eq('id', id)); return true; }, 'Autorización eliminada');
+  if (ok) { auts = auts.filter(a => a.id !== id); render(); }
+}
+
+/* ---------- Citas ---------- */
+let citas = [];
+const ESTADO_CITA = { Solicitada: 't2', Confirmada: '', Cancelada: 't3', Realizada: '' };
+async function prepCitas() {
+  if (isFam()) {
+    [citas, contactos2] = await Promise.all([
+      all(() => db.from('citas').select('*').eq('estudiante_id', propio()).order('creado_en', { ascending: false }).order('id')),
+      q(db.rpc('contactos_colegio', { p_estudiante: propio() })).catch(() => []),
+    ]);
+  } else {
+    if (isDir()) await cargarMiembros().catch(() => {});
+    const base = () => db.from('citas').select('*').order('creado_en', { ascending: false }).order('id');
+    citas = await all(() => sel.citTodas && isDir() ? base().eq('colegio_id', ctx.colegio_id) : base().eq('personal_id', ctx.id));
+  }
+}
+const nomPersonal = id => (contactos2.find(c => c.id === id) || (S.miembros || []).find(m => m.id === id))?.nombre || (id === ctx.id ? ctx.nombre : '');
+function vCitas() {
+  const fam = isFam();
+  if (fam && !isAcud()) return head('Citas') + '<div class="panel empty">Las citas con el colegio las maneja el acudiente.</div>';
+  const act = citas.filter(c => ['Solicitada', 'Confirmada'].includes(c.estado)), pas = citas.filter(c => !['Solicitada', 'Confirmada'].includes(c.estado));
+  const card = c => { const e = est(c.estudiante_id), mia = !fam && c.personal_id === ctx.id;
+    return `<article class="item ${c.estado === 'Solicitada' && mia ? 'unread' : ''}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><h3>${fam ? esc(nomPersonal(c.personal_id) || 'Colegio') : 'Familia de ' + esc(e ? nom(e) : '')}</h3><span class="tag ${ESTADO_CITA[c.estado]}">${c.estado}</span></div>
+      <div class="meta">${c.fecha ? fechaHoraCorta(c.fecha) + ' · ' : ''}${esc(c.modalidad)}${!fam ? ` · ${esc(grupo(e?.grupo_id)?.nombre || '')}` : ''}${!fam && !mia ? ` · Con ${esc(nomPersonal(c.personal_id))}` : ''} · ${c.pedida_por === 'familia' ? 'Pedida por la familia' : 'Programada por el colegio'}</div>
+      <p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.preferencia ? `<p class="muted">Horario que prefiere la familia: ${esc(c.preferencia)}</p>` : ''}${c.respuesta ? `<p><strong>Nota del colegio:</strong> ${esc(c.respuesta)}</p>` : ''}
+      ${['Solicitada', 'Confirmada'].includes(c.estado) ? `<div class="toolbar" style="margin:6px 0 0">${mia ? `<button class="btn sm" type="button" onclick="formConfirmarCita('${c.id}')">${c.estado === 'Solicitada' ? 'Confirmar fecha' : 'Cambiar fecha'}</button>${c.estado === 'Confirmada' && c.fecha && c.fecha.slice(0, 10) <= hoy() ? `<button class="btn ghost sm" type="button" onclick="estadoCita('${c.id}','Realizada')">Marcar realizada</button>` : ''}` : ''}${mia || (fam && isAcud()) ? `<button class="btn ghost sm" type="button" onclick="estadoCita('${c.id}','Cancelada')">Cancelar cita</button>` : ''}</div>` : ''}</article>`; };
+  return head('Citas', fam ? 'Pida una cita con el director de grupo, un docente o coordinación. El colegio le confirma la fecha y la hora.' : 'Solicitudes de cita de las familias y citas que usted programa.',
+    fam ? '<button class="btn" type="button" onclick="formCita()">Pedir una cita</button>' : (atiende() ? '<button class="btn" type="button" onclick="formCita()">Programar una cita</button>' : '')) +
+    (!fam && isDir() ? `<div class="panel"><label class="chk"><input type="checkbox" ${sel.citTodas ? 'checked' : ''} onchange="sel.citTodas=this.checked;go('citas')"> Ver las citas de todo el colegio</label></div>` : '') +
+    `<h2>Próximas y pendientes</h2>${act.length ? `<div class="card-list">${act.map(card).join('')}</div>` : '<div class="panel empty">No hay citas pendientes.</div>'}
+    ${pas.length ? `<h2 style="margin-top:18px">Anteriores</h2><div class="card-list">${pas.slice(0, 30).map(card).join('')}</div>` : ''}`;
+}
+function formCita() {
+  const fam = isFam(), gs = isDir() ? S.grupos : gruposVis();
+  if (fam && !contactos2.length) return toast('Aún no hay docentes asignados al curso');
+  if (!fam && !gs.length) return toast('No tiene cursos asignados');
+  openModal(fam ? 'Pedir una cita' : 'Programar una cita con una familia', `<div class="formgrid">
+    ${fam ? `<label class="field"><span>Con quién</span><select id="ciP">${contactos2.map(c => opt(c.id, `${c.nombre} · ${ROL_CONT(c)}`)).join('')}</select></label>`
+      : `<label class="field"><span>Curso</span><select id="ciG" onchange="llenarEsts('ciE',this.value)">${gs.map(g => opt(g.id, g.nombre)).join('')}</select></label>
+         <label class="field"><span>Estudiante</span><select id="ciE">${estsDe(gs[0].id).map(e => opt(e.id, `${e.apellidos} ${e.nombres}`)).join('')}</select></label>
+         <label class="field"><span>Fecha y hora</span><input id="ciF" type="datetime-local"></label>`}
+    <label class="field"><span>Modalidad</span><select id="ciM">${['Presencial', 'Virtual', 'Llamada'].map(m => opt(m, m, 'Presencial')).join('')}</select></label>
+    ${fTa('ciX', 'Motivo', '', fam ? 'Cuéntele al colegio de qué quiere hablar' : 'Motivo de la cita')}
+    ${fam ? fIn('ciPr', 'Días u horas que le quedan mejor (opcional)', '', 'maxlength="200" placeholder="Ejemplo: martes o jueves después de las 2 p. m."') : fIn('ciR', 'Indicaciones para la familia (opcional)', '', 'maxlength="500" placeholder="Ejemplo: sala de profesores, traer el cuaderno"')}</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="ciBtn" onclick="guardarCita()">${fam ? 'Enviar solicitud' : 'Programar y avisar'}</button></div>`);
+}
+async function guardarCita() {
+  const fam = isFam(), d = { motivo: vv('ciX'), modalidad: $('#ciM').value };
+  if (d.motivo.length < 3) return toast('Escriba el motivo');
+  if (fam) Object.assign(d, { estudiante_id: propio(), personal_id: $('#ciP').value, preferencia: vv('ciPr') || null });
+  else {
+    const f = $('#ciF').value; if (!f) return toast('Escriba la fecha y hora');
+    if (new Date(f) < new Date()) return toast('La fecha ya pasó');
+    Object.assign(d, { estudiante_id: $('#ciE').value, personal_id: ctx.id, fecha: new Date(f).toISOString(), respuesta: vv('ciR') || null });
+  }
+  const r = await busy('#ciBtn', () => guard(() => q(db.from('citas').insert(d).select().single()), fam ? 'Solicitud enviada. El colegio le confirmará la fecha.' : 'Cita programada. La familia la verá en su cuenta.'));
+  if (r) { citas.unshift(r); closeModal(); render(); }
+}
+function formConfirmarCita(id) {
+  const c = citas.find(x => x.id === id), e = est(c.estudiante_id);
+  const loc = c.fecha ? new Date(new Date(c.fecha).getTime() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : '';
+  openModal(`Cita con la familia de ${e ? nom(e) : ''}`, `<p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.preferencia ? `<p class="muted">Prefiere: ${esc(c.preferencia)}</p>` : ''}
+    <div class="formgrid"><label class="field"><span>Fecha y hora</span><input id="ccF" type="datetime-local" value="${loc}"></label>
+    <label class="field"><span>Modalidad</span><select id="ccM">${['Presencial', 'Virtual', 'Llamada'].map(m => opt(m, m, c.modalidad)).join('')}</select></label>
+    ${fIn('ccR', 'Indicaciones para la familia (opcional)', c.respuesta || '', 'maxlength="500"')}</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="ccBtn" onclick="confirmarCita('${id}')">Confirmar cita</button></div>`);
+}
+async function confirmarCita(id) {
+  const f = $('#ccF').value; if (!f) return toast('Escriba la fecha y hora');
+  if (new Date(f) < new Date()) return toast('La fecha ya pasó');
+  const r = await busy('#ccBtn', () => guard(() => q(db.from('citas').update({ estado: 'Confirmada', fecha: new Date(f).toISOString(), modalidad: $('#ccM').value, respuesta: vv('ccR') || null }).eq('id', id).select().single()), 'Cita confirmada. La familia la verá en su cuenta.'));
+  if (r) { citas = citas.map(c => c.id === id ? r : c); closeModal(); await cargarNovedades(); render(); }
+}
+async function estadoCita(id, estado) {
+  if (estado === 'Cancelada' && !confirm('¿Cancelar esta cita?')) return;
+  const r = await guard(() => q(db.from('citas').update({ estado }).eq('id', id).select().single()), estado === 'Cancelada' ? 'Cita cancelada' : 'Cita marcada como realizada');
+  if (r) { citas = citas.map(c => c.id === id ? r : c); await cargarNovedades(); render(); }
+}
+
+/* =====================================================================
    Horario de clases
    ===================================================================== */
 const nomAsig = id => S.asigs.find(a => a.id === id)?.nombre || '';
@@ -2811,7 +3115,7 @@ function acCambios() {
 /* =====================================================================
    Exponer funciones usadas en el HTML y arrancar
    ===================================================================== */
-Object.assign(window, { elegirPerfil, salirApp, verFotoEl, subirFotosClase, borrarFotoClase, subirFotoEst, imprimirCarnet, formContacto, guardarContacto, borrarContacto, filtrarFilas, verCarnet, subirFotoEstModal, guardarRedes, quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
+Object.assign(window, { llenarEsts, verAvisos, abrirHilo, enviarMensaje, nuevoMensaje, formAutorizacion, guardarAut, responderAut, detalleAut, borrarAut, formCita, guardarCita, formConfirmarCita, confirmarCita, estadoCita, elegirPerfil, salirApp, verFotoEl, subirFotosClase, borrarFotoClase, subirFotoEst, imprimirCarnet, formContacto, guardarContacto, borrarContacto, filtrarFilas, verCarnet, subirFotoEstModal, guardarRedes, quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
   formActividad, guardarActividad, borrarActividad, setNotaAct, formRecup, guardarRecup, borrarRecup,
   formComunicado, destCom, guardarComunicado, marcarLeido, verLecturas, borrarComunicado, copiarCom,
   guardarHorario, verBoletin, formExcusaStaff, guardarExcusaStaff, guardarPlanColegio, formPlanColegio, previewPago, enviarExcusa, verSoporte, revisarExcusa,
