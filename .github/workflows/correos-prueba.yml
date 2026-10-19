@@ -14,6 +14,6 @@ jobs:
       - run: npm install --no-save pg@8
       - run: node fuente/correos/pruebas.mjs
         env:
-          NEON_CORREO: ${{ secrets.NEON_CORREO }}
+          NEON_CORREO: postgresql://correo_pruebas:${{ secrets.NEON_CLAVE }}@ep-weathered-breeze-b4c82o4u.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           BREVO_REMITENTE: ${{ vars.BREVO_REMITENTE }}
