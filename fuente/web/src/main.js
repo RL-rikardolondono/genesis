@@ -233,9 +233,12 @@ function authScreen(extra) {
       <button class="btn" type="submit">Entrar</button>
     </form>
     <p class="muted" style="margin-top:14px">¿Primera vez? El colegio le entregó un código de activación. <button class="linkbtn" type="button" onclick="setAuth('registro')">Cree su cuenta</button></p>
-    <div class="demo-box"><strong>¿Quiere conocer Colegio-IA?</strong><br><span class="muted">Pruebe gratis el colegio de demostración como directivo, docente, acudiente o estudiante.</span><br><button class="btn wa" type="button" onclick="quiereDemo()">Probar la demostración</button></div>`;
-  if (authMode === 'registro') body = `<h2>${store.get('demo') ? 'Cree su cuenta para probar Colegio-IA' : 'Crear cuenta'}</h2>
-    <p class="muted">${store.get('demo') ? 'Use su correo y una contraseña. No necesita código: después elige con qué perfil entrar al colegio de demostración.' : 'Use el mismo correo que registró el colegio. Después escribirá su código de activación.'}</p>
+    <div class="demo-box"><strong>¿Quiere conocer Colegio-IA?</strong><br><span class="muted">Pruebe gratis el colegio de demostración como directivo, docente, acudiente o estudiante.</span><br><button class="btn wa" type="button" onclick="quiereDemo()">Probar la demostración</button></div>
+    <div class="demo-box reg-box"><strong>¿Es directivo de un colegio?</strong><br><span class="muted">Registre su colegio y úselo 15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button> <button class="linkbtn" type="button" onclick="verPlanes()">Ver planes y precios</button></div>`;
+  if (authMode === 'colegio') body = `<h2>Registre su colegio · 15 días gratis</h2>${formRegistroHTML()}
+    <p class="muted" style="margin-top:14px">Sesión: ${esc(me?.email || '')}. <button class="linkbtn" type="button" onclick="doLogout()">Cerrar sesión</button></p>`;
+  if (authMode === 'registro') body = `<h2>${store.get('regcol') ? 'Paso 1 de 2: cree su cuenta' : store.get('demo') ? 'Cree su cuenta para probar Colegio-IA' : 'Crear cuenta'}</h2>
+    <p class="muted">${store.get('regcol') ? 'Use su correo y una contraseña. En el paso 2 escribe los datos del colegio y empieza su prueba gratis de 15 días.' : store.get('demo') ? 'Use su correo y una contraseña. No necesita código: después elige con qué perfil entrar al colegio de demostración.' : 'Use el mismo correo que registró el colegio. Después escribirá su código de activación.'}</p>
     <form onsubmit="event.preventDefault();doRegistro()">
       <label class="field"><span>Nombre y apellido</span><input id="rNom" autocomplete="name" required placeholder="Ejemplo: María Gómez"></label>
       <label class="field"><span>Correo electrónico</span><input id="rEmail" type="email" autocomplete="username" required></label>
@@ -248,6 +251,7 @@ function authScreen(extra) {
   const demoSel = `<div class="demo-box"><strong>Colegio de demostración</strong><br><span class="muted">Explore Colegio-IA con datos de ejemplo. Elija con qué perfil quiere entrar:</span>
       <div class="toolbar" style="margin:8px 0 0;justify-content:center"><button class="btn sm" type="button" onclick="entrarDemo('rector')">Rector(a)</button><button class="btn sm" type="button" onclick="entrarDemo('coordinador')">Coordinador(a)</button><button class="btn sm" type="button" onclick="entrarDemo('docente')">Docente</button><button class="btn sm" type="button" onclick="entrarDemo('acudiente')">Acudiente</button><button class="btn sm" type="button" onclick="entrarDemo('estudiante')">Estudiante</button></div></div>`;
   if (authMode === 'activar' && store.get('demo') && !ctxs.length) body = `<h2>Bienvenido(a)${me?.name ? ', ' + esc(me.name.split(' ')[0]) : ''}</h2>${demoSel}
+    <div class="demo-box reg-box"><strong>¿Prefiere empezar con su colegio?</strong><br><span class="muted">15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button></div>
     <p class="muted" style="margin-top:14px">¿El colegio le entregó un código? <button class="linkbtn" type="button" onclick="store.del('demo');setAuth('activar')">Escribir código de activación</button> · <button class="linkbtn" type="button" onclick="doLogout()">Cerrar sesión</button></p>`;
   else if (authMode === 'activar') body = `<h2>Active su acceso</h2>
     <p>Hola${me?.name ? ', ' + esc(me.name.split(' ')[0]) : ''}. Escriba el código de activación que le entregó el colegio.</p>
@@ -258,6 +262,7 @@ function authScreen(extra) {
       <button class="btn" type="submit">Activar</button>
     </form>
     ${demoSel}
+    <div class="demo-box reg-box"><strong>¿Es directivo de un colegio?</strong><br><span class="muted">Registre su colegio y úselo 15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button></div>
     <p class="muted" style="margin-top:14px">Sesión: ${esc(me?.email || '')}.
       ${ctxs.length ? `<button class="linkbtn" type="button" onclick="volverApp()">Volver</button> ·` : ''}
       ${superadmin ? `<button class="linkbtn" type="button" onclick="irPlataforma()">Superadministrador</button> ·` : ''}
@@ -356,9 +361,9 @@ async function arrancar() {
   ctxs = ctxs.filter(m => m.colegios);
   if (!ctxs.length) {
     if (superadmin && authMode !== 'activar') return irPlataforma();
-    authMode = 'activar'; return authScreen();
+    authMode = store.get('regcol') ? 'colegio' : 'activar'; return authScreen();
   }
-  if (authMode === 'activar') return authScreen();
+  if (authMode === 'activar' || authMode === 'colegio') return authScreen();
   const saved = store.get('ctx');
   ctx = ctxs.find(m => m.id === saved) || ctxs[0];
   await entrarContexto(ctx.id);
@@ -385,6 +390,8 @@ async function entrarContexto(id) {
   if (!VIEWS.some(x => x.id === ir && x.ok())) ir = 'inicio';
   prepararAtras();
   await go(ir);
+  if (store.get('bienvenida')) bienvenidaColegio();
+  else if (store.get('regcol')) openModal('Registre su colegio · 15 días gratis', formRegistroHTML());
 }
 function irColegio() { entrarContexto((ctx || ctxs[0]).id); }
 async function irPlataforma() { modo = 'plataforma'; view = 'plataforma'; mostrarApp(); await go('plataforma'); }
@@ -454,7 +461,8 @@ const VIEW_PLAT = { id: 'plataforma', label: 'Colegios', prep: prepPlataforma, f
 function barraDemo() {
   const roles = [['rector', 'Rector(a)'], ['coordinador', 'Coordinador(a)'], ['docente', 'Docente'], ['acudiente', 'Acudiente'], ['estudiante', 'Estudiante']];
   return `<div class="note demo-bar"><strong>Colegio de demostración.</strong> Los datos son de ejemplo y se restauran cada día. Usted está como <strong>${ROL_TXT[ctx.rol]}</strong>: ${ROL_DESC[ctx.rol] || ''}
-    <div class="toolbar" style="margin:8px 0 0"><span class="muted">Cambiar de perfil:</span>${roles.filter(([r]) => r !== ctx.rol).map(([r, l]) => `<button class="btn ghost sm" type="button" onclick="cambiarPerfilDemo('${r}')">${l}</button>`).join('')}</div></div>`;
+    <div class="toolbar" style="margin:8px 0 0"><span class="muted">Cambiar de perfil:</span>${roles.filter(([r]) => r !== ctx.rol).map(([r, l]) => `<button class="btn ghost sm" type="button" onclick="cambiarPerfilDemo('${r}')">${l}</button>`).join('')}</div>
+    <div class="toolbar" style="margin:8px 0 0"><button class="btn sm" type="button" onclick="quiereRegistro()">Registrar mi colegio · 15 días gratis</button><button class="btn ghost sm" type="button" onclick="verPlanes()">Ver planes y precios</button></div></div>`;
 }
 async function cambiarPerfilDemo(rol) {
   const m = ctxs.find(x => x.colegio_id === ctx.colegio_id && x.rol === rol);
@@ -519,7 +527,13 @@ function elegirPerfil() {
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal();setAuth('activar')">Tengo un código de otro colegio</button><button class="btn ghost" type="button" onclick="closeModal();salirApp()">${demo ? 'Salir de la demostración' : 'Cerrar sesión'}</button></div>`);
 }
 async function salirApp() {
-  if (S?.k?.demo) { const real = ctxs.find(m => m.colegio_id !== ctx.colegio_id); return real ? entrarContexto(real.id) : setAuth('activar'); }
+  if (S?.k?.demo) {
+    const r = await invitacionDemo();
+    if (r === 'registro') return quiereRegistro();
+    if (r === 'planes') return verPlanes();
+    if (r !== 'salir') return;
+    const real = ctxs.find(m => m.colegio_id !== ctx.colegio_id); return real ? entrarContexto(real.id) : setAuth('activar');
+  }
   if (await confirmar('¿Cerrar sesión?')) doLogout();
 }
 function render() {
@@ -529,6 +543,8 @@ function render() {
   if (modo === 'colegio' && S?.k?.demo && view === 'inicio') $('#view').insertAdjacentHTML('afterbegin', barraDemo());
   if (modo === 'colegio' && isFam()) $('#view').insertAdjacentHTML('afterbegin', barraHijos());
   if (modo === 'colegio' && S?.estado?.cobro === 'aviso' && (isDir() || isTes())) $('#view').insertAdjacentHTML('afterbegin', avisoCobro());
+  if (modo === 'colegio' && S?.estado?.en_prueba && S.estado.cobro !== 'cerrada' && (isDir() || isTes())) $('#view').insertAdjacentHTML('afterbegin', avisoPrueba());
+  if (modo === 'colegio' && S?.k?.demo) $('#view').insertAdjacentHTML('beforeend', ctaDemo());
   if (modo === 'colegio' && ctx) $('#view').insertAdjacentHTML('afterbegin', barraSup());
   if (v.id === 'estudiantes') drawEst();
 }
@@ -1993,7 +2009,7 @@ function piarHTML(eid) {
    Suscripción de Colegio-IA: aviso, pago en línea con Bold y acceso cerrado por pago
    ===================================================================== */
 const SOPORTE_TEL = '3044375758';
-const valorDeuda = e => (e?.valor_mes || 0) * Math.max(1, e?.meses_debe || 1);
+const valorDeuda = e => (e?.valor_mes || 0) * (e?.en_prueba ? 1 : Math.max(1, e?.meses_debe || 1));
 const waSoporte = (e, l = 'WhatsApp de soporte') => waBtn(e?.whatsapp || SOPORTE_TEL, `Hola. Soy de ${ctx?.colegios?.nombre || 'un colegio'} y necesito ayuda con el pago de la suscripción de Colegio-IA.`, l);
 async function copiarTexto(t) { try { await navigator.clipboard.writeText(t); toast('Copiado'); } catch { toast(t); } }
 function avisoCobro() {
@@ -2004,6 +2020,10 @@ function avisoCobro() {
 function panelSuscripcion(r) {
   const x = S.susc; if (!x) return `<p>Paquete para ${r.activos ?? 0} estudiantes activos.</p>`;
   if (x.demo) return '<p><span class="tag">Colegio de demostración</span> Sin cobro.</p>';
+  if (x.en_prueba) return `<p><span class="tag t2">Prueba gratis</span> Hasta el <strong>${fechaLarga(x.prueba_hasta)}</strong> (${x.dias_prueba === 1 ? 'queda 1 día' : `quedan ${x.dias_prueba} días`}).</p>
+    <p>Plan hasta <strong>${x.plan_max} estudiantes</strong>: <strong>${cop(x.valor)} al mes</strong>, con todos los módulos y usuarios ilimitados. Estudiantes activos: ${x.activos}.</p>
+    <p class="muted">El primer pago cubre el mes en que termina la prueba. Si no se paga, al terminar la prueba se cierra el acceso, pero la información queda guardada.</p>
+    <div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar el primer mes</button>${waAsesor()}</div>`;
   const tag = { activa: x.meses_pendientes > 0 ? '<span class="tag t2">Mes en curso por pagar</span>' : '<span class="tag">Al día</span>', aviso: '<span class="tag t3">Pago vencido: aviso de suspensión</span>', cerrada: '<span class="tag t3">Cerrada por pago</span>' }[x.cobro] || '';
   return `<p>Plan hasta <strong>${x.plan_max} estudiantes</strong>: <strong>${cop(x.valor)} al mes</strong>. Incluye todos los módulos y usuarios ilimitados para docentes, familias y directivos.</p>
     <p>Estudiantes activos: <strong>${x.activos} de ${x.plan_max}</strong>${x.activos >= x.plan_max ? ' <span class="tag t3">Plan completo: para matricular más, solicite la ampliación</span>' : ''}</p>
@@ -2015,9 +2035,9 @@ function panelSuscripcion(r) {
 async function pagarSuscripcion() {
   const e = S.estado = await q(db.rpc('estado_colegio', { p_colegio: ctx.colegio_id })).catch(() => S.estado);
   if (!e) return toast('No se pudo consultar el estado de la suscripción');
-  const meses = Math.max(1, e.meses_debe || 1), valor = valorDeuda(e);
+  const meses = e.en_prueba ? 1 : Math.max(1, e.meses_debe || 1), valor = valorDeuda(e);
   // El colegio le paga a SkyNet Genesis solo en línea con Bold; el pago se registra automáticamente
-  openModal('Pagar la suscripción de Colegio-IA', `<p>Valor a pagar: <strong>${cop(valor)}</strong> (${meses} ${meses === 1 ? 'mes' : 'meses'} del plan hasta ${e.plan_max} estudiantes). Pagado hasta el ${fechaLarga(e.pagado_hasta)}.</p>
+  openModal('Pagar la suscripción de Colegio-IA', `<p>Valor a pagar: <strong>${cop(valor)}</strong> (${meses} ${meses === 1 ? 'mes' : 'meses'} del plan hasta ${e.plan_max} estudiantes). ${e.en_prueba ? `Su prueba gratis va hasta el ${fechaLarga(e.prueba_hasta)}; este primer pago cubre el mes en que termina la prueba.` : `Pagado hasta el ${fechaLarga(e.pagado_hasta)}.`}</p>
     <p><button class="btn" type="button" onclick="pagarBoldSusc(this)">Pagar en línea con Bold</button></p>
       <p class="muted">Tarjeta, PSE, Nequi o Bancolombia. El pago se registra automáticamente: apenas Bold lo apruebe (puede tardar unos minutos), la suscripción queda al día y el recibo aparece en Parametrización. No necesita enviar comprobantes.</p>
     <div class="modal-foot">${waSoporte(e)}<button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button></div>`);
@@ -2026,7 +2046,7 @@ async function pagarSuscripcion() {
 // El firmador propio de skynetgenesis.com arma la orden; Bold avisa a bold-webhook.php, que llama a bold_pago_aprobado en Neon.
 // No volver al enlace fijo bold_url.
 async function pagarBoldSusc(btn) {
-  const e = S.estado || {}, m = Math.max(1, Math.min(12, e.meses_debe || 1)), pm = e.plan_max || 0;
+  const e = S.estado || {}, m = e.en_prueba ? 1 : Math.max(1, Math.min(12, e.meses_debe || 1)), pm = e.plan_max || 0;
   const pl = pm <= 100 ? 'g100' : pm <= 250 ? 'g250' : pm <= 500 ? 'g500' : pm <= 1000 ? 'g1000' : null;
   if (!pl) return toast('Para planes de más de 1.000 estudiantes escríbanos por WhatsApp');
   if (btn) { btn.disabled = true; btn.textContent = 'Abriendo Bold…'; }
@@ -2046,7 +2066,10 @@ function pantallaCerrada() {
     : `<div class="who"><strong>${esc(ctx.colegios.nombre)}</strong><br>${esc(quien())}</div>`;
   $('#nav').innerHTML = '';
   $('#foot').innerHTML = `${esc(me?.email || '')}<br><button class="btn ghost sm" type="button" onclick="doLogout()">Cerrar sesión</button><div style="margin-top:10px">${sgFirma()}</div>`;
-  $('#view').innerHTML = `<div class="panel cerrado"><h1>Acceso suspendido por falta de pago</h1>
+  $('#view').innerHTML = e.en_prueba ? `<div class="panel cerrado"><h1>Terminó su prueba gratis de 15 días</h1>
+    <p>Gracias por probar Colegio-IA en <strong>${esc(ctx.colegios.nombre)}</strong>. <strong>Toda la información que registró está guardada.</strong> Para seguir usándola, pague el primer mes del plan en línea; el acceso se abre apenas Bold confirme el pago.</p>
+    ${e.directivo ? `<p>Valor del primer mes: <strong>${cop(valorDeuda(e))}</strong> (plan hasta ${e.plan_max} estudiantes).</p><div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar en línea con Bold</button></div>` : '<p>Comuníquese con la rectoría del colegio.</p>'}
+    <div class="toolbar" style="margin-top:12px">${waAsesor()}<button class="btn ghost" type="button" onclick="location.reload()">Ya se confirmó el pago: entrar</button></div></div>` : `<div class="panel cerrado"><h1>Acceso suspendido por falta de pago</h1>
     <p>La suscripción de Colegio-IA de <strong>${esc(ctx.colegios.nombre)}</strong> está pagada hasta el ${fechaLarga(e.pagado_hasta)}. Como el pago del mes no se registró, desde el día 5 el acceso de todo el colegio está cerrado.</p>
     <p><strong>La información del colegio está completa y segura.</strong> El acceso se restablece en cuanto se confirme el pago.</p>
     ${e.directivo ? `<p>Valor a pagar: <strong>${cop(valorDeuda(e))}</strong>. El pago se hace en línea con Bold y el acceso se restablece automáticamente.</p><div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar ahora</button></div>`
@@ -2060,10 +2083,10 @@ function reciboSusc(id) {
     <p class="dnote">Recibimos a satisfacción el pago de la suscripción del periodo indicado.</p></section>`, 'Recibo de suscripción', `Recibo Colegio-IA ${mesTxt(p.mes)}`);
 }
 
-let plat = [];
+let plat = [], pruebas = [];
 let visitas = [];
 let platComps = [], platCfg = {};
-async function prepPlataforma() { plat = await q(db.rpc('plataforma_resumen')); platComps = await q(db.from('plataforma_comprobantes').select('id,colegio_id,meses,valor,referencia,enviado_por,creado_en').eq('estado', 'Pendiente').order('creado_en')).catch(() => []); platCfg = (await q(db.from('plataforma_config').select('*').eq('id', 1)).catch(() => []))[0] || {}; visitas = await q(db.from('demo_visitas').select('*').order('fecha', { ascending: false }).range(0, 99)).catch(() => []); }
+async function prepPlataforma() { plat = await q(db.rpc('plataforma_resumen')); pruebas = await q(db.rpc('plataforma_pruebas_lista')).catch(() => []) || []; platComps = await q(db.from('plataforma_comprobantes').select('id,colegio_id,meses,valor,referencia,enviado_por,creado_en').eq('estado', 'Pendiente').order('creado_en')).catch(() => []); platCfg = (await q(db.from('plataforma_config').select('*').eq('id', 1)).catch(() => []))[0] || {}; visitas = await q(db.from('demo_visitas').select('*').order('fecha', { ascending: false }).range(0, 99)).catch(() => []); }
 function vPlataforma() {
   const total = plat.filter(c => c.activo && !c.demo).reduce((s, c) => s + c.valor_mensual, 0);
   return head('Colegios', 'Alta de colegios, estudiantes activos y valor mensual de cada suscripción.', `<button class="btn" type="button" onclick="formColegio()">Nuevo colegio</button>`) +
@@ -2074,7 +2097,7 @@ function vPlataforma() {
       ${plat.map(c => `<tr class="${c.activo ? '' : 'dim'}"><td><strong>${esc(c.nombre)}</strong></td><td>${esc(c.ciudad || '')}</td><td>${c.anio}</td><td>${c.estudiantes_activos} de ${c.plan_max ?? '—'}${c.demo ? ' <span class="tag">Demo</span>' : ''}</td><td>${c.demo ? '<span class="muted">Sin cobro</span>' : cop(c.valor_mensual)}</td><td>${fmtF(c.creado_en)}</td>
         <td>${c.demo ? '<span class="muted">No aplica</span>' : `${fmtF(c.pagado_hasta)} <button class="linkbtn" type="button" onclick="formPagadoHasta('${c.colegio_id}')">Cambiar</button>`}</td><td>${c.demo ? '' : estadoCobroTag(c)}${c.comprobante_id ? ` <button class="btn sm" type="button" onclick="revisarCompPlat('${c.comprobante_id}')">Revisar comprobante</button>` : ''}</td>
         <td>${c.activo ? 'Activo' : 'Suspendido'}</td><td style="white-space:nowrap"><button class="btn sm" type="button" onclick="formPagoSusc('${c.colegio_id}')">Registrar pago</button> <button class="btn ghost sm" type="button" onclick="formPlanColegio('${c.colegio_id}')">Plan</button> <button class="btn ghost sm" type="button" onclick="toggleColegio('${c.colegio_id}',${!c.activo})">${c.activo ? 'Suspender' : 'Reactivar'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Aún no hay colegios. Cree el primero.</div>'}</div>
-    ${panelCompsPlat()}${panelCfgPlat()}
+    ${panelPruebasPlat()}${panelCompsPlat()}${panelCfgPlat()}
     <div class="panel"><h2>Personas que probaron la demostración</h2>${visitas.length ? `<div class="tbl"><table><thead><tr><th>Fecha</th><th>Nombre</th><th>Correo</th><th>Perfil</th></tr></thead><tbody>${visitas.map(v => `<tr><td>${fechaHora(v.fecha)}</td><td>${esc(v.nombre || '')}</td><td>${esc(v.email || '')}</td><td>${{ coordinador: 'Directivo', docente: 'Docente', acudiente: 'Acudiente' }[v.rol] || esc(v.rol)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún nadie ha probado la demostración. Comparta el enlace de Colegio-IA y pídales que pulsen "Probar la demostración".</p>'}</div>
     <p class="muted">Planes: hasta 100 estudiantes $120.000; hasta 250, $220.000; hasta 500, $350.000; hasta 1.000, $550.000 al mes; más de 1.000, $40.000 adicionales por cada 100. Cada colegio puede matricular hasta el tope de su plan. Cada mes se paga por anticipado: si el mes no se ha pagado, el día 5 se cierra el acceso del colegio hasta confirmar el pago. Al registrar un pago o cambiar la fecha de «Pagado hasta», el acceso se restablece de inmediato.</p>`;
 }
@@ -4179,9 +4202,95 @@ async function guardarCampusCfg() {
 }
 
 /* =====================================================================
+   Registro del colegio con 15 días gratis y embudo de venta de la demostración (entrega 3)
+   ===================================================================== */
+const PLAN_TXT = { 100: 'Hasta 100 estudiantes', 250: 'De 101 a 250 estudiantes', 500: 'De 251 a 500 estudiantes', 1000: 'De 501 a 1.000 estudiantes' };
+const INCLUYE = ['Calificaciones, boletines y libros reglamentarios', 'Asistencia, observador y PIAR', 'Campus virtual con tareas, cuestionarios y gemas', 'Comunicados, mensajes, citas y autorizaciones', 'Estado de cuenta, pagos y tienda del colegio', 'Perfiles para rectoría, coordinación, secretaría, tesorería, docentes, familias y estudiantes'];
+const waAsesor = (l = 'Hablar con un asesor') => waBtn(SOPORTE_TEL, 'Hola. Estoy probando Colegio-IA y quiero información para mi colegio.', l);
+function planesHTML(cta = true) {
+  return `<div class="planes">${PLANES.map((n, i) => `<div class="plan ${i === 1 ? 'plan-dest' : ''}">${i === 1 ? '<span class="plan-tag">Recomendado</span>' : ''}<h3>${PLAN_TXT[n]}</h3>
+      <div class="plan-precio">${cop(precioPlan(n))}<small> al mes</small></div><p class="muted">Usuarios ilimitados. Todo incluido.</p></div>`).join('')}</div>
+    <p class="muted">Más de 1.000 estudiantes: ${cop(40000)} adicionales por cada 100. La capacitación se cotiza aparte.</p>
+    <ul class="incluye">${INCLUYE.map(x => `<li>✓ ${x}</li>`).join('')}</ul>
+    ${cta ? `<div class="toolbar"><button class="btn" type="button" onclick="quiereRegistro()">Empezar 15 días gratis</button>${waAsesor()}</div>
+    <p class="muted">Sin tarjeta y sin compromiso. Al terminar la prueba, paga en línea con Bold (tarjeta, PSE, Nequi o Bancolombia) y sigue trabajando con todo lo que registró.</p>` : ''}`;
+}
+function verPlanes() { openModal('Planes de Colegio-IA', planesHTML()); }
+// Invitación a contratar al salir de la demostración
+function invitacionDemo() {
+  return dialogo(`<h2 style="margin-top:0">¿Le gustó Colegio-IA?</h2>
+    <p>Registre su colegio y úselo <strong>15 días gratis</strong>, con sus cursos, docentes y familias. No pedimos tarjeta.</p>
+    <p class="muted">Desde ${cop(precioPlan(100))} al mes, con usuarios ilimitados y todos los módulos incluidos.</p>
+    <div class="modal-foot" style="flex-wrap:wrap"><button class="btn ghost" type="button" onclick="dlgFin('salir')">Salir de la demostración</button>
+      <button class="btn ghost" type="button" onclick="dlgFin('planes')">Ver planes</button><button class="btn" type="button" onclick="dlgFin('registro')">Registrar mi colegio gratis</button></div>`);
+}
+function ctaDemo() {
+  return `<div class="cta-demo"><div><strong>¿Quiere esto para su colegio?</strong> <span class="muted">15 días gratis, sin tarjeta.</span></div>
+    <div class="toolbar"><button class="btn sm" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button><button class="btn ghost sm" type="button" onclick="verPlanes()">Ver planes</button>${waAsesor('Asesor')}</div></div>`;
+}
+function quiereRegistro() {
+  closeModal(); store.set('regcol', '1');
+  if (!me) { store.del('demo'); return setAuth('registro'); }
+  if (modo === 'colegio' && ctx) return openModal('Registre su colegio · 15 días gratis', formRegistroHTML());
+  authMode = 'colegio'; authScreen();
+}
+const GR_NIVEL = [['Preescolar', [-2, -1, 0]], ['Primaria', [1, 2, 3, 4, 5]], ['Bachillerato', [6, 7, 8, 9, 10, 11]]];
+function formRegistroHTML() {
+  return `<p class="muted">Usted quedará como rector(a) del colegio con el correo <strong>${esc(me?.email || '')}</strong>. Después podrá invitar a coordinación, secretaría, docentes y familias.</p>
+    <div class="formgrid">${fIn('rgNom', 'Nombre del colegio', '', 'maxlength="120" placeholder="Ejemplo: Colegio Nuevo Horizonte"')}${fIn('rgCiu', 'Ciudad o municipio', '', 'maxlength="80"')}
+      ${fIn('rgTel', 'Celular o WhatsApp de contacto', '', 'inputmode="tel" maxlength="15"')}
+      <label class="field"><span>Número de estudiantes</span><select id="rgPlan">${PLANES.map(n => opt(n, `${PLAN_TXT[n]} · ${cop(precioPlan(n))} al mes`, 100)).join('')}</select></label></div>
+    <p style="margin:12px 0 4px"><strong>Grados que ofrece</strong> <span class="muted">(se crea un curso "A" por cada grado; luego puede agregar más)</span></p>
+    ${GR_NIVEL.map(([n, gs]) => `<div class="rg-niv"><button class="linkbtn" type="button" onclick="document.querySelectorAll('.rgN${gs[0] + 2}').forEach(x=>x.checked=!x.checked)">${n}</button>
+      <div class="cuotas">${gs.map(g => `<label class="chk"><input type="checkbox" class="rgGr rgN${gs[0] + 2}" value="${g}"> ${esc(gradoTxt(g))}</label>`).join('')}</div></div>`).join('')}
+    <div class="note">✓ 15 días gratis desde hoy &nbsp; ✓ Sin tarjeta &nbsp; ✓ Al terminar, paga en línea con Bold o su información queda guardada</div>
+    <p class="err" id="rgErr" role="alert"></p>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="cancelarRegistro()">Cancelar</button><button class="btn" type="button" id="rgBtn" onclick="registrarColegio()">Crear mi colegio</button></div>`;
+}
+function cancelarRegistro() { store.del('regcol'); if (modo === 'colegio' && ctx && $('#auth').hidden) return closeModal(); authMode = ctxs.length ? 'login' : 'activar'; if (ctxs.length && ctx) volverApp(); else authScreen(); }
+async function registrarColegio() {
+  const err = t => { const e = $('#rgErr'); if (e) e.textContent = t; else toast(t); };
+  const d = { p_nombre: vv('rgNom'), p_ciudad: vv('rgCiu'), p_telefono: vv('rgTel'), p_plan: +$('#rgPlan').value, p_grados: [...document.querySelectorAll('.rgGr:checked')].map(x => +x.value) };
+  if (d.p_nombre.length < 5) return err('Escriba el nombre completo del colegio');
+  if (d.p_ciudad.length < 3) return err('Escriba la ciudad o el municipio');
+  if (d.p_telefono.replace(/\D/g, '').length < 7) return err('Escriba un número de celular o WhatsApp');
+  if (!d.p_grados.length) return err('Marque los grados que ofrece el colegio');
+  let r;
+  await busy('#rgBtn', async () => { try { r = await q(db.rpc('registrar_colegio', d)); } catch (e) { err(msg(e)); } });
+  if (!r) return;
+  store.del('regcol'); store.del('demo'); store.set('ctx', r.miembro_id); store.set('bienvenida', r.prueba_hasta);
+  closeModal(); authMode = 'login'; await arrancar();
+}
+function bienvenidaColegio() {
+  const f = store.get('bienvenida'); if (!f) return; store.del('bienvenida');
+  openModal('¡Su colegio ya está en Colegio-IA!', `<p>La prueba gratis va hasta el <strong>${fechaLarga(f)}</strong>. Estos son los primeros pasos:</p>
+    <ol class="pasos"><li><strong>Revise los datos del colegio</strong> y suba el logo (Parametrización › Institución).</li>
+      <li><strong>Revise los cursos</strong> que se crearon y el plan de estudios (Parametrización › Cursos y Plan de estudios).</li>
+      <li><strong>Matricule a los estudiantes</strong> (Estudiantes y matrícula).</li>
+      <li><strong>Invite a docentes y familias</strong> (Usuarios y accesos): cada uno recibe su código.</li></ol>
+    <p class="muted">¿Quiere ayuda para empezar? Escríbanos y le acompañamos.</p>
+    <div class="modal-foot" style="flex-wrap:wrap">${waAsesor('Pedir acompañamiento')}<button class="btn ghost" type="button" onclick="closeModal();pagarSuscripcion()">Pagar ya el primer mes</button><button class="btn" type="button" onclick="closeModal();irPtab('inst')">Empezar</button></div>`);
+}
+// Aviso de la prueba gratis para los directivos (todas las pantallas)
+function avisoPrueba() {
+  const e = S.estado, d = e.dias_prueba;
+  return `<div class="note prueba-note"><strong>Prueba gratis: ${d === 0 ? 'termina hoy' : d === 1 ? 'queda 1 día' : `quedan ${d} días`}</strong> (hasta el ${fechaLarga(e.prueba_hasta)}).
+    Para seguir usando Colegio-IA sin interrupciones, pague el primer mes: ${cop(e.valor_mes)}.
+    <div class="toolbar" style="margin:8px 0 0">${isDir() || isTes() ? '<button class="btn sm" type="button" onclick="pagarSuscripcion()">Pagar con Bold</button>' : ''}${waAsesor()}</div></div>`;
+}
+// Superadministrador: colegios registrados por su cuenta
+function panelPruebasPlat() {
+  if (!pruebas.length) return `<div class="panel"><h2>Colegios registrados desde la app</h2><p class="muted">Aún no hay colegios registrados por su cuenta.</p></div>`;
+  return `<div class="panel"><h2>Colegios registrados desde la app (${pruebas.length})</h2><div class="tbl"><table><thead><tr><th>Colegio</th><th>Registró</th><th>Fecha</th><th>Estado</th><th>Estudiantes</th><th></th></tr></thead><tbody>
+    ${pruebas.map(p => `<tr><td><strong>${esc(p.nombre)}</strong><br><span class="muted">${esc(p.ciudad || '')} · plan ${p.plan_max}</span></td><td>${esc(p.rector || '')}<br><span class="muted">${esc(p.email || '')}</span></td><td>${fmtF(p.creado)}</td>
+      <td>${p.pagos ? '<span class="tag ok-t">Pagando</span>' : p.en_prueba && p.dias > 0 ? `<span class="tag t2">Prueba: ${p.dias} ${p.dias === 1 ? 'día' : 'días'}</span>` : '<span class="tag t3">Prueba terminada</span>'}</td><td>${p.estudiantes}</td>
+      <td>${p.tel ? waBtn(p.tel, `Hola, ${(p.rector || '').split(' ')[0]}. Le escribimos de Colegio-IA para acompañarle en la prueba de ${p.nombre}.`, 'WhatsApp') : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+
+/* =====================================================================
    Exponer funciones usadas en el HTML y arrancar
    ===================================================================== */
-Object.assign(window, { abrirItem, entregarTarea, enviarCuestionario, campusSel, formUnidad, guardarUnidad, borrarUnidad, elegirTipo, formItem, guardarItem, borrarItem, editorPreguntas, agregarPregunta, quitarPregunta, masOpcion, guardarPreguntas, verEntregas, calificarEntrega, darParticipacion, guardarCampusCfg,
+Object.assign(window, { verPlanes, quiereRegistro, registrarColegio, cancelarRegistro, abrirItem, entregarTarea, enviarCuestionario, campusSel, formUnidad, guardarUnidad, borrarUnidad, elegirTipo, formItem, guardarItem, borrarItem, editorPreguntas, agregarPregunta, quitarPregunta, masOpcion, guardarPreguntas, verEntregas, calificarEntrega, darParticipacion, guardarCampusCfg,
   subirFirma, guardarColegio, guardarAtencion, revisarDiaCita, formGradosAsig, guardarGradosAsig, toggleSec, volver, dlgFin, agregarCarrito, quitarCarrito, cambiarCant, hacerPedido, formComprobantePed, enviarComprobantePed, cancelarPedidoFam, reciboPedido, verPedido, cambiarEstadoPed, listaPreparar, formProducto, guardarProducto, borrarProducto, guardarTienda, verUtiles, copiarUtiles, guardarUtiles, imprimirGraficos,
   llenarEsts, verAvisos, abrirHilo, enviarMensaje, nuevoMensaje, formAutorizacion, guardarAut, responderAut, detalleAut, borrarAut, formCita, guardarCita, formConfirmarCita, confirmarCita, estadoCita, elegirPerfil, salirApp, verFotoEl, subirFotosClase, borrarFotoClase, subirFotoEst, imprimirCarnet, formContacto, guardarContacto, borrarContacto, filtrarFilas, verCarnet, subirFotoEstModal, guardarRedes, quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
   formActividad, guardarActividad, borrarActividad, setNotaAct, formRecup, guardarRecup, borrarRecup,
