@@ -79,7 +79,7 @@ const ROL_DESC = { rector: 'Ve y administra todo: matrícula, calificaciones, pa
   secretaria: 'Matrícula, fichas de estudiantes, certificados, libros reglamentarios y pagos.', tesoreria: 'Pagos, cartera, recibos y paz y salvo.',
   docente: 'Sus cursos: califica, toma asistencia, escribe observaciones y envía comunicados a sus grupos.',
   acudiente: 'Información de sus hijos: comunicados, horario, excusas, estado de cuenta, calificaciones y boletines.',
-  estudiante: 'Solo consulta: comunicados, horario y sus calificaciones.' };
+  estudiante: 'Su campus virtual (clases, tareas y cuestionarios), gemas, horario, comunicados y calificaciones.' };
 const ROL_TXT = { rector: 'Rector(a)', coordinador: 'Coordinador(a)', secretaria: 'Secretaría', tesoreria: 'Tesorería', docente: 'Docente', acudiente: 'Acudiente', estudiante: 'Estudiante' };
 const PAGOS_ROLES = ['rector', 'secretaria', 'tesoreria'];
 const NIVELES = { preescolar: 'Preescolar', primaria: 'Primaria', secundaria: 'Básica secundaria', media: 'Media' };
@@ -233,7 +233,7 @@ function authScreen(extra) {
       <button class="btn" type="submit">Entrar</button>
     </form>
     <p class="muted" style="margin-top:14px">¿Primera vez? El colegio le entregó un código de activación. <button class="linkbtn" type="button" onclick="setAuth('registro')">Cree su cuenta</button></p>
-    <div class="demo-box"><strong>¿Quiere conocer Colegio-IA?</strong><br><span class="muted">Pruebe gratis el colegio de demostración como directivo, docente o acudiente.</span><br><button class="btn wa" type="button" onclick="quiereDemo()">Probar la demostración</button></div>`;
+    <div class="demo-box"><strong>¿Quiere conocer Colegio-IA?</strong><br><span class="muted">Pruebe gratis el colegio de demostración como directivo, docente, acudiente o estudiante.</span><br><button class="btn wa" type="button" onclick="quiereDemo()">Probar la demostración</button></div>`;
   if (authMode === 'registro') body = `<h2>${store.get('demo') ? 'Cree su cuenta para probar Colegio-IA' : 'Crear cuenta'}</h2>
     <p class="muted">${store.get('demo') ? 'Use su correo y una contraseña. No necesita código: después elige con qué perfil entrar al colegio de demostración.' : 'Use el mismo correo que registró el colegio. Después escribirá su código de activación.'}</p>
     <form onsubmit="event.preventDefault();doRegistro()">
@@ -246,7 +246,7 @@ function authScreen(extra) {
     </form>
     <p class="muted" style="margin-top:14px">¿Ya tiene cuenta? <button class="linkbtn" type="button" onclick="setAuth('login')">Inicia sesión</button></p>`;
   const demoSel = `<div class="demo-box"><strong>Colegio de demostración</strong><br><span class="muted">Explore Colegio-IA con datos de ejemplo. Elija con qué perfil quiere entrar:</span>
-      <div class="toolbar" style="margin:8px 0 0;justify-content:center"><button class="btn sm" type="button" onclick="entrarDemo('rector')">Rector(a)</button><button class="btn sm" type="button" onclick="entrarDemo('coordinador')">Coordinador(a)</button><button class="btn sm" type="button" onclick="entrarDemo('docente')">Docente</button><button class="btn sm" type="button" onclick="entrarDemo('acudiente')">Acudiente</button></div></div>`;
+      <div class="toolbar" style="margin:8px 0 0;justify-content:center"><button class="btn sm" type="button" onclick="entrarDemo('rector')">Rector(a)</button><button class="btn sm" type="button" onclick="entrarDemo('coordinador')">Coordinador(a)</button><button class="btn sm" type="button" onclick="entrarDemo('docente')">Docente</button><button class="btn sm" type="button" onclick="entrarDemo('acudiente')">Acudiente</button><button class="btn sm" type="button" onclick="entrarDemo('estudiante')">Estudiante</button></div></div>`;
   if (authMode === 'activar' && store.get('demo') && !ctxs.length) body = `<h2>Bienvenido(a)${me?.name ? ', ' + esc(me.name.split(' ')[0]) : ''}</h2>${demoSel}
     <p class="muted" style="margin-top:14px">¿El colegio le entregó un código? <button class="linkbtn" type="button" onclick="store.del('demo');setAuth('activar')">Escribir código de activación</button> · <button class="linkbtn" type="button" onclick="doLogout()">Cerrar sesión</button></p>`;
   else if (authMode === 'activar') body = `<h2>Active su acceso</h2>
@@ -414,6 +414,8 @@ const VIEWS = [
   { id: 'contactos', label: 'Contactos y recogida', ok: () => isDir() || isDoc(), prep: prepContactos, fn: vContactos },
   { id: 'utiles', label: 'Lista de útiles', ok: () => !isTes(), prep: prepUtiles, fn: vUtiles },
   { id: 'tienda', label: 'Tienda del colegio', ok: () => isAcud() && !!S.k?.tienda_activa, prep: prepTienda, fn: vTienda, badge: () => S.nov?.pedidos || 0 },
+  { id: 'campus', label: 'Campus virtual', ok: verCampus, prep: prepCampus, fn: vCampus, badge: () => isFam() ? S.camPend || 0 : 0 },
+  { id: 'gemas', label: 'Gemas y ranking', ok: () => gemasOn() && verCampus(), prep: prepGemas, fn: vGemas },
   { id: 'academico', label: 'Informes académicos', ok: () => isDir() || (isDoc() && S.dirGrupos.length > 0), prep: prepAcademico, fn: vAcademico },
   { id: 'pagos', label: 'Pagos y cartera', ok: manejaPagos, prep: prepPagos, fn: vPagos },
   { id: 'cuenta', label: 'Estado de cuenta', ok: isAcud, prep: prepCuenta, fn: vCuenta },
@@ -424,15 +426,17 @@ const VIEWS = [
 const MENU = [
   { t: '', ids: ['inicio'] },
   { t: 'Académico', c: 'azul', ids: ['notas', 'asistencia', 'boletines', 'observador', 'piar', 'academico', 'horario', 'utiles'] },
+  { t: 'Campus virtual', c: 'violeta', ids: ['campus', 'gemas'] },
   { t: 'Comunicación', c: 'verde', ids: ['comunicados', 'mensajes', 'citas', 'autorizaciones', 'cronograma', 'galeria'] },
   { t: 'Estudiantes y familias', c: 'teal', ids: ['estudiantes', 'familia', 'contactos', 'excusas'] },
   { t: 'Pagos y tienda', c: 'ambar', ids: ['pagos', 'cuenta', 'tienda', 'pedidos'] },
   { t: 'Administración', c: 'gris', ids: ['config', 'usuarios'] },
 ];
-const ICO = { inicio: '🏠', notas: '✏️', asistencia: '✅', boletines: '📄', observador: '📝', piar: '🧩', academico: '📊', horario: '🕒', utiles: '🎒', comunicados: '📢', mensajes: '💬', citas: '📅', autorizaciones: '✍️', cronograma: '🗓️', galeria: '📷', estudiantes: '🎓', familia: '🪪', contactos: '📇', excusas: '📩', pagos: '💰', cuenta: '💳', tienda: '🛍️', pedidos: '📦', config: '⚙️', usuarios: '👥' };
+const ICO = { campus: '💻', gemas: '💎', inicio: '🏠', notas: '✏️', asistencia: '✅', boletines: '📄', observador: '📝', piar: '🧩', academico: '📊', horario: '🕒', utiles: '🎒', comunicados: '📢', mensajes: '💬', citas: '📅', autorizaciones: '✍️', cronograma: '🗓️', galeria: '📷', estudiantes: '🎓', familia: '🪪', contactos: '📇', excusas: '📩', pagos: '💰', cuenta: '💳', tienda: '🛍️', pedidos: '📦', config: '⚙️', usuarios: '👥' };
 // Familias con pagos pendientes: solo inicio, comunicados y estado de cuenta (decisión del 18 oct 2026)
 const PERMITIDAS_MOROSO = ['inicio', 'comunicados', 'cuenta'];
-const restringida = id => modo === 'colegio' && isFam() && !alDia() && !PERMITIDAS_MOROSO.includes(id);
+// El estudiante con pagos pendientes queda bloqueado por completo (solo ve el aviso del inicio)
+const restringida = id => modo === 'colegio' && isFam() && !alDia() && (isEst() ? id !== 'inicio' : !PERMITIDAS_MOROSO.includes(id));
 const visible = v => v.ok() && !restringida(v.id);
 let menuCerr = {}; try { menuCerr = JSON.parse(localStorage.getItem('micolegia:menu') || '{}'); } catch {}
 function toggleSec(t) { menuCerr[t] = !menuCerr[t]; try { localStorage.setItem('micolegia:menu', JSON.stringify(menuCerr)); } catch {} renderSide(); }
@@ -448,7 +452,7 @@ function menuHTML() {
 const VIEW_PLAT = { id: 'plataforma', label: 'Colegios', prep: prepPlataforma, fn: vPlataforma };
 
 function barraDemo() {
-  const roles = [['rector', 'Rector(a)'], ['coordinador', 'Coordinador(a)'], ['docente', 'Docente'], ['acudiente', 'Acudiente']];
+  const roles = [['rector', 'Rector(a)'], ['coordinador', 'Coordinador(a)'], ['docente', 'Docente'], ['acudiente', 'Acudiente'], ['estudiante', 'Estudiante']];
   return `<div class="note demo-bar"><strong>Colegio de demostración.</strong> Los datos son de ejemplo y se restauran cada día. Usted está como <strong>${ROL_TXT[ctx.rol]}</strong>: ${ROL_DESC[ctx.rol] || ''}
     <div class="toolbar" style="margin:8px 0 0"><span class="muted">Cambiar de perfil:</span>${roles.filter(([r]) => r !== ctx.rol).map(([r, l]) => `<button class="btn ghost sm" type="button" onclick="cambiarPerfilDemo('${r}')">${l}</button>`).join('')}</div></div>`;
 }
@@ -468,6 +472,8 @@ function barraHijos() {
   return `<div class="hijos" role="tablist" aria-label="Sus hijos"><span class="muted">${ctx.rol === 'estudiante' ? 'Perfil' : 'Sus hijos'}:</span>${h.map(m => `<button type="button" role="tab" aria-selected="${m.id === ctx.id}" onclick="entrarContexto('${m.id}')">${esc(m.estudiantes?.nombres || 'Estudiante')}</button>`).join('')}</div>`;
 }
 function avisoRestringido() {
+  if (isEst()) return `<div class="panel restringido"><h2>Su acceso está suspendido en este momento</h2>
+    <p>Pídale a su acudiente que se comunique con la secretaría del colegio. Apenas se resuelva, podrá volver a entrar a su campus virtual.</p></div>`;
   return `<div class="panel restringido"><h2>El acceso de la familia está limitado en este momento</h2>
     <p>Para más información, comuníquese con la secretaría del colegio.</p>
     <p class="muted">Mientras tanto puede consultar el estado de cuenta y los comunicados del colegio.</p>
@@ -494,7 +500,7 @@ function renderSide() {
 }
 // Barra superior fija en todas las pantallas: volver al inicio, ver y cambiar de perfil, y salir
 function barraSup() {
-  const per = ctx.estudiantes && isFam() ? `${ROL_TXT[ctx.rol]} de ${esc(est(propio())?.nombres || ctx.estudiantes.nombres)}` : ROL_TXT[ctx.rol];
+  const per = ctx.estudiantes && isFam() ? `${ROL_TXT[ctx.rol]}${isEst() ? ':' : ' de'} ${esc(est(propio())?.nombres || ctx.estudiantes.nombres)}` : ROL_TXT[ctx.rol];
   return `<div class="topbar tb-rol-${ctx.rol}">
     ${view !== 'inicio' ? `<button class="btn ghost sm tb-volver" type="button" onclick="volver()" title="Volver a la pantalla anterior">← Volver</button>` : ''}
     <button class="btn ghost sm" type="button" onclick="go('inicio')" ${view === 'inicio' ? 'aria-current="page"' : ''}>Inicio</button>
@@ -596,7 +602,7 @@ async function prepInicio() {
     S.susc = await q(db.rpc('mi_suscripcion', { p_colegio: ctx.colegio_id })).catch(() => null);
   }
   if (isDoc()) { for (const g of gruposVis()) await cargarGrupo(g.id); }
-  if (isFam()) { const e = est(propio()); if (e) await cargarGrupo(e.grupo_id).catch(() => {}); }
+  if (isFam()) { const e = est(propio()); if (e) await cargarGrupo(e.grupo_id).catch(() => {}); await prepCampusInicio(); }
   if (isFam() || atiende() || manejaPagos()) await cargarNovedades();
 }
 function vInicio() {
@@ -643,7 +649,7 @@ function vInicio() {
   const g = grupo(e.grupo_id);
   if (!g) return head(`Hola`, '') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
   const pr = promedio(e.id), pe = perdidas(e.id);
-  return head(ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)}` : `Hola, ${esc(e.nombres)}`, `${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + hoyFamilia() +
+  return head(ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)}` : `Hola, ${esc(e.nombres)}`, `${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + hoyFamilia() + campusInicioHTML() +
     `<div class="stats">
       <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : N(pr)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado' + (pr == null ? '' : ', ' + desem(pr))}</div></div>
       <div class="stat"><div class="n">${pe.length}</div><div class="l">Asignaturas en bajo</div></div>
@@ -980,8 +986,8 @@ function vNotas() {
   else if (conAct) {
     tabla = `<div class="toolbar"><button class="btn sm" type="button" onclick="formActividad()" ${dis}>+ Agregar actividad</button>
       <span class="muted">Cree las actividades que quiera (talleres, tareas, evaluaciones). La calificación del periodo es el <strong>promedio</strong> de las actividades calificadas, sin porcentajes.</span></div>
-    ${acts.length ? `<div class="tbl"><table class="planilla"><thead><tr><th>Estudiante</th>${acts.map(a => `<th><button class="linkbtn" type="button" onclick="formActividad('${a.id}')" title="Cambiar nombre o fecha">${esc(a.nombre)}</button>${a.fecha ? `<br><span class="muted">${fmtF(a.fecha).slice(0, 5)}</span>` : ''}${dis ? '' : `<br><button class="linkbtn malo" type="button" onclick="borrarActividad('${a.id}')" title="Borrar esta actividad">Borrar</button>`}</th>`).join('')}<th>Periodo ${sel.p}</th><th>Acumulado</th><th>Estado</th><th></th></tr></thead><tbody>
-    ${es.map(e => `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td>${acts.map(a => { const v = S.nact[`${a.id}|${e.id}`]; return `<td><input class="actnota" ${NOTA_ATTR} value="${N(v)}" aria-label="${esc(a.nombre)} de ${esc(nom(e))}" onchange="setNotaAct('${a.id}','${e.id}',this)" ${dis}></td>`; }).join('')}
+    ${acts.length ? `<div class="tbl"><table class="planilla"><thead><tr><th>Estudiante</th>${acts.map(a => `<th><button class="linkbtn" type="button" onclick="formActividad('${a.id}')" title="${a.campus ? 'Viene del campus virtual' : 'Cambiar nombre o fecha'}">${a.campus ? '💻 ' : ''}${esc(a.nombre)}</button>${a.fecha ? `<br><span class="muted">${fmtF(a.fecha).slice(0, 5)}</span>` : ''}${a.campus ? '<br><span class="muted" style="font-size:.8rem">Del campus</span>' : dis ? '' : `<br><button class="linkbtn malo" type="button" onclick="borrarActividad('${a.id}')" title="Borrar esta actividad">Borrar</button>`}</th>`).join('')}<th>Periodo ${sel.p}</th><th>Acumulado</th><th>Estado</th><th></th></tr></thead><tbody>
+    ${es.map(e => `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td>${acts.map(a => { const v = S.nact[`${a.id}|${e.id}`]; return `<td><input class="actnota" ${NOTA_ATTR} value="${N(v)}" aria-label="${esc(a.nombre)} de ${esc(nom(e))}" onchange="setNotaAct('${a.id}','${e.id}',this)" ${a.campus ? 'disabled title="Se califica en el campus virtual"' : dis}></td>`; }).join('')}
       <td id="pn-${e.id}">${chip(notaRaw(e.id, sel.a, sel.p))}</td><td id="ac-${e.id}">${chip(defin(e.id, sel.a))}</td><td id="st-${e.id}">${estadoCal(e.id)}</td><td>${recBtn(e.id)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   } else {
     const ps = periodos(), txt = x => x == null ? '—' : pre ? desem(x) : N(x);
@@ -1050,7 +1056,8 @@ function formActividad(id) {
   const cerr = cerrado(sel.p);
   openModal(id ? 'Editar actividad' : 'Nueva actividad', `<div class="formgrid">${fIn('aNom', 'Nombre de la actividad', a.nombre, 'maxlength="80" placeholder="Ejemplo: Taller 1, Evaluación escrita"')}
     ${fIn('aFec', 'Fecha', a.fecha || '', 'type="date"')}</div><p class="muted">La calificación del periodo será el promedio de todas las actividades calificadas.</p>
-    <div class="modal-foot">${id && !cerr ? `<button class="btn ghost" type="button" onclick="borrarActividad('${id}')">Borrar actividad</button>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button>${cerr ? '' : `<button class="btn" type="button" id="aBtn" onclick="guardarActividad('${id || ''}')">Guardar</button>`}</div>`);
+    ${a.campus ? '<div class="note">💻 Esta actividad viene del campus virtual: se califica allí y se borra desde el campus.</div>' : ''}
+    <div class="modal-foot">${id && !cerr && !a.campus ? `<button class="btn ghost" type="button" onclick="borrarActividad('${id}')">Borrar actividad</button>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button>${cerr ? '' : `<button class="btn" type="button" id="aBtn" onclick="guardarActividad('${id || ''}')">Guardar</button>`}</div>`);
 }
 async function guardarActividad(id) {
   const d = { nombre: vv('aNom'), fecha: vv('aFec') || null };
@@ -1315,12 +1322,12 @@ async function cargarCostos() {
   costos = (await q(db.from('costos_anio').select('*').eq('colegio_id', ctx.colegio_id).eq('anio', a)))[0] || { anio: a };
   conceptos = await q(db.from('conceptos').select('*').eq('colegio_id', ctx.colegio_id).eq('anio', a).order('orden').order('nombre'));
 }
-const PTABS = { inst: 'Institución', periodos: 'Periodos y escala', grupos: 'Cursos', plan: 'Plan de estudios', logros: 'Logros', costos: 'Costos del año', cierre: 'Cierre de año' };
+const PTABS = { inst: 'Institución', periodos: 'Periodos y escala', grupos: 'Cursos', plan: 'Plan de estudios', logros: 'Logros', campus: 'Campus y gemas', costos: 'Costos del año', cierre: 'Cierre de año' };
 async function irPtab(t) { sel.ptab = t; await go('config'); }
 function vConfig() {
   const tabs = isTes() ? ['costos'] : Object.keys(PTABS);
   const t = sel.ptab || tabs[0];
-  const cuerpo = { inst: paramInst, periodos: paramPeriodos, grupos: paramGrupos, plan: planTabs, logros: paramLogros, costos: paramCostos, cierre: paramCierre }[t]();
+  const cuerpo = { inst: paramInst, periodos: paramPeriodos, grupos: paramGrupos, plan: planTabs, logros: paramLogros, campus: paramCampus, costos: paramCostos, cierre: paramCierre }[t]();
   return head('Parametrización', 'Datos del colegio y reglas del año lectivo.') +
     `<div class="tabs" role="tablist">${tabs.map(k => `<button type="button" role="tab" aria-selected="${k === t}" onclick="irPtab('${k}')">${PTABS[k]}</button>`).join('')}</div>${cuerpo}`;
 }
@@ -2645,10 +2652,10 @@ async function cargarNovedades() {
         q(db.from('respuestas_aut').select('autorizacion_id,autoriza').eq('estudiante_id', e)),
         q(db.from('citas').select('id,fecha,estado,modalidad,personal_id,motivo').eq('estudiante_id', e).in('estado', ['Solicitada', 'Confirmada']).order('creado_en')),
       ]);
-      n.msg = m.length;
+      n.msg = isAcud() ? m.length : 0;   // el estudiante no usa mensajes ni citas (son de la familia)
       const resp = new Set(ra.map(r => r.autorizacion_id));
       if (isAcud()) n.aut = au.filter(a => aplicaAut(a, e) && autAbierta(a) && !resp.has(a.id));
-      n.citasProx = ci.filter(c => c.estado === 'Confirmada' && c.fecha && c.fecha.slice(0, 10) >= hoy());
+      n.citasProx = isAcud() ? ci.filter(c => c.estado === 'Confirmada' && c.fecha && c.fecha.slice(0, 10) >= hoy()) : [];
       if (isAcud() && S.k?.tienda_activa) { n.pedCambios = await q(db.from('pedidos').select('id,numero,estado').eq('estudiante_id', e).eq('visto_familia', false).limit(20)).catch(() => []); n.pedidos = n.pedCambios.length; }
       const g = est(e)?.grupo_id;
       if (g) {
@@ -2671,14 +2678,17 @@ async function cargarNovedades() {
   S.nov = n;
 }
 function totalNov() {
+  if (isEst() && !alDia()) return 0;
   const n = S.nov || {}; let t = (n.msg || 0) + (n.aut?.length || 0) + (n.citasPend || 0) + (n.pedidos || 0) + (n.pedidosStaff || 0) + (n.citasProx || []).filter(c => c.fecha.slice(0, 10) <= sumarDias(hoy(), 1)).length;
-  if (isFam()) t += noLeidos();
+  if (isFam()) t += noLeidos() + (S.camPend || 0);
   return t;
 }
 function verAvisos() {
+  if (isEst() && !alDia()) return openModal('Avisos', '<p class="muted">No tiene avisos.</p>');
   const n = S.nov || {}, items = [];
   const it = (txt, vista, extra = '') => items.push(`<button type="button" class="perfil" onclick="closeModal();${extra}go('${vista}')"><strong>${txt}</strong></button>`);
   if (isFam() && noLeidos()) it(`${noLeidos()} ${noLeidos() === 1 ? 'comunicado sin leer' : 'comunicados sin leer'}`, 'comunicados');
+  if (isFam() && S.camPend && verCampus() && alDia()) it(`${S.camPend} ${S.camPend === 1 ? 'actividad pendiente' : 'actividades pendientes'} en el campus virtual`, 'campus');
   if (n.msg) it(`${n.msg} ${n.msg === 1 ? 'mensaje nuevo' : 'mensajes nuevos'}`, 'mensajes');
   if (n.aut?.length) it(`${n.aut.length} ${n.aut.length === 1 ? 'autorización por responder' : 'autorizaciones por responder'}`, 'autorizaciones');
   if (n.citasPend) it(`${n.citasPend} ${n.citasPend === 1 ? 'solicitud de cita por responder' : 'solicitudes de cita por responder'}`, 'citas');
@@ -2693,7 +2703,7 @@ function hoyFamilia() {
   const e = est(propio()); if (!e) return '';
   const n = S.nov || {}, h = hoy(), aviso = [];
   const a = S.asis?.[`${h}|${e.id}`];
-  if (a === 'A') aviso.push(`<div class="note bloqueo"><strong>Hoy ${esc(e.nombres)} no asistió al colegio.</strong> Si faltó por un motivo justificado, envíe la excusa. <button class="btn sm" type="button" onclick="go('excusas')">Enviar excusa</button></div>`);
+  if (a === 'A' && isAcud()) aviso.push(`<div class="note bloqueo"><strong>Hoy ${esc(e.nombres)} no asistió al colegio.</strong> Si faltó por un motivo justificado, envíe la excusa. <button class="btn sm" type="button" onclick="go('excusas')">Enviar excusa</button></div>`);
   else if (a === 'T') aviso.push(`<div class="note"><strong>Hoy ${esc(e.nombres)} llegó tarde al colegio.</strong></div>`);
   const eventos = (S.coms ? comsMios() : []).filter(c => c.fecha_evento && c.fecha_evento.slice(0, 10) >= h && c.fecha_evento.slice(0, 10) <= sumarDias(h, 7));
   const fil = [];
@@ -2708,7 +2718,7 @@ function hoyFamilia() {
   return `${aviso.join('')}<section class="panel hoy"><h2>Hoy, ${fechaLarga(h)}</h2>
     <div class="cols"><div><h3>Pendientes y novedades</h3>${fil.length ? `<ul class="list">${fil.join('')}</ul>` : '<p class="muted">No hay novedades por ahora.</p>'}</div>
     <div><h3>Clases de hoy</h3>${clases.length ? `<ul class="list">${clases.map(c => `<li>${c}</li>`).join('')}</ul>` : `<p class="muted">${isoDow(h) >= 6 ? 'Hoy no hay clases.' : 'El colegio aún no ha publicado el horario.'}</p>`}</div></div>
-    <div class="toolbar" style="margin-top:10px"><button class="btn sm" type="button" onclick="go('mensajes')">Escribir al colegio</button><button class="btn ghost sm" type="button" onclick="go('citas')">Pedir una cita</button></div></section>`;
+    ${isAcud() ? `<div class="toolbar" style="margin-top:10px"><button class="btn sm" type="button" onclick="go('mensajes')">Escribir al colegio</button><button class="btn ghost sm" type="button" onclick="go('citas')">Pedir una cita</button></div>` : ''}</section>`;
 }
 
 /* ---------- Mensajes privados ---------- */
@@ -3734,9 +3744,445 @@ function imprimirGraficos() {
 }
 
 /* =====================================================================
+   Campus virtual (entrega 2, como el de AcademIA) y gemas
+   ===================================================================== */
+const isEst = () => ctx && ctx.rol === 'estudiante';
+const campusOn = () => !!S?.k?.campus_activo;
+const campusGrado = g => !!g && campusOn() && (!(S.k.campus_grados || []).length || S.k.campus_grados.includes(g.grado));
+const gemasOn = () => S?.k?.gemas_activas !== false;
+function verCampus() {
+  if (!campusOn()) return false;
+  if (isDir()) return true;
+  if (isDoc()) return gruposVis().some(campusGrado);
+  if (isFam()) { const e = est(propio()); return campusGrado(e && grupo(e.grupo_id)); }
+  return false;
+}
+const TIPO_IT = { recurso: ['📄', 'Recurso o lectura'], video: ['🎬', 'Video'], clase: ['🎥', 'Clase en vivo'], tarea: ['📝', 'Tarea'], cuestionario: ['❓', 'Cuestionario'] };
+const RANGOS = [[0, 'Semilla', '🌱'], [50, 'Cuarzo', '💠'], [150, 'Amatista', '🟣'], [350, 'Esmeralda', '💚'], [700, 'Rubí', '❤️'], [1200, 'Zafiro', '🔷'], [2000, 'Diamante', '💎'], [3500, 'Leyenda', '👑']];
+function rango(t) {
+  let i = 0; RANGOS.forEach((r, k) => { if (t >= r[0]) i = k; });
+  const sig = RANGOS[i + 1];
+  return { n: RANGOS[i][1], ico: RANGOS[i][2], sig: sig ? sig[1] : null, sigIco: sig ? sig[2] : '', faltan: sig ? sig[0] - t : 0, pct: sig ? Math.round((t - RANGOS[i][0]) / (sig[0] - RANGOS[i][0]) * 100) : 100 };
+}
+const MOTIVO_G = { entrada: 'Entró al campus', racha: 'Cinco días seguidos', recurso: 'Abrió un recurso', tarea: 'Entregó una tarea', cuestionario: 'Respondió un cuestionario', excelente: 'Calificación excelente', felicitacion: 'Felicitación del observador', positiva: 'Anotación positiva', participacion: 'Participación en clase' };
+const fechaHoraTxt = f => f ? new Date(f).toLocaleString('es-CO', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'America/Bogota' }) : '';
+const aLocal = f => { if (!f) return ''; const d = new Date(new Date(f).getTime() - 5 * 3600e3); return d.toISOString().slice(0, 16); };   // hora de Colombia para el campo de fecha
+const deLocal = v => v ? v + ':00-05:00' : null;
+const vencido = it => it.fecha && new Date(it.fecha) < new Date();
+
+// ---------- Carga de datos ----------
+const CAM = { uns: [], its: [], ent: {}, vis: new Set(), cnt: {}, pend: [], gem: null };
+async function cargarCampusFam() {
+  const e = est(propio()); if (!e || !campusGrado(grupo(e.grupo_id)) || !alDia()) { CAM.uns = []; CAM.its = []; CAM.pend = []; S.camPend = 0; return; }
+  CAM.uns = await q(db.from('campus_unidades').select('*').eq('grupo_id', e.grupo_id).eq('anio', S.k.anio).order('periodo').order('orden').order('creado_en'));
+  CAM.its = CAM.uns.length ? await q(db.from('campus_items').select('*').in('unidad_id', CAM.uns.map(u => u.id)).order('orden').order('creado_en')) : [];
+  const ids = CAM.its.map(i => i.id);
+  const [en, vi] = ids.length ? await Promise.all([
+    q(db.from('campus_entregas').select('*').eq('estudiante_id', e.id).in('item_id', ids)),
+    q(db.from('campus_vistos').select('item_id').eq('estudiante_id', e.id).in('item_id', ids))]) : [[], []];
+  CAM.ent = {}; en.forEach(x => CAM.ent[x.item_id] = x); CAM.vis = new Set(vi.map(x => x.item_id));
+  CAM.pend = CAM.its.filter(i => ['tarea', 'cuestionario'].includes(i.tipo) && pendienteFam(i)).sort((a, b) => String(a.fecha || '9').localeCompare(String(b.fecha || '9')));
+  S.camPend = CAM.pend.filter(i => !vencido(i)).length;
+}
+function pendienteFam(i) {
+  const x = CAM.ent[i.id];
+  if (i.tipo === 'tarea') return !x;
+  if (i.tipo === 'cuestionario') return !x && i.n_preg > 0;
+  return false;
+}
+async function cargarCampusStaff() {
+  const g = grupo(sel.cg); if (!g) return;
+  CAM.uns = await q(db.from('campus_unidades').select('*').eq('grupo_id', g.id).eq('asignatura_id', sel.ca).eq('anio', S.k.anio).order('orden').order('creado_en'));
+  CAM.its = CAM.uns.length ? await q(db.from('campus_items').select('*').in('unidad_id', CAM.uns.map(u => u.id)).order('orden').order('creado_en')) : [];
+  const ids = CAM.its.map(i => i.id); CAM.cnt = {};
+  if (ids.length) {
+    const [en, vi] = await Promise.all([all(() => db.from('campus_entregas').select('item_id,estado').in('item_id', ids).order('id')), all(() => db.from('campus_vistos').select('item_id').in('item_id', ids).order('item_id').order('estudiante_id'))]);
+    en.forEach(x => { const c = CAM.cnt[x.item_id] ||= { ent: 0, cal: 0, vis: 0 }; c.ent++; if (x.estado === 'Calificada') c.cal++; });
+    vi.forEach(x => { (CAM.cnt[x.item_id] ||= { ent: 0, cal: 0, vis: 0 }).vis++; });
+  }
+}
+async function prepCampus() {
+  if (isFam()) { await cargarCampusFam(); if (!sel.cp) sel.cp = S.k.periodo_actual; return; }
+  const gs = gruposVis().filter(campusGrado); if (!gs.length) return;
+  if (!sel.cg || !gs.find(g => g.id === sel.cg)) sel.cg = gs[0].id;
+  const as = asigsVis(grupo(sel.cg)); if (!as.find(a => a.id === sel.ca)) sel.ca = as[0]?.id || '';
+  if (!sel.cp) sel.cp = S.k.periodo_actual;
+  await cargarCampusStaff();
+}
+async function campusSel(k, v) { sel[k] = k === 'cp' ? +v : v; if (k === 'cg') sel.ca = ''; $('#view').innerHTML = '<div class="loading">Cargando…</div>'; await guard(prepCampus); render(); }
+
+// ---------- Pantalla del campus ----------
+function vCampus() {
+  if (!campusOn()) return head('Campus virtual') + '<div class="panel empty">El campus virtual no está activo en el colegio.</div>';
+  return isFam() ? vCampusFam() : vCampusStaff();
+}
+function estadoItemFam(i) {
+  const x = CAM.ent[i.id];
+  if (i.tipo === 'tarea') return x?.estado === 'Calificada' ? `<span class="tag ok-t">Calificada: ${N(x.nota)}</span>` : x ? '<span class="tag ent-t">Entregada</span>' : vencido(i) ? '<span class="tag t3">Fecha vencida</span>' : '<span class="tag t2">Por entregar</span>';
+  if (i.tipo === 'cuestionario') return x ? `<span class="tag ok-t">Calificación: ${N(x.nota)}</span>` : vencido(i) ? '<span class="tag t3">Cerrado</span>' : i.n_preg ? '<span class="tag t2">Por responder</span>' : '<span class="tag">En preparación</span>';
+  return CAM.vis.has(i.id) ? '<span class="tag ok-t">✓ Visto</span>' : '<span class="tag nuevo-t">Nuevo</span>';
+}
+function itemFamHTML(i, conAsig) {
+  const [ico, tl] = TIPO_IT[i.tipo], u = CAM.uns.find(x => x.id === i.unidad_id), a = S.asigs.find(x => x.id === u?.asignatura_id);
+  const meta = [conAsig && a ? esc(a.nombre) : '', tl, i.fecha ? (i.tipo === 'clase' ? 'Clase: ' : 'Hasta: ') + fechaHoraTxt(i.fecha) : ''].filter(Boolean).join(' · ');
+  const btn = i.tipo === 'tarea' ? 'Ver tarea' : i.tipo === 'cuestionario' ? (CAM.ent[i.id] ? 'Ver resultado' : 'Responder') : i.tipo === 'clase' ? 'Entrar a la clase' : 'Abrir';
+  return `<li class="cam-it"><span class="cam-ico" aria-hidden="true">${ico}</span><div class="cam-tx"><strong>${esc(i.titulo)}</strong><br><span class="muted">${meta}</span></div>
+    <div class="cam-ac">${estadoItemFam(i)}<button class="btn sm" type="button" onclick="abrirItem('${i.id}')">${btn}</button></div></li>`;
+}
+function vCampusFam() {
+  const e = est(propio()), g = grupo(e?.grupo_id);
+  if (!e || !g) return head('Campus virtual') + '<div class="panel empty">El estudiante aún no tiene curso asignado.</div>';
+  if (!campusGrado(g)) return head('Campus virtual') + `<div class="panel empty">El campus virtual todavía no está activo para ${esc(gradoTxt(g.grado))}.</div>`;
+  const asIds = [...new Set(CAM.uns.map(u => u.asignatura_id))], as = asigsDe(g).filter(a => asIds.includes(a.id));
+  if (!sel.cfa || !as.find(a => a.id === sel.cfa)) sel.cfa = 'todas';
+  const pend = CAM.pend.filter(i => !vencido(i)), clases = CAM.its.filter(i => i.tipo === 'clase' && i.fecha && new Date(i.fecha) > new Date(Date.now() - 2 * 3600e3)).sort((a, b) => a.fecha.localeCompare(b.fecha)).slice(0, 3);
+  const uns = CAM.uns.filter(u => u.periodo === +sel.cp && (sel.cfa === 'todas' || u.asignatura_id === sel.cfa));
+  const quien = isEst() ? 'usted' : esc(e.nombres);
+  return head(isEst() ? `Mi campus virtual` : `Campus virtual de ${esc(e.nombres)}`, `${esc(g.nombre)} · Clases, recursos, tareas y evaluaciones de cada asignatura.`) +
+    (gemasOn() ? `<div class="note gem-note">💎 Cada vez que ${quien} entra, abre un recurso, entrega una tarea o responde un cuestionario gana gemas. <button class="linkbtn" type="button" onclick="go('gemas')">Ver gemas y top del curso</button></div>` : '') +
+    `<div class="cols"><section class="panel"><h2>Pendientes${pend.length ? ` (${pend.length})` : ''}</h2>${pend.length ? `<ul class="list cam-list">${pend.slice(0, 6).map(i => itemFamHTML(i, true)).join('')}</ul>` : '<p class="muted">¡Al día! No hay tareas ni cuestionarios por hacer.</p>'}</section>
+      <section class="panel"><h2>Próximas clases en vivo</h2>${clases.length ? `<ul class="list cam-list">${clases.map(i => itemFamHTML(i, true)).join('')}</ul>` : '<p class="muted">No hay clases en vivo programadas.</p>'}</section></div>
+    <div class="panel"><div class="toolbar"><label class="field"><span>Asignatura</span><select onchange="sel.cfa=this.value;render()">${opt('todas', 'Todas las asignaturas', sel.cfa)}${as.map(a => opt(a.id, a.nombre, sel.cfa)).join('')}</select></label>
+      <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp)}</select></label></div>
+      ${uns.length ? uns.map(u => { const its = CAM.its.filter(i => i.unidad_id === u.id), a = S.asigs.find(x => x.id === u.asignatura_id);
+        return `<section class="cam-unidad"><h3><span class="tag">${esc(a?.nombre || '')}</span> ${esc(u.titulo)}</h3>${u.descripcion ? `<p class="muted">${esc(u.descripcion)}</p>` : ''}
+          ${its.length ? `<ul class="list cam-list">${its.map(i => itemFamHTML(i)).join('')}</ul>` : '<p class="muted">Esta unidad aún no tiene contenidos.</p>'}</section>`; }).join('')
+      : `<p class="empty">No hay unidades publicadas en el periodo ${sel.cp}${sel.cfa !== 'todas' ? ' para esta asignatura' : ''}.</p>`}</div>`;
+}
+async function gemasToast(n, por) { if (n > 0 && gemasOn()) toast(`+${n} gemas 💎 ${por || ''}`.trim()); }
+async function abrirItem(id) {
+  const i = CAM.its.find(x => x.id === id); if (!i) return;
+  if (i.tipo === 'tarea') return formTareaFam(i);
+  if (i.tipo === 'cuestionario') return abrirCuestionario(i);
+  const w = i.url ? window.open(i.url, '_blank', 'noopener') : null;
+  if (!i.url || !w) openModal(i.titulo, `${i.fecha ? `<p><strong>${i.tipo === 'clase' ? 'Fecha de la clase' : 'Fecha'}:</strong> ${fechaHoraTxt(i.fecha)}</p>` : ''}${i.texto ? `<p style="white-space:pre-wrap">${esc(i.texto)}</p>` : ''}
+    ${i.url ? `<p><a class="btn" href="${esc(i.url)}" target="_blank" rel="noopener">Abrir enlace</a></p>` : ''}<div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button></div>`);
+  const n = await guard(() => q(db.rpc('campus_abrir', { p_item: id, p_est: propio() })));
+  if (n !== undefined) { CAM.vis.add(id); gemasToast(n, 'por abrir el recurso'); if (view === 'campus') render(); }
+}
+function formTareaFam(i) {
+  const x = CAM.ent[i.id], cal = x?.estado === 'Calificada';
+  openModal(i.titulo, `${i.fecha ? `<p><strong>Fecha límite:</strong> ${fechaHoraTxt(i.fecha)}${vencido(i) && !x ? ' <span class="tag t3">Vencida: todavía puede entregarla, quedará como tardía</span>' : ''}</p>` : ''}
+    ${i.texto ? `<div class="note" style="white-space:pre-wrap">${esc(i.texto)}</div>` : ''}${i.url ? `<p><a href="${esc(i.url)}" target="_blank" rel="noopener">Material de apoyo</a></p>` : ''}
+    ${cal ? `<div class="panel"><h3>Calificación: ${chip(x.nota)}</h3>${x.comentario ? `<p><strong>Comentario del docente:</strong> ${esc(x.comentario)}</p>` : ''}<p class="muted">Entregada el ${fechaHoraTxt(x.entregado_en) || '—'}</p></div>` :
+    `${x ? `<p class="ok">✓ Entregada el ${fechaHoraTxt(x.entregado_en)}. Puede corregirla mientras el docente no la califique.</p>` : ''}
+    <label class="field full"><span>Su respuesta</span><textarea id="tTx" rows="6" maxlength="4000" placeholder="Escriba aquí su respuesta">${esc(x?.texto || '')}</textarea></label>
+    ${fIn('tUrl', 'Enlace a su trabajo (opcional: Google Drive, foto, documento)', x?.url || '', 'maxlength="500" placeholder="https://"')}`}
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button>${cal ? '' : `<button class="btn" type="button" id="tBtn" onclick="entregarTarea('${i.id}')">${x ? 'Guardar cambios' : 'Entregar tarea'}</button>`}</div>`);
+}
+async function entregarTarea(id) {
+  const t = vv('tTx'), u = vv('tUrl');
+  if (!t && !u) return toast('Escriba su respuesta o pegue el enlace de su trabajo');
+  let url = u; if (u) { url = normUrl(u); if (!url) return toast('El enlace no parece válido. Cópielo completo desde el navegador'); }
+  const n = await busy('#tBtn', () => guard(() => q(db.rpc('campus_entregar', { p_item: id, p_est: propio(), p_texto: t, p_url: url }))));
+  if (n === undefined) return;
+  closeModal(); toast(n > 0 && gemasOn() ? `Tarea entregada. +${n} gemas 💎` : 'Tarea guardada');
+  await guard(cargarCampusFam); render();
+}
+let quiz = null;
+async function abrirCuestionario(i) {
+  const d = await guard(() => q(db.rpc('campus_cuestionario', { p_item: i.id, p_est: propio() }))); if (!d) return;
+  quiz = { i, d };
+  const quedan = d.intentos - d.usados, cerrado = vencido(i);
+  const info = `${i.texto ? `<div class="note" style="white-space:pre-wrap">${esc(i.texto)}</div>` : ''}<p class="muted">${d.preguntas.length} preguntas · ${d.intentos === 1 ? 'un intento' : d.intentos + ' intentos (queda la mejor calificación)'}${i.fecha ? ' · hasta ' + fechaHoraTxt(i.fecha) : ''}</p>`;
+  if (d.usados && (quedan <= 0 || cerrado)) return openModal(i.titulo, `${info}<div class="panel"><h3>Su calificación: ${chip(d.nota)}</h3><p class="muted">${quedan <= 0 ? 'Ya usó todos los intentos.' : 'El cuestionario ya cerró.'}</p></div><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Cerrar</button></div>`);
+  if (cerrado) return openModal(i.titulo, `${info}<p class="empty">El cuestionario cerró el ${fechaHoraTxt(i.fecha)}.</p><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Cerrar</button></div>`);
+  if (!d.preguntas.length) return openModal(i.titulo, `${info}<p class="empty">El docente aún está preparando las preguntas.</p><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Cerrar</button></div>`);
+  openModal(i.titulo, `${info}${d.usados ? `<p>Su mejor calificación hasta ahora: ${chip(d.nota)}. Le ${quedan === 1 ? 'queda 1 intento' : 'quedan ' + quedan + ' intentos'}.</p>` : ''}
+    <ol class="quiz">${d.preguntas.map((p, k) => `<li class="qz"><p><strong>${esc(p.q)}</strong> <span class="muted">(${p.pts} ${p.pts === 1 ? 'punto' : 'puntos'})</span></p>${preguntaHTML(p, k)}</li>`).join('')}</ol>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="qBtn" onclick="enviarCuestionario()">Enviar respuestas</button></div>`);
+}
+function preguntaHTML(p, k) {
+  if (p.t === 'om') return `<div class="qz-op">${p.o.map((o, j) => `<label class="chk"><input type="radio" name="qz${k}" value="${j}"> ${esc(o)}</label>`).join('')}</div>`;
+  if (p.t === 'vf') return `<div class="qz-op"><label class="chk"><input type="radio" name="qz${k}" value="true"> Verdadero</label><label class="chk"><input type="radio" name="qz${k}" value="false"> Falso</label></div>`;
+  if (p.t === 'corta') return `<input id="qz${k}" maxlength="200" placeholder="Escriba su respuesta" style="width:100%">`;
+  return `<table class="qz-emp"><tbody>${p.izq.map((l, j) => `<tr><td>${esc(l)}</td><td><select id="qz${k}_${j}"><option value="">Elija…</option>${p.der.map(r => opt(r, r)).join('')}</select></td></tr>`).join('')}</tbody></table>`;
+}
+async function enviarCuestionario() {
+  const ps = quiz.d.preguntas; let vacias = 0;
+  const resp = ps.map((p, k) => {
+    if (p.t === 'om') { const r = document.querySelector(`input[name="qz${k}"]:checked`); if (!r) vacias++; return r ? +r.value : null; }
+    if (p.t === 'vf') { const r = document.querySelector(`input[name="qz${k}"]:checked`); if (!r) vacias++; return r ? r.value === 'true' : null; }
+    if (p.t === 'corta') { const v = $('#qz' + k).value.trim(); if (!v) vacias++; return v || null; }
+    const r = p.izq.map((_, j) => $(`#qz${k}_${j}`).value); if (r.some(x => !x)) vacias++; return r;
+  });
+  if (vacias && !(await confirmar(`Tiene ${vacias === 1 ? 'una pregunta' : vacias + ' preguntas'} sin responder. ¿Enviar de todas formas?`, 'Enviar'))) return;
+  const r = await busy('#qBtn', () => guard(() => q(db.rpc('campus_responder', { p_item: quiz.i.id, p_est: propio(), p_resp: resp }))));
+  if (!r) return;
+  openModal(quiz.i.titulo, `<div class="cam-res"><div class="cam-nota">${N(r.nota)}</div><p><strong>${r.correctas} de ${r.total}</strong> preguntas correctas · ${desem(r.nota)}</p>
+    ${r.mejor > r.nota ? `<p class="muted">Se conserva su mejor calificación: ${N(r.mejor)}.</p>` : ''}${r.gemas && gemasOn() ? `<p class="gem-win">+${r.gemas} gemas 💎</p>` : ''}
+    <ol class="qz-det">${r.detalle.map((ok, k) => `<li class="${ok ? 'ok' : 'err'}">${ok ? '✓' : '✗'} ${esc(ps[k].q)}</li>`).join('')}</ol>
+    ${r.quedan ? `<p class="muted">Le ${r.quedan === 1 ? 'queda 1 intento' : 'quedan ' + r.quedan + ' intentos'} para mejorar.</p>` : ''}</div>
+    <div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Listo</button></div>`);
+  await guard(cargarCampusFam); render();
+}
+
+// ---------- Campus del docente y directivos ----------
+function vCampusStaff() {
+  const gs = gruposVis().filter(campusGrado);
+  if (!gs.length) return head('Campus virtual') + `<div class="panel empty">${isDir() ? 'El campus está activo, pero ningún curso está en los grados habilitados. Revíselo en Parametrización › Campus y gemas.' : 'Ninguno de sus cursos tiene el campus virtual activo.'}</div>`;
+  const g = grupo(sel.cg), as = asigsVis(g), a = as.find(x => x.id === sel.ca);
+  const edita = isDir() || (isDoc() && S.misGrupos.includes(g.id) && (!S.misAsig[g.id] || S.misAsig[g.id].includes(sel.ca)));
+  const uns = CAM.uns.filter(u => u.periodo === +sel.cp), nEst = estsDe(g.id).length;
+  return head('Campus virtual', 'Arme cada unidad con recursos, videos, clases en vivo, tareas y cuestionarios. Las calificaciones de tareas y cuestionarios pasan solas a Calificaciones como actividades del periodo.') +
+    `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="campusSel('cg',this.value)">${gs.map(x => opt(x.id, x.nombre, sel.cg)).join('')}</select></label>
+      <label class="field"><span>${g.nivel === 'preescolar' ? 'Dimensión' : 'Asignatura'}</span><select onchange="campusSel('ca',this.value)">${as.map(x => opt(x.id, x.nombre, sel.ca)).join('')}</select></label>
+      <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp)}</select></label>
+      ${edita ? `<button class="btn" type="button" style="margin-left:auto" onclick="formUnidad()">+ Nueva unidad</button>` : ''}</div>
+      ${!a ? '<p class="empty">No hay asignaturas para este curso.</p>' : uns.length ? uns.map(u => unidadStaffHTML(u, edita, nEst)).join('')
+        : `<div class="empty">Aún no hay unidades en el periodo ${sel.cp}.${edita ? ' Oprima <strong>+ Nueva unidad</strong> y luego agregue sus contenidos.' : ''}</div>`}</div>
+    ${edita ? `<div class="note"><strong>¿Cómo funciona?</strong> 1) Cree una unidad. 2) Agregue contenidos: recursos y videos (con su enlace), clases en vivo (enlace de Meet, Zoom o Teams), tareas y cuestionarios.
+      3) Los estudiantes de ${esc(g.nombre)} los ven en su campus y ganan gemas al participar. 4) Califique las tareas en <em>Entregas</em>; los cuestionarios se califican solos.</div>` : ''}`;
+}
+function unidadStaffHTML(u, edita, nEst) {
+  const its = CAM.its.filter(i => i.unidad_id === u.id);
+  return `<section class="cam-unidad"><div class="cam-uh"><h3>${esc(u.titulo)} ${u.visible ? '' : '<span class="tag">Oculta para los estudiantes</span>'}</h3>
+    ${edita ? `<div class="toolbar"><button class="btn sm" type="button" onclick="elegirTipo('${u.id}')">+ Agregar contenido</button><button class="btn ghost sm" type="button" onclick="formUnidad('${u.id}')">Editar unidad</button></div>` : ''}</div>
+    ${u.descripcion ? `<p class="muted">${esc(u.descripcion)}</p>` : ''}
+    ${its.length ? `<ul class="list cam-list">${its.map(i => { const [ico, tl] = TIPO_IT[i.tipo], c = CAM.cnt[i.id] || { ent: 0, cal: 0, vis: 0 };
+      const cuenta = i.tipo === 'tarea' ? `Entregas: ${c.ent} de ${nEst} · Calificadas: ${c.cal}` : i.tipo === 'cuestionario' ? `${i.n_preg} preguntas · Respondieron: ${c.ent} de ${nEst}` : `Lo abrieron: ${c.vis} de ${nEst}`;
+      return `<li class="cam-it"><span class="cam-ico" aria-hidden="true">${ico}</span><div class="cam-tx"><strong>${esc(i.titulo)}</strong> ${i.visible ? '' : '<span class="tag">Oculto</span>'} ${i.calificable ? '<span class="tag piar">Cuenta para calificaciones</span>' : ''}
+        <br><span class="muted">${tl}${i.fecha ? ' · ' + (i.tipo === 'clase' ? 'Clase: ' : 'Hasta: ') + fechaHoraTxt(i.fecha) : ''} · ${cuenta}</span>${i.tipo === 'cuestionario' && !i.n_preg ? '<br><span class="err" style="font-weight:400">Sin preguntas: los estudiantes aún no pueden responder.</span>' : ''}</div>
+        <div class="cam-ac">${i.tipo === 'cuestionario' && edita ? `<button class="btn sm" type="button" onclick="editorPreguntas('${i.id}')">Preguntas</button>` : ''}
+          ${['tarea', 'cuestionario'].includes(i.tipo) ? `<button class="btn ${i.tipo === 'tarea' ? 'sm' : 'ghost sm'}" type="button" onclick="verEntregas('${i.id}')">${i.tipo === 'tarea' ? 'Entregas' : 'Resultados'}</button>` : ''}
+          ${i.url && !['tarea', 'cuestionario'].includes(i.tipo) ? `<a class="btn ghost sm" href="${esc(i.url)}" target="_blank" rel="noopener">Abrir</a>` : ''}
+          ${edita ? `<button class="btn ghost sm" type="button" onclick="formItem('${u.id}','${i.tipo}','${i.id}')">Editar</button>` : ''}</div></li>`; }).join('')}</ul>`
+      : '<p class="muted">Sin contenidos todavía.</p>'}</section>`;
+}
+function formUnidad(id) {
+  const u = id ? CAM.uns.find(x => x.id === id) : { titulo: `Unidad ${CAM.uns.filter(x => x.periodo === +sel.cp).length + 1}: `, descripcion: '', visible: true };
+  openModal(id ? 'Editar unidad' : 'Nueva unidad', `<div class="formgrid">${fIn('uTit', 'Título de la unidad', u.titulo, 'maxlength="120"')}</div>
+    ${fTa('uDes', 'Descripción (opcional)', u.descripcion, 'Qué se trabajará en esta unidad')}
+    <label class="chk"><input type="checkbox" id="uVis" ${u.visible ? 'checked' : ''}> Visible para los estudiantes</label>
+    <p class="muted">La unidad queda en el periodo ${sel.cp} de ${esc(S.asigs.find(a => a.id === sel.ca)?.nombre || '')}, ${esc(grupo(sel.cg)?.nombre || '')}.</p>
+    <div class="modal-foot">${id ? `<button class="btn ghost" type="button" onclick="borrarUnidad('${id}')">Borrar unidad</button>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="uBtn" onclick="guardarUnidad('${id || ''}')">Guardar</button></div>`);
+}
+async function guardarUnidad(id) {
+  const d = { titulo: vv('uTit'), descripcion: vv('uDes') || null, visible: $('#uVis').checked };
+  if (d.titulo.replace(/^Unidad \d+:\s*$/, '').length < 3) return toast('Escriba el título de la unidad');
+  const r = await busy('#uBtn', () => guard(() => id ? q(db.from('campus_unidades').update(d).eq('id', id).select().single())
+    : q(db.from('campus_unidades').insert({ ...d, grupo_id: sel.cg, asignatura_id: sel.ca, periodo: +sel.cp, colegio_id: ctx.colegio_id, anio: S.k.anio, orden: CAM.uns.length + 1 }).select().single()), id ? 'Unidad guardada' : 'Unidad creada. Ahora agregue sus contenidos'));
+  if (!r) return; closeModal(); await guard(cargarCampusStaff); render();
+}
+async function borrarUnidad(id) {
+  const n = CAM.its.filter(i => i.unidad_id === id).length;
+  if (!(await confirmar(n ? `La unidad tiene ${n} contenidos. Se borrarán con sus entregas y las calificaciones que pasaron a Calificaciones. ¿Borrar la unidad?` : '¿Borrar la unidad?', 'Sí, borrar'))) return;
+  if (await guard(() => q(db.from('campus_unidades').delete().eq('id', id)), 'Unidad borrada') !== undefined) { closeModal(); await guard(cargarCampusStaff); render(); }
+}
+function elegirTipo(uid) {
+  const ayuda = { recurso: 'Lectura, guía, documento o página web (enlace).', video: 'Enlace de YouTube u otro sitio de videos.', clase: 'Enlace de Meet, Zoom o Teams con fecha y hora.', tarea: 'El estudiante escribe su respuesta o envía un enlace. Usted la califica.', cuestionario: 'Preguntas de opción múltiple, verdadero o falso, emparejamiento o respuesta corta. Se califica solo.' };
+  openModal('Agregar contenido', `<div class="tipos-cam">${Object.entries(TIPO_IT).map(([t, [ico, l]]) => `<button type="button" class="tipo-cam" onclick="formItem('${uid}','${t}')"><span>${ico}</span><strong>${l}</strong><small>${ayuda[t]}</small></button>`).join('')}</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button></div>`);
+}
+function formItem(uid, tipo, id) {
+  const i = id ? CAM.its.find(x => x.id === id) : { titulo: '', texto: '', url: '', fecha: null, calificable: true, intentos: 1, visible: true };
+  const [ico, tl] = TIPO_IT[tipo], conFecha = ['clase', 'tarea', 'cuestionario'].includes(tipo), cal = ['tarea', 'cuestionario'].includes(tipo);
+  const lUrl = { recurso: 'Enlace del recurso (opcional si escribe el texto)', video: 'Enlace del video', clase: 'Enlace de la reunión (Meet, Zoom, Teams)', tarea: 'Material de apoyo (enlace, opcional)', cuestionario: 'Material de apoyo (enlace, opcional)' }[tipo];
+  openModal(`${ico} ${id ? 'Editar' : 'Nuevo'}: ${tl.toLowerCase()}`, `<div class="formgrid">${fIn('iTit', 'Título', i.titulo, 'maxlength="120"')}
+      ${conFecha ? fIn('iFec', tipo === 'clase' ? 'Fecha y hora de la clase' : 'Fecha y hora límite (opcional)', aLocal(i.fecha), 'type="datetime-local"') : ''}
+      ${fIn('iUrl', lUrl, i.url, 'maxlength="500" placeholder="https://"')}
+      ${tipo === 'cuestionario' ? `<label class="field"><span>Intentos permitidos</span><select id="iInt">${[1, 2, 3].map(n => opt(n, n === 1 ? '1 intento' : n + ' intentos (queda la mejor)', i.intentos)).join('')}</select></label>` : ''}</div>
+    ${fTa('iTxt', tipo === 'tarea' || tipo === 'cuestionario' ? 'Instrucciones para el estudiante' : 'Descripción o texto (opcional)', i.texto, '')}
+    ${cal ? `<label class="chk"><input type="checkbox" id="iCal" ${i.calificable ? 'checked' : ''}> Cuenta para calificaciones (crea una actividad del periodo ${sel.cp} en Calificaciones)</label><br>` : ''}
+    <label class="chk"><input type="checkbox" id="iVis" ${i.visible ? 'checked' : ''}> Visible para los estudiantes</label>
+    ${id && i.calificable ? '<p class="muted">Si quita "Cuenta para calificaciones", se borra su actividad en Calificaciones y se recalcula la calificación del periodo.</p>' : ''}
+    <div class="modal-foot">${id ? `<button class="btn ghost" type="button" onclick="borrarItem('${id}')">Borrar</button>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="iBtn" onclick="guardarItem('${uid}','${tipo}','${id || ''}')">${tipo === 'cuestionario' && !id ? 'Guardar y escribir preguntas' : 'Guardar'}</button></div>`);
+}
+async function guardarItem(uid, tipo, id) {
+  const d = { titulo: vv('iTit'), texto: vv('iTxt') || null, visible: $('#iVis').checked };
+  if (d.titulo.length < 3) return toast('Escriba el título');
+  const u = vv('iUrl');
+  if (u) { d.url = normUrl(u); if (!d.url) return toast('El enlace no parece válido. Cópielo completo desde el navegador'); } else d.url = null;
+  if (tipo === 'video' && !d.url) return toast('Pegue el enlace del video');
+  if (tipo === 'recurso' && !d.url && !d.texto) return toast('Pegue el enlace o escriba el texto del recurso');
+  if ($('#iFec')) { d.fecha = deLocal(vv('iFec')); if (tipo === 'clase' && !d.fecha) return toast('Escriba la fecha y la hora de la clase'); }
+  if ($('#iCal')) d.calificable = $('#iCal').checked;
+  if ($('#iInt')) d.intentos = +$('#iInt').value;
+  if (id) {
+    const o = CAM.its.find(x => x.id === id);
+    if (o.calificable && d.calificable === false && CAM.cnt[id]?.cal && !(await confirmar('Este contenido ya tiene calificaciones. Si deja de contar, se borran de Calificaciones y se recalcula el periodo. ¿Continuar?', 'Sí, continuar'))) return;
+  }
+  const r = await busy('#iBtn', () => guard(() => id ? q(db.from('campus_items').update(d).eq('id', id).select().single())
+    : q(db.from('campus_items').insert({ ...d, unidad_id: uid, tipo, colegio_id: ctx.colegio_id, orden: CAM.its.filter(x => x.unidad_id === uid).length + 1 }).select().single()), 'Guardado'));
+  if (!r) return; closeModal(); await guard(cargarCampusStaff);
+  S.loadedG.delete(sel.cg);
+  if (tipo === 'cuestionario' && !id) return editorPreguntas(r.id);
+  render();
+}
+async function borrarItem(id) {
+  const i = CAM.its.find(x => x.id === id), c = CAM.cnt[id];
+  if (!(await confirmar(`¿Borrar "${i.titulo}"?${c?.ent ? ` Tiene ${c.ent} entregas o respuestas que también se borrarán${i.calificable ? ', y su calificación sale de Calificaciones' : ''}.` : ''}`, 'Sí, borrar'))) return;
+  if (await guard(() => q(db.from('campus_items').delete().eq('id', id)), 'Borrado') !== undefined) { closeModal(); S.loadedG.delete(sel.cg); await guard(cargarCampusStaff); render(); }
+}
+// ---------- Editor de preguntas ----------
+let QE = { id: '', ps: [] };
+const TIPO_P = { om: 'Opción múltiple', vf: 'Verdadero o falso', emp: 'Emparejamiento', corta: 'Respuesta corta' };
+async function editorPreguntas(id) {
+  const r = await guard(() => q(db.from('campus_preguntas').select('preguntas').eq('item_id', id))); if (r === undefined) return;
+  QE = { id, ps: JSON.parse(JSON.stringify(r[0]?.preguntas || [])) };
+  pintarEditor();
+}
+function pintarEditor() {
+  const i = CAM.its.find(x => x.id === QE.id), tot = QE.ps.reduce((a, p) => a + (+p.pts || 0), 0);
+  openModal(`Preguntas: ${i?.titulo || ''}`, `<p class="muted">Escriba cada pregunta, marque la respuesta correcta y asigne sus puntos. La calificación se calcula sobre 100: si suma ${tot || 'X'} puntos, cada punto vale ${tot ? (100 / tot).toLocaleString('es-CO', { maximumFractionDigits: 1 }) : '—'}.</p>
+    ${CAM.cnt[QE.id]?.ent ? '<div class="note">Ya hay estudiantes que respondieron. Si cambia las respuestas correctas, sus calificaciones ya registradas no cambian.</div>' : ''}
+    <ol class="qe-list">${QE.ps.map((p, k) => preguntaEditHTML(p, k)).join('')}</ol>
+    ${QE.ps.length ? '' : '<p class="empty">Aún no hay preguntas. Elija el tipo de la primera:</p>'}
+    <div class="toolbar">${Object.entries(TIPO_P).map(([t, l]) => `<button class="btn ghost sm" type="button" onclick="agregarPregunta('${t}')">+ ${l}</button>`).join('')}</div>
+    <div class="modal-foot guardar-fijo"><span class="muted" style="margin-right:auto">${QE.ps.length} preguntas · ${tot} puntos</span><button class="btn ghost" type="button" onclick="closeModal()">Cerrar sin guardar</button><button class="btn" type="button" id="qeBtn" onclick="guardarPreguntas()">Guardar preguntas</button></div>`);
+}
+function preguntaEditHTML(p, k) {
+  let cuerpo = '';
+  if (p.t === 'om') cuerpo = `<p class="muted" style="margin:6px 0">Escriba las opciones y marque la correcta:</p>${(p.o || []).map((o, j) => `<div class="qe-op"><label class="chk" title="Marcar como correcta"><input type="radio" name="qc${k}" value="${j}" ${+p.c === j ? 'checked' : ''}> Correcta</label><input class="qe-o" data-k="${k}" value="${esc(o)}" maxlength="200" placeholder="Opción ${j + 1}"></div>`).join('')}
+    ${(p.o || []).length < 6 ? `<button class="linkbtn" type="button" onclick="masOpcion(${k})">+ Agregar opción</button>` : ''}`;
+  if (p.t === 'vf') cuerpo = `<div class="qz-op"><label class="chk"><input type="radio" name="qc${k}" value="true" ${p.c === true ? 'checked' : ''}> Es verdadera</label><label class="chk"><input type="radio" name="qc${k}" value="false" ${p.c === false ? 'checked' : ''}> Es falsa</label></div>`;
+  if (p.t === 'corta') cuerpo = `${fIn('qa' + k, 'Respuestas aceptadas (separe con punto y coma; no importan mayúsculas ni tildes)', (p.c || []).join('; '), 'maxlength="300"')}`;
+  if (p.t === 'emp') cuerpo = `<p class="muted" style="margin:6px 0">Escriba cada pareja. Al estudiante le aparecen las de la derecha en desorden.</p>${(p.p || []).map((x, j) => `<div class="qe-par"><input class="qe-l" data-k="${k}" value="${esc(x[0])}" maxlength="120" placeholder="Izquierda ${j + 1}"><span>↔</span><input class="qe-r" data-k="${k}" value="${esc(x[1])}" maxlength="120" placeholder="Derecha ${j + 1}"></div>`).join('')}
+    ${(p.p || []).length < 8 ? `<button class="linkbtn" type="button" onclick="masOpcion(${k})">+ Agregar pareja</button>` : ''}`;
+  return `<li class="qe"><div class="qe-h"><span class="tag">${TIPO_P[p.t]}</span><label class="field qe-pts"><span>Puntos</span><input id="qp${k}" type="number" min="1" max="100" value="${esc(p.pts ?? 10)}"></label>
+    <button class="linkbtn" type="button" onclick="quitarPregunta(${k})">Quitar</button></div>
+    <label class="field full"><span>${p.t === 'vf' ? 'Afirmación' : 'Pregunta'}</span><textarea id="qq${k}" rows="2" maxlength="600">${esc(p.q || '')}</textarea></label>${cuerpo}</li>`;
+}
+function leerEditor() {
+  QE.ps = QE.ps.map((p, k) => {
+    const n = { t: p.t, q: ($('#qq' + k)?.value || '').trim(), pts: +($('#qp' + k)?.value || 0) };
+    const c = document.querySelector(`input[name="qc${k}"]:checked`);
+    if (p.t === 'om') { n.o = [...document.querySelectorAll(`.qe-o[data-k="${k}"]`)].map(x => x.value); n.c = c ? +c.value : null; }
+    if (p.t === 'vf') n.c = c ? c.value === 'true' : null;
+    if (p.t === 'corta') n.c = ($('#qa' + k)?.value || '').split(';').map(x => x.trim()).filter(Boolean);
+    if (p.t === 'emp') { const l = [...document.querySelectorAll(`.qe-l[data-k="${k}"]`)], r = [...document.querySelectorAll(`.qe-r[data-k="${k}"]`)]; n.p = l.map((x, j) => [x.value, r[j].value]); }
+    return n;
+  });
+}
+function agregarPregunta(t) {
+  leerEditor();
+  QE.ps.push({ t, q: '', pts: 10, o: t === 'om' ? ['', '', '', ''] : undefined, c: t === 'corta' ? [] : null, p: t === 'emp' ? [['', ''], ['', ''], ['', '']] : undefined });
+  pintarEditor(); setTimeout(() => $('#qq' + (QE.ps.length - 1))?.focus(), 30);
+}
+function quitarPregunta(k) { leerEditor(); QE.ps.splice(k, 1); pintarEditor(); }
+function masOpcion(k) { leerEditor(); const p = QE.ps[k]; if (p.t === 'om') p.o.push(''); else p.p.push(['', '']); pintarEditor(); }
+async function guardarPreguntas() {
+  leerEditor();
+  for (const [k, p] of QE.ps.entries()) {
+    const n = k + 1;
+    if (!p.q) return toast(`Escriba el enunciado de la pregunta ${n}`);
+    if (!(p.pts >= 1 && p.pts <= 100)) return toast(`Los puntos de la pregunta ${n} deben estar entre 1 y 100`);
+    if (p.t === 'om') { const llenas = p.o.filter(x => x.trim()).length; if (llenas < 2) return toast(`La pregunta ${n} necesita al menos 2 opciones`); if (p.c == null || !p.o[p.c]?.trim()) return toast(`Marque la opción correcta de la pregunta ${n}`); }
+    if (p.t === 'vf' && p.c == null) return toast(`Marque si la afirmación ${n} es verdadera o falsa`);
+    if (p.t === 'corta' && !p.c.length) return toast(`Escriba la respuesta aceptada de la pregunta ${n}`);
+    if (p.t === 'emp' && p.p.filter(x => x[0].trim() && x[1].trim()).length < 2) return toast(`La pregunta ${n} necesita al menos 2 parejas completas`);
+  }
+  // la opción correcta se reubica si hay opciones vacías antes de ella
+  const envio = QE.ps.map(p => { if (p.t !== 'om') return p; const o = []; let c = null; p.o.forEach((x, j) => { if (x.trim()) { if (j === p.c) c = o.length; o.push(x.trim()); } }); return { ...p, o, c }; });
+  const r = await busy('#qeBtn', () => guard(() => q(db.rpc('campus_guardar_preguntas', { p_item: QE.id, p_preg: envio })), 'Preguntas guardadas'));
+  if (r === undefined) return; closeModal(); await guard(cargarCampusStaff); render();
+}
+// ---------- Entregas y calificación ----------
+let ENT = { id: '', l: [] };
+async function verEntregas(id) {
+  const i = CAM.its.find(x => x.id === id), g = grupo(sel.cg);
+  const l = await guard(() => q(db.from('campus_entregas').select('*').eq('item_id', id))); if (!l) return;
+  ENT = { id, l };
+  const edita = isDir() || (isDoc() && S.misGrupos.includes(g.id));
+  const fila = e => { const x = l.find(y => y.estudiante_id === e.id);
+    const resp = i.tipo === 'tarea' ? (x?.texto || x?.url ? `${x.texto ? `<details><summary>${esc(x.texto.slice(0, 60))}${x.texto.length > 60 ? '…' : ''}</summary><p style="white-space:pre-wrap">${esc(x.texto)}</p></details>` : ''}${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">Abrir trabajo</a>` : ''}` : '<span class="muted">No ha entregado</span>')
+      : x?.intentos ? `${x.intentos} ${x.intentos === 1 ? 'intento' : 'intentos'}` : '<span class="muted">No ha respondido</span>';
+    const tarde = i.fecha && x?.entregado_en && new Date(x.entregado_en) > new Date(i.fecha);
+    return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}${x?.entregado_en ? `<br><span class="muted" style="font-size:.85rem">${fechaHoraTxt(x.entregado_en)}${tarde ? ' · <span class="err" style="font-weight:400">tardía</span>' : ''}</span>` : ''}</td><td>${resp}</td>
+      <td><input class="actnota" ${NOTA_ATTR} id="en-${e.id}" value="${N(x?.nota)}" ${edita ? '' : 'disabled'} aria-label="Calificación de ${esc(nom(e))}"></td>
+      <td><input id="ec-${e.id}" value="${esc(x?.comentario || '')}" maxlength="1000" placeholder="Comentario" ${edita ? '' : 'disabled'}></td>
+      <td>${edita ? `<button class="btn ghost sm" type="button" onclick="calificarEntrega('${e.id}',this)">Guardar</button>` : ''}<span class="ok" id="eo-${e.id}"></span></td></tr>`; };
+  openModal(`${i.tipo === 'tarea' ? 'Entregas' : 'Resultados'}: ${i.titulo}`, `<p class="muted">${i.tipo === 'cuestionario' ? 'La calificación de los cuestionarios es automática (sobre 100). Puede corregirla si es necesario.' : 'Escriba la calificación de 0 a 100 y un comentario; el estudiante y su familia los ven en el campus.'}
+      ${i.calificable ? ' La calificación pasa a Calificaciones como actividad del periodo.' : ' Este contenido no cuenta para calificaciones.'}</p>
+    <div class="tbl"><table><thead><tr><th>Estudiante</th><th>${i.tipo === 'tarea' ? 'Entrega' : 'Respuestas'}</th><th>Calificación</th><th>Comentario</th><th></th></tr></thead><tbody>${estsDe(g.id).map(fila).join('')}</tbody></table></div>
+    <div class="modal-foot"><button class="btn" type="button" onclick="closeModal();render()">Cerrar</button></div>`);
+}
+async function calificarEntrega(eid, btn) {
+  const ln = leerNota($('#en-' + eid).value); if (ln.err) return toast(ln.err);
+  btn.disabled = true;
+  const r = await guard(() => q(db.rpc('campus_calificar', { p_item: ENT.id, p_est: eid, p_nota: ln.v, p_coment: $('#ec-' + eid).value })));
+  btn.disabled = false;
+  if (r === undefined) return;
+  $('#eo-' + eid).textContent = ' ✓ Guardada'; S.loadedG.delete(sel.cg);
+  await guard(cargarCampusStaff);
+}
+
+// ---------- Gemas ----------
+async function prepGemas() {
+  if (isFam()) { CAM.gem = await q(db.rpc('gemas_resumen', { p_est: propio() })); return; }
+  const gs = gruposVis().filter(campusGrado); if (!gs.length) return;
+  if (!sel.gg || !gs.find(g => g.id === sel.gg)) sel.gg = gs[0].id;
+  CAM.gemG = await q(db.rpc('gemas_grupo', { p_grupo: sel.gg }));
+}
+function vGemas() {
+  if (!gemasOn()) return head('Gemas') + '<div class="panel empty">Las gemas están apagadas en el colegio.</div>';
+  const como = `<section class="panel"><h2>Cómo se ganan</h2><ul class="list gem-como">
+    <li>💻 Entrar al campus cada día <strong>+3</strong> · cinco días seguidos <strong>+10</strong></li><li>📄 Abrir un recurso, video o clase <strong>+2</strong></li>
+    <li>📝 Entregar una tarea a tiempo <strong>+10</strong> (tarde <strong>+5</strong>)</li><li>❓ Responder un cuestionario <strong>+5</strong> y hasta <strong>+10</strong> más según la calificación</li>
+    <li>🏆 Calificación de 92 o más <strong>+10</strong></li><li>⭐ Felicitación en el observador <strong>+15</strong> · anotación positiva <strong>+5</strong> · participación en clase <strong>+5</strong></li></ul>
+    <p class="muted">Rangos: ${RANGOS.map(r => `${r[2]} ${r[1]} (${r[0]})`).join(' · ')}</p></section>`;
+  if (isFam()) {
+    const d = CAM.gem || { total: 0, semana: 0, top: [], ultimas: [] }, r = rango(d.total), e = est(propio());
+    return head(isEst() ? 'Mis gemas' : `Gemas de ${esc(e?.nombres || '')}`, 'Las gemas premian la constancia y la participación en el campus virtual.') +
+      `<div class="gem-hero"><div class="gem-ico">${r.ico}</div><div><div class="gem-n">${d.total.toLocaleString('es-CO')} gemas</div><div class="gem-r">Rango <strong>${r.n}</strong>${r.sig ? ` · le faltan ${r.faltan} para ${r.sigIco} ${r.sig}` : ' · ¡el rango más alto!'}</div>
+        <div class="bar gem-bar"><i style="width:${r.pct}%"></i></div><div class="muted">Esta semana: +${d.semana} · Puesto ${d.puesto} de ${d.de} en el curso</div></div></div>
+      <div class="cols"><section class="panel"><h2>🏆 Top del curso</h2><ol class="gem-top">${d.top.map((x, k) => `<li class="${x.yo ? 'yo' : ''}"><span class="gem-pos">${['🥇', '🥈', '🥉'][k] || k + 1}</span><span>${esc(x.n)}${x.yo ? ' (' + (isEst() ? 'usted' : esc(e?.nombres || '')) + ')' : ''}</span><span class="gem-v">${rango(x.g).ico} ${x.g}</span></li>`).join('')}</ol></section>
+        <section class="panel"><h2>Últimas gemas</h2>${d.ultimas.length ? `<ul class="list">${d.ultimas.map(x => `<li>+${x.c} 💎 ${esc(MOTIVO_G[x.m] || x.m)} <span class="muted">· ${fechaHoraTxt(x.f)}</span></li>`).join('')}</ul>` : '<p class="muted">Aún no hay gemas. ¡Entre al campus y empiece a ganarlas!</p>'}</section></div>${como}`;
+  }
+  const gs = gruposVis().filter(campusGrado);
+  if (!gs.length) return head('Gemas del curso') + '<div class="panel empty">Ninguno de sus cursos tiene el campus virtual activo.</div>';
+  const l = (CAM.gemG || []).map(x => ({ ...x, e: est(x.estudiante_id) })).filter(x => x.e);
+  return head('Gemas del curso', 'Ranking de participación. Reconozca la participación en clase con 5 gemas (una vez al día por estudiante).') +
+    `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.gg=this.value;go('gemas')">${gs.map(x => opt(x.id, x.nombre, sel.gg)).join('')}</select></label></div>
+    <div class="tbl"><table><thead><tr><th>#</th><th>Estudiante</th><th>Rango</th><th class="num">Gemas</th><th class="num">Esta semana</th><th></th></tr></thead><tbody>
+    ${l.map((x, k) => { const r = rango(x.total); return `<tr><td>${['🥇', '🥈', '🥉'][k] || k + 1}</td><td>${esc(x.e.apellidos)} ${esc(x.e.nombres)}</td><td>${r.ico} ${r.n}</td><td class="num"><strong>${x.total}</strong></td><td class="num">+${x.semana}</td>
+      <td><button class="btn ghost sm" type="button" onclick="darParticipacion('${x.estudiante_id}',this)">⭐ Participación +5</button></td></tr>`; }).join('')}</tbody></table></div></div>${como}`;
+}
+async function darParticipacion(eid, btn) {
+  btn.disabled = true;
+  const n = await guard(() => q(db.rpc('gemas_participacion', { p_est: eid })));
+  if (n === undefined) { btn.disabled = false; return; }
+  toast(n ? `+5 gemas para ${est(eid)?.nombres || 'el estudiante'}` : 'Hoy ya reconoció la participación de este estudiante');
+  if (n) { CAM.gemG = await q(db.rpc('gemas_grupo', { p_grupo: sel.gg })).catch(() => CAM.gemG); render(); }
+}
+// Tarjeta del campus y gemas en el inicio de la familia y del estudiante
+function campusInicioHTML() {
+  const e = est(propio()); if (!e || !campusGrado(grupo(e.grupo_id))) return '';
+  const pend = CAM.pend.filter(i => !vencido(i)), r = CAM.gem ? rango(CAM.gem.total) : null;
+  return `<div class="cols"><section class="panel cam-ini"><h2>💻 Campus virtual</h2>${pend.length ? `<p><strong>${pend.length}</strong> ${pend.length === 1 ? 'actividad pendiente' : 'actividades pendientes'}:</p><ul class="list cam-list">${pend.slice(0, 3).map(i => itemFamHTML(i, true)).join('')}</ul>` : '<p class="muted">¡Al día! No hay tareas ni cuestionarios por hacer.</p>'}
+      <div class="toolbar"><button class="btn sm" type="button" onclick="go('campus')">Entrar al campus</button></div></section>
+    ${gemasOn() && r ? `<section class="panel gem-mini"><h2>💎 Gemas</h2><div class="gem-hero sm"><div class="gem-ico">${r.ico}</div><div><div class="gem-n">${CAM.gem.total.toLocaleString('es-CO')}</div><div class="gem-r">Rango <strong>${r.n}</strong> · puesto ${CAM.gem.puesto} de ${CAM.gem.de}</div><div class="bar gem-bar"><i style="width:${r.pct}%"></i></div></div></div>
+      <div class="toolbar"><button class="btn ghost sm" type="button" onclick="go('gemas')">Ver top del curso</button></div></section>` : ''}</div>`;
+}
+async function prepCampusInicio() {
+  const e = est(propio()); if (!e || !campusGrado(grupo(e.grupo_id)) || !alDia()) return;
+  await cargarCampusFam().catch(() => {});
+  if (gemasOn()) {
+    const n = await q(db.rpc('gemas_entrada', { p_est: e.id })).catch(() => 0);
+    if (n > 0) setTimeout(() => toast(`+${n} gemas 💎 por entrar hoy${n > 3 ? ' (¡cinco días seguidos!)' : ''}`), 600);
+    CAM.gem = await q(db.rpc('gemas_resumen', { p_est: e.id })).catch(() => null);
+  }
+}
+// ---------- Parametrización: campus y gemas ----------
+function paramCampus() {
+  const k = S.k, r = isDir(), dis = r ? '' : 'disabled', grados = [...new Set(S.grupos.map(g => g.grado))].sort((a, b) => a - b), sg = k.campus_grados || [];
+  return `<div class="panel"><h2>Campus virtual</h2><p class="muted">Cada docente arma sus unidades con recursos, videos, clases en vivo, tareas y cuestionarios. Los estudiantes y sus familias entran desde Colegio-IA; quien tiene pagos pendientes no puede usarlo.</p>
+    <label class="chk"><input type="checkbox" id="cAct" ${k.campus_activo ? 'checked' : ''} ${dis}> Campus virtual activo</label>
+    <p style="margin:12px 0 4px"><strong>Grados con campus</strong> <span class="muted">(si no marca ninguno, funciona en todos)</span></p>
+    <div class="cuotas">${grados.map(g => `<label class="chk"><input type="checkbox" class="cGr" value="${g}" ${sg.includes(g) ? 'checked' : ''} ${dis}> ${esc(gradoTxt(g))}</label>`).join('') || '<span class="muted">Primero cree los cursos.</span>'}</div>
+    <label class="chk" style="margin-top:12px"><input type="checkbox" id="cGem" ${k.gemas_activas !== false ? 'checked' : ''} ${dis}> Gemas, rangos y top del curso (gamificación)</label>
+    ${r ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarCampusCfg()">Guardar</button></div>' : ''}</div>`;
+}
+async function guardarCampusCfg() {
+  await guardarColegio({ campus_activo: $('#cAct').checked, campus_grados: [...document.querySelectorAll('.cGr:checked')].map(x => +x.value), gemas_activas: $('#cGem').checked }, 'Campus y gemas guardados');
+  renderSide();
+}
+
+/* =====================================================================
    Exponer funciones usadas en el HTML y arrancar
    ===================================================================== */
-Object.assign(window, { subirFirma, guardarColegio, guardarAtencion, revisarDiaCita, formGradosAsig, guardarGradosAsig, toggleSec, volver, dlgFin, agregarCarrito, quitarCarrito, cambiarCant, hacerPedido, formComprobantePed, enviarComprobantePed, cancelarPedidoFam, reciboPedido, verPedido, cambiarEstadoPed, listaPreparar, formProducto, guardarProducto, borrarProducto, guardarTienda, verUtiles, copiarUtiles, guardarUtiles, imprimirGraficos,
+Object.assign(window, { abrirItem, entregarTarea, enviarCuestionario, campusSel, formUnidad, guardarUnidad, borrarUnidad, elegirTipo, formItem, guardarItem, borrarItem, editorPreguntas, agregarPregunta, quitarPregunta, masOpcion, guardarPreguntas, verEntregas, calificarEntrega, darParticipacion, guardarCampusCfg,
+  subirFirma, guardarColegio, guardarAtencion, revisarDiaCita, formGradosAsig, guardarGradosAsig, toggleSec, volver, dlgFin, agregarCarrito, quitarCarrito, cambiarCant, hacerPedido, formComprobantePed, enviarComprobantePed, cancelarPedidoFam, reciboPedido, verPedido, cambiarEstadoPed, listaPreparar, formProducto, guardarProducto, borrarProducto, guardarTienda, verUtiles, copiarUtiles, guardarUtiles, imprimirGraficos,
   llenarEsts, verAvisos, abrirHilo, enviarMensaje, nuevoMensaje, formAutorizacion, guardarAut, responderAut, detalleAut, borrarAut, formCita, guardarCita, formConfirmarCita, confirmarCita, estadoCita, elegirPerfil, salirApp, verFotoEl, subirFotosClase, borrarFotoClase, subirFotoEst, imprimirCarnet, formContacto, guardarContacto, borrarContacto, filtrarFilas, verCarnet, subirFotoEstModal, guardarRedes, quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
   formActividad, guardarActividad, borrarActividad, setNotaAct, formRecup, guardarRecup, borrarRecup,
   formComunicado, destCom, guardarComunicado, marcarLeido, verLecturas, borrarComunicado, copiarCom,
