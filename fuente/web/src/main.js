@@ -21,13 +21,29 @@ const store = {
   del(k) { try { localStorage.removeItem('micolegia:' + k); } catch { } },
 };
 
-function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 2600); }
+// Ventanas propias de confirmación (el navegador puede bloquear confirm/prompt)
+function dialogo(html) {
+  return new Promise(res => {
+    let d = document.getElementById('dlg');
+    if (!d) { d = document.createElement('div'); d.id = 'dlg'; d.className = 'dlg'; document.body.appendChild(d); }
+    d.innerHTML = `<div class="dlg-box" role="dialog" aria-modal="true">${html}</div>`; d.hidden = false;
+    d._res = v => { d.hidden = true; d.innerHTML = ''; res(v); };
+    (d.querySelector('textarea') || d.querySelector('.btn:not(.ghost)'))?.focus();
+  });
+}
+function dlgFin(v) { document.getElementById('dlg')?._res?.(v); }
+const confirmar = (msg, si = 'Sí, continuar') => dialogo(`<p>${esc(msg)}</p><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(false)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(true)">${esc(si)}</button></div>`);
+const pedirTexto = (msg, ph = '') => dialogo(`<p>${esc(msg)}</p><textarea id="dlgT" rows="3" placeholder="${esc(ph)}" style="width:100%"></textarea><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(null)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(document.getElementById('dlgT').value.trim())">Aceptar</button></div>`);
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 4500); }
 function openModal(t, html) { $('#mt').textContent = t; $('#mb').innerHTML = html; $('#modal').hidden = false; const f = $('#mb input,#mb select,#mb textarea,#mb button'); if (f) f.focus(); }
 function closeModal() { $('#modal').hidden = true; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').hidden) closeModal(); });
 let lastDocs = '', lastTitulo = '';
-function showDocs(html, titulo, archivo) { html = conPie(html); lastDocs = html; lastTitulo = archivo || titulo || ''; openModal(titulo || 'Vista previa', `<div class="toolbar"><button class="btn" type="button" onclick="printDocs()">Imprimir o guardar en PDF</button></div>${html}`); }
+function showDocs(html, titulo, archivo) {
+  if (isDoc() && modo === 'colegio') return toast('Los documentos los generan coordinación, secretaría y rectoría');
+  html = conPie(html); lastDocs = html; lastTitulo = archivo || titulo || ''; openModal(titulo || 'Vista previa', `<div class="toolbar"><button class="btn" type="button" onclick="printDocs()">Imprimir o guardar en PDF</button></div>${html}`); }
 function printDocs() {
+  if (isDoc() && modo === 'colegio') return;
   $('#print').innerHTML = conPie(lastDocs);
   const t0 = document.title; if (lastTitulo) document.title = lastTitulo.replace(/[\\/:*?"<>|]/g, '');
   window.print(); setTimeout(() => { document.title = t0; }, 1500);
@@ -40,7 +56,11 @@ function msg(e) {
   if (e.code === '23505' || /duplicate key/i.test(m)) return 'Ya existe un registro con esos datos';
   if (e.code === '23503') return 'El registro está relacionado con otros datos y no se puede eliminar';
   if (/Failed to fetch|NetworkError/i.test(m)) return 'Sin conexión. Revise su conexión a internet e intente de nuevo';
-  if (/JWT|AuthRequired/i.test(m)) return 'Tu sesión expiró. Vuelve a iniciar sesión';
+  if (/JWT|AuthRequired/i.test(m)) return 'Su sesión expiró. Vuelva a iniciar sesión';
+  if (e.code === '23514' || /check constraint/i.test(m)) return 'Algún dato no es válido. Revise los valores escritos (números, fechas o textos demasiado largos)';
+  if (e.code === '23502' || /not-null/i.test(m)) return 'Falta un dato obligatorio';
+  if (e.code === '22P02' || /invalid input syntax/i.test(m)) return 'Hay un dato con un formato que no es válido';
+  if (/^[\x00-\x7F]+$/.test(m) && /\b(the|violates|relation|column|function|error|failed|null)\b/i.test(m)) return 'No se pudo completar la acción. Intente de nuevo; si continúa, comuníquese con soporte';
   return m;
 }
 async function q(p) { const { data, error } = await p; if (error) throw error; return data; }
@@ -63,7 +83,7 @@ const ROL_DESC = { rector: 'Ve y administra todo: matrícula, calificaciones, pa
 const ROL_TXT = { rector: 'Rector(a)', coordinador: 'Coordinador(a)', secretaria: 'Secretaría', tesoreria: 'Tesorería', docente: 'Docente', acudiente: 'Acudiente', estudiante: 'Estudiante' };
 const PAGOS_ROLES = ['rector', 'secretaria', 'tesoreria'];
 const NIVELES = { preescolar: 'Preescolar', primaria: 'Primaria', secundaria: 'Básica secundaria', media: 'Media' };
-const PRE_VAL = { Superior: 4.8, Alto: 4.2, 'Básico': 3.5, Bajo: 2.5 };
+const PRE_VAL = { Superior: 96, Alto: 85, 'Básico': 70, Bajo: 50 };
 const DESC = { Superior: 'Alcanza de manera excepcional los logros propuestos para la dimensión.', Alto: 'Alcanza satisfactoriamente los logros propuestos.', 'Básico': 'Alcanza los logros mínimos con apoyo ocasional.', Bajo: 'Requiere acompañamiento para alcanzar los logros propuestos.' };
 
 let me = null;            // usuario autenticado
@@ -89,7 +109,7 @@ const isAcud = () => ctx && ctx.rol === 'acudiente';
 const est = id => S.ests.find(e => e.id === id);
 const grupo = id => S.grupos.find(g => g.id === id);
 const nom = e => `${e.nombres} ${e.apellidos}`;
-const asigsDe = g => S.asigs.filter(a => a.nivel === g.nivel).sort((a, b) => a.orden - b.orden);
+const asigsDe = g => S.asigs.filter(a => a.nivel === g.nivel && (!a.grados?.length || a.grados.includes(g.grado))).sort((a, b) => a.orden - b.orden);
 // Asignaturas que puede calificar el usuario: el docente solo las asignadas (null = todas las del grupo)
 const asigsVis = g => { const m = isDoc() ? S.misAsig[g.id] : null; return m ? asigsDe(g).filter(a => m.includes(a.id)) : asigsDe(g); };
 // Enlace de WhatsApp: número colombiano de 10 dígitos recibe el indicativo 57
@@ -109,9 +129,19 @@ const propio = () => isFam() ? ctx.estudiante_id : null;
 function notaRaw(e, a, p) { const v = S.notas[`${e}|${a}|${p}`]; return v == null ? null : +v; }
 // Nota efectiva: si hay recuperación con nota, vale la mayor (Decreto 1290)
 function nota(e, a, p) { const v = notaRaw(e, a, p), r = S.rec[`${e}|${a}|${p}`]; return r?.nota != null && (v == null || +r.nota > v) ? +r.nota : v; }
-function defin(e, a, hasta) { let s = 0, w = 0; periodos().forEach(p => { if (hasta && p.n > hasta) return; const v = nota(e, a, p.n); if (v != null) { s += v * p.peso; w += p.peso; } }); return w ? Math.round(s / w * 10) / 10 : null; }
-function desem(v, esc) { if (v == null) return ''; const x = [...(esc || escala())].sort((a, b) => b.min - a.min).find(s => v >= s.min - 1e-9); return x ? x.d : 'Bajo'; }
-const chip = v => v == null ? '<span class="muted">Sin calificación</span>' : `<span class="d d-${desem(v)}">${v.toFixed(1)} ${desem(v)}</span>`;
+function defin(e, a, hasta) { let s = 0, w = 0; periodos().forEach(p => { if (hasta && p.n > hasta) return; const v = nota(e, a, p.n); if (v != null) { s += v * p.peso; w += p.peso; } }); return w ? Math.round(s / w) : null; }
+function desem(v, esc) { if (v == null) return ''; const r = Math.round(+v); const x = [...(esc || escala())].sort((a, b) => b.min - a.min).find(s => r >= +s.min); return x ? x.d : 'Bajo'; }
+// Escala de 0 a 100 en números enteros (decisión de Ricardo, 18 oct 2026)
+const N = v => v == null ? '' : String(Math.round(+v));
+function leerNota(raw) {
+  const t = String(raw ?? '').trim().replace(',', '.');
+  if (t === '') return { v: null };
+  const n = Number(t);
+  if (!isFinite(n) || n < 0 || n > 100) return { err: 'Escriba un número entero de 0 a 100' };
+  return { v: Math.round(n) };
+}
+const NOTA_ATTR = 'type="number" inputmode="numeric" step="1" min="0" max="100"';
+const chip = v => v == null ? '<span class="muted">Sin calificación</span>' : `<span class="d d-${desem(v)}">${N(v)} ${desem(v)}</span>`;
 const porClase = () => !!S.k?.asistencia_por_clase;
 function fallas(eid) { let n = 0; Object.entries(porClase() ? S.asisC : S.asis).forEach(([k, v]) => { if (k.split('|')[1] === eid && v === 'A') n++; }); return n; }
 function fallasAsig(eid, aid) { let n = 0; Object.entries(S.asisC).forEach(([k, v]) => { const [, e, a] = k.split('|'); if (e === eid && a === aid && v === 'A') n++; }); return n; }
@@ -131,7 +161,12 @@ async function cargarColegio(intento = 0) {
     all(() => db.from('estudiantes').select('*').eq('colegio_id', c).order('apellidos').order('nombres').order('id')),
   ]);
   // Tras un rato sin uso, Neon puede tardar en responder la primera consulta: se reintenta.
-  if ((!k || (!grupos.length && !ests.length && intento < 2)) && intento < 4) { await new Promise(r => setTimeout(r, 1200)); return cargarColegio(intento + 1); }
+  // Recién creado un perfil o renovada la demostración, la base puede tardar un momento en mostrar los cursos: se reintenta
+  if (!k && intento < 4) { await new Promise(r => setTimeout(r, 1200)); return cargarColegio(intento + 1); }
+  if (k && !grupos.length && intento < 3) {
+    const r = await q(db.rpc('estado_colegio', { p_colegio: c })).catch(() => null);
+    if (k.demo || +r?.activos > 0) { await new Promise(r2 => setTimeout(r2, 1500)); return cargarColegio(intento + 1); }
+  }
   if (!k) throw new Error('No se pudo cargar el colegio. Intente de nuevo en unos segundos.');
   Object.assign(S, { k, grupos, asigs, ests });
   if (isDoc()) {
@@ -193,7 +228,7 @@ function authScreen(extra) {
   if (authMode === 'login') body = `<h2>Iniciar sesión</h2>
     <form onsubmit="event.preventDefault();doLogin()">
       <label class="field"><span>Correo electrónico</span><input id="lEmail" type="email" autocomplete="username" required></label>
-      <label class="field"><span>Contraseña</span><input id="lPass" type="password" autocomplete="current-password" required></label>
+      <label class="field"><span>Contraseña</span><span class="pw"><input id="lPass" type="password" autocomplete="current-password" required>${ojo('lPass')}</span></label>
       <p class="err" id="aErr" role="alert"></p>
       <button class="btn" type="submit">Entrar</button>
     </form>
@@ -202,10 +237,10 @@ function authScreen(extra) {
   if (authMode === 'registro') body = `<h2>${store.get('demo') ? 'Cree su cuenta para probar Colegio-IA' : 'Crear cuenta'}</h2>
     <p class="muted">${store.get('demo') ? 'Use su correo y una contraseña. No necesita código: después elige con qué perfil entrar al colegio de demostración.' : 'Use el mismo correo que registró el colegio. Después escribirá su código de activación.'}</p>
     <form onsubmit="event.preventDefault();doRegistro()">
-      <label class="field"><span>Nombre completo</span><input id="rNom" autocomplete="name" required></label>
+      <label class="field"><span>Nombre y apellido</span><input id="rNom" autocomplete="name" required placeholder="Ejemplo: María Gómez"></label>
       <label class="field"><span>Correo electrónico</span><input id="rEmail" type="email" autocomplete="username" required></label>
-      <label class="field"><span>Contraseña (mínimo 8 caracteres)</span><input id="rPass" type="password" minlength="8" autocomplete="new-password" required></label>
-      <label class="field"><span>Repite la contraseña</span><input id="rPass2" type="password" minlength="8" autocomplete="new-password" required></label>
+      <label class="field"><span>Contraseña (mínimo 10 caracteres, con letras y números)</span><span class="pw"><input id="rPass" type="password" minlength="10" autocomplete="new-password" required>${ojo('rPass')}</span></label>
+      <label class="field"><span>Repita la contraseña</span><span class="pw"><input id="rPass2" type="password" minlength="10" autocomplete="new-password" required>${ojo('rPass2')}</span></label>
       <p class="err" id="aErr" role="alert"></p>
       <button class="btn" type="submit">Crear cuenta</button>
     </form>
@@ -263,8 +298,27 @@ async function doLogin() {
     } catch (e) { authErr(authMsg(e)); }
   });
 }
+// Reglas de registro (revisión 18 oct 2026): nombre y apellido reales y contraseña de al menos 10 caracteres que no sea fácil de adivinar
+function errNombre(n) {
+  const p = n.trim().split(/\s+/).filter(x => x.length >= 2);
+  if (p.length < 2 || n.trim().length < 6) return 'Escriba su nombre y su apellido';
+  if (/\d/.test(n) || /(.)\1\1/i.test(n.replace(/\s/g, ''))) return 'Escriba su nombre real, sin números ni letras repetidas';
+  return '';
+}
+function errClave(c, email) {
+  if (c.length < 10) return 'La contraseña debe tener al menos 10 caracteres';
+  if (!/[a-zñ]/i.test(c) || !/\d/.test(c)) return 'La contraseña debe tener letras y números';
+  if (/^(.)\1+$/.test(c) || /(.)\1\1\1/.test(c)) return 'La contraseña no puede repetir el mismo carácter tantas veces';
+  const sec = '0123456789 abcdefghijklmnopqrstuvwxyz qwertyuiopasdfghjklzxcvbnm', t = c.toLowerCase();
+  for (let i = 0; i + 5 <= t.length; i++) { const w = t.slice(i, i + 5); if (sec.includes(w) || sec.includes([...w].reverse().join(''))) return 'La contraseña no puede tener secuencias como 12345 o abcde'; }
+  if (email && t.includes(email.split('@')[0].toLowerCase())) return 'La contraseña no debe contener su correo';
+  return '';
+}
+const ojo = id => `<button type="button" class="ojo" aria-label="Mostrar u ocultar la contraseña" onclick="const i=document.getElementById('${id}');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>`;
 async function doRegistro() {
   authErr('');
+  const eN = errNombre($('#rNom').value); if (eN) return authErr(eN);
+  const eC = errClave($('#rPass').value, $('#rEmail').value); if (eC) return authErr(eC);
   if ($('#rPass').value !== $('#rPass2').value) return authErr('Las contraseñas no coinciden');
   await busy('#auth .btn', async () => {
     try {
@@ -345,7 +399,7 @@ const VIEWS = [
   { id: 'estudiantes', label: 'Estudiantes y matrícula', ok: isDir, prep: prepEstudiantes, fn: vEstudiantes },
   { id: 'notas', label: 'Calificaciones', ok: () => isDir() || isDoc(), prep: prepGrupoSel, fn: vNotas },
   { id: 'asistencia', label: 'Asistencia', ok: () => isDir() || isDoc(), prep: prepGrupoSel, fn: vAsistencia },
-  { id: 'boletines', label: 'Boletines', ok: () => !isTes(), prep: async () => { await prepGrupoSel(); if (propio()) await cargarFotoEst([propio()]); }, fn: vBoletines },
+  { id: 'boletines', label: 'Boletines', ok: () => !isTes(), prep: async () => { await prepGrupoSel(); if (propio()) await cargarFotoEst([propio()]); S.ret = new Set(isDir() && sel.g ? (await q(db.rpc('retenidos_grupo', { p_grupo: sel.g })).catch(() => [])).map(x => x.retenidos_grupo || x) : []); }, fn: vBoletines },
   { id: 'observador', label: 'Observador', ok: () => isDir() || isDoc() || isFam(), prep: prepObservador, fn: vObservador },
   { id: 'piar', label: 'PIAR e inclusión', ok: () => isDir() || isDoc() || isAcud(), prep: prepPiar, fn: vPiar },
   { id: 'comunicados', label: 'Comunicados', ok: () => true, prep: prepComunicados, fn: vComunicados, badge: () => isFam() ? noLeidos() : 0 },
@@ -366,6 +420,31 @@ const VIEWS = [
   { id: 'pedidos', label: 'Tienda y pedidos', ok: manejaPagos, prep: prepPedidos, fn: vPedidos, badge: () => S.nov?.pedidosStaff || 0 },
   { id: 'usuarios', label: 'Usuarios y accesos', ok: isDir, prep: cargarMiembros, fn: vUsuarios },
 ];
+// Menú lateral por secciones (regla general: nada de listas largas grises)
+const MENU = [
+  { t: '', ids: ['inicio'] },
+  { t: 'Académico', c: 'azul', ids: ['notas', 'asistencia', 'boletines', 'observador', 'piar', 'academico', 'horario', 'utiles'] },
+  { t: 'Comunicación', c: 'verde', ids: ['comunicados', 'mensajes', 'citas', 'autorizaciones', 'cronograma', 'galeria'] },
+  { t: 'Estudiantes y familias', c: 'teal', ids: ['estudiantes', 'familia', 'contactos', 'excusas'] },
+  { t: 'Pagos y tienda', c: 'ambar', ids: ['pagos', 'cuenta', 'tienda', 'pedidos'] },
+  { t: 'Administración', c: 'gris', ids: ['config', 'usuarios'] },
+];
+const ICO = { inicio: '🏠', notas: '✏️', asistencia: '✅', boletines: '📄', observador: '📝', piar: '🧩', academico: '📊', horario: '🕒', utiles: '🎒', comunicados: '📢', mensajes: '💬', citas: '📅', autorizaciones: '✍️', cronograma: '🗓️', galeria: '📷', estudiantes: '🎓', familia: '🪪', contactos: '📇', excusas: '📩', pagos: '💰', cuenta: '💳', tienda: '🛍️', pedidos: '📦', config: '⚙️', usuarios: '👥' };
+// Familias con pagos pendientes: solo inicio, comunicados y estado de cuenta (decisión del 18 oct 2026)
+const PERMITIDAS_MOROSO = ['inicio', 'comunicados', 'cuenta'];
+const restringida = id => modo === 'colegio' && isFam() && !alDia() && !PERMITIDAS_MOROSO.includes(id);
+const visible = v => v.ok() && !restringida(v.id);
+let menuCerr = {}; try { menuCerr = JSON.parse(localStorage.getItem('micolegia:menu') || '{}'); } catch {}
+function toggleSec(t) { menuCerr[t] = !menuCerr[t]; try { localStorage.setItem('micolegia:menu', JSON.stringify(menuCerr)); } catch {} renderSide(); }
+function menuHTML() {
+  return MENU.map(sec => {
+    const vs = sec.ids.map(id => VIEWS.find(v => v.id === id)).filter(v => v && visible(v)); if (!vs.length) return '';
+    const activa = vs.some(v => v.id === view), cerr = sec.t && menuCerr[sec.t] && !activa;
+    const bad = vs.reduce((a, v) => a + (v.badge ? +v.badge() || 0 : 0), 0);
+    const items = vs.map(v => `<button type="button" class="nav-it" ${v.id === view ? 'aria-current="page"' : ''} onclick="go('${v.id}')"><span class="nav-ico" aria-hidden="true">${ICO[v.id] || '•'}</span><span class="nav-tx">${v.label}</span>${v.badge && v.badge() ? `<span class="badge">${v.badge()}</span>` : ''}</button>`).join('');
+    return sec.t ? `<div class="nav-sec sec-${sec.c}"><button type="button" class="nav-h" aria-expanded="${!cerr}" onclick="toggleSec('${sec.t}')"><span>${sec.t}</span>${cerr && bad ? `<span class="badge">${bad}</span>` : ''}<span class="nav-fl" aria-hidden="true">${cerr ? '▸' : '▾'}</span></button>${cerr ? '' : `<div class="nav-g">${items}</div>`}</div>` : items;
+  }).join('');
+}
 const VIEW_PLAT = { id: 'plataforma', label: 'Colegios', prep: prepPlataforma, fn: vPlataforma };
 
 function barraDemo() {
@@ -388,11 +467,11 @@ function barraHijos() {
   const h = hermanos(); if (h.length < 2) return '';
   return `<div class="hijos" role="tablist" aria-label="Sus hijos"><span class="muted">${ctx.rol === 'estudiante' ? 'Perfil' : 'Sus hijos'}:</span>${h.map(m => `<button type="button" role="tab" aria-selected="${m.id === ctx.id}" onclick="entrarContexto('${m.id}')">${esc(m.estudiantes?.nombres || 'Estudiante')}</button>`).join('')}</div>`;
 }
-const VISTAS_RESTRINGIDAS = ['boletines', 'observador', 'piar'];
 function avisoRestringido() {
-  return `<div class="panel restringido"><h2>Esta sección no está disponible en este momento</h2>
+  return `<div class="panel restringido"><h2>El acceso de la familia está limitado en este momento</h2>
     <p>Para más información, comuníquese con la secretaría del colegio.</p>
-    <p class="muted">Puede seguir consultando comunicados, horario, excusas y estado de cuenta.</p></div>`;
+    <p class="muted">Mientras tanto puede consultar el estado de cuenta y los comunicados del colegio.</p>
+    <div class="toolbar"><button class="btn" type="button" onclick="go('cuenta')">Ver estado de cuenta</button><button class="btn ghost" type="button" onclick="go('comunicados')">Ver comunicados</button></div></div>`;
 }
 function quien() { return `${ROL_TXT[ctx.rol]}: ${ctx.nombre}`; }
 function renderSide() {
@@ -403,8 +482,8 @@ function renderSide() {
   } else {
     $('#ctxBox').innerHTML = ctxs.length > 1
       ? `<label class="role"><span class="muted" style="font-size:.85rem">Colegio y perfil</span><select class="ctx" onchange="entrarContexto(this.value)">${ctxs.map(m => opt(m.id, ctxLabel(m), ctx.id)).join('')}</select></label>`
-      : `<div class="who">${S?.k?.logo ? `<img src="${S.k.logo}" alt="" style="max-height:48px;max-width:120px;display:block;margin-bottom:6px">` : ''}<strong>${esc(ctx.colegios.nombre)}</strong><br>${esc(quien())}</div>`;
-    side.innerHTML = VIEWS.filter(v => v.ok()).map(v => `<button type="button" ${v.id === view ? 'aria-current="page"' : ''} onclick="go('${v.id}')">${v.label}${v.badge && v.badge() ? `<span class="badge">${v.badge()}</span>` : ''}</button>`).join('');
+      : `<div class="who">${S?.k?.logo ? `<img src="${S.k.logo}" alt="" style="max-height:48px;max-width:120px;display:block;margin-bottom:6px">` : ''}<strong>${esc(ctx.colegios.nombre)}</strong><br><span class="rol-chip rol-${ctx.rol}">${ROL_TXT[ctx.rol]}</span> ${esc(ctx.nombre || '')}</div>`;
+    side.innerHTML = menuHTML();
   }
   $('#foot').innerHTML = `${esc(me?.email || '')}<br>
     ${modo === 'plataforma' && ctxs.length ? `<button class="btn ghost sm" type="button" onclick="irColegio()">Ir a mi colegio</button>` : ''}
@@ -416,10 +495,11 @@ function renderSide() {
 // Barra superior fija en todas las pantallas: volver al inicio, ver y cambiar de perfil, y salir
 function barraSup() {
   const per = ctx.estudiantes && isFam() ? `${ROL_TXT[ctx.rol]} de ${esc(est(propio())?.nombres || ctx.estudiantes.nombres)}` : ROL_TXT[ctx.rol];
-  return `<div class="topbar">
+  return `<div class="topbar tb-rol-${ctx.rol}">
+    ${view !== 'inicio' ? `<button class="btn ghost sm tb-volver" type="button" onclick="volver()" title="Volver a la pantalla anterior">← Volver</button>` : ''}
     <button class="btn ghost sm" type="button" onclick="go('inicio')" ${view === 'inicio' ? 'aria-current="page"' : ''}>Inicio</button>
     ${isFam() || atiende() || manejaPagos() ? `<button class="btn ghost sm tb-avisos" type="button" onclick="verAvisos()" title="Avisos" aria-label="Avisos"><span aria-hidden="true">🔔</span>${totalNov() ? `<span class="badge">${totalNov()}</span>` : ''}</button>` : ''}
-    <button class="btn ghost sm tb-perfil" type="button" onclick="elegirPerfil()" title="Cambiar de perfil o de colegio"><span class="muted tb-l">Perfil:</span> ${per}<span class="tb-l">${S?.k?.demo ? ' <span class="tag">Demostración</span>' : ''}</span> <span aria-hidden="true">▾</span></button>
+    <button class="btn ghost sm tb-perfil" type="button" onclick="elegirPerfil()" title="Cambiar de perfil o de colegio"><span class="muted tb-l">Usted está como</span> <span class="rol-chip rol-${ctx.rol}">${per}</span><span class="tb-l">${S?.k?.demo ? ' <span class="tag">Demostración</span>' : ''}</span> <span aria-hidden="true">▾</span></button>
     <button class="btn ghost sm tb-salir" type="button" onclick="salirApp()"><span class="tb-l">${S?.k?.demo ? 'Salir de la demostración' : 'Cerrar sesión'}</span><span class="tb-s">Salir</span></button></div>`;
 }
 function elegirPerfil() {
@@ -432,14 +512,14 @@ function elegirPerfil() {
       ${superadmin ? `<button type="button" class="perfil" onclick="closeModal();irPlataforma()"><strong>Superadministrador</strong><span>Panel de la plataforma Colegio-IA</span></button>` : ''}</div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal();setAuth('activar')">Tengo un código de otro colegio</button><button class="btn ghost" type="button" onclick="closeModal();salirApp()">${demo ? 'Salir de la demostración' : 'Cerrar sesión'}</button></div>`);
 }
-function salirApp() {
+async function salirApp() {
   if (S?.k?.demo) { const real = ctxs.find(m => m.colegio_id !== ctx.colegio_id); return real ? entrarContexto(real.id) : setAuth('activar'); }
-  if (confirm('¿Cerrar sesión?')) doLogout();
+  if (await confirmar('¿Cerrar sesión?')) doLogout();
 }
 function render() {
   renderSide();
-  const v = modo === 'plataforma' ? VIEW_PLAT : (VIEWS.find(x => x.id === view && x.ok()) || VIEWS[0]);
-  try { $('#view').innerHTML = (modo === 'colegio' && isFam() && !alDia() && VISTAS_RESTRINGIDAS.includes(v.id)) ? head(v.label) + avisoRestringido() : v.fn(); } catch (e) { console.error(e); $('#view').innerHTML = `<div class="panel empty">${esc(msg(e))}</div>`; }
+  const v = modo === 'plataforma' ? VIEW_PLAT : (VIEWS.find(x => x.id === view && visible(x)) || VIEWS[0]);
+  try { $('#view').innerHTML = v.fn(); } catch (e) { console.error(e); $('#view').innerHTML = `<div class="panel empty">${esc(msg(e))}</div>`; }
   if (modo === 'colegio' && S?.k?.demo && view === 'inicio') $('#view').insertAdjacentHTML('afterbegin', barraDemo());
   if (modo === 'colegio' && isFam()) $('#view').insertAdjacentHTML('afterbegin', barraHijos());
   if (modo === 'colegio' && S?.estado?.cobro === 'aviso' && (isDir() || isTes())) $('#view').insertAdjacentHTML('afterbegin', avisoCobro());
@@ -486,8 +566,11 @@ window.addEventListener('popstate', e => {
   if (v !== view) { navAtras = true; go(v); }
   if (!e.state) history.pushState({ v: 'inicio' }, '');
 });
+const pila = [];
+function volver() { pila.pop(); const v = pila.pop() || 'inicio'; navAtras = true; go(v); }
 async function go(v) {
   if (ctx && sesionVieja() && !(await sesionViva())) return recargarEn(v);
+  if (modo === 'colegio' && pila[pila.length - 1] !== v) { pila.push(v); if (pila.length > 30) pila.shift(); }
   ultimaActividad = Date.now();
   if (modo === 'colegio') { if (!navAtras && history.state?.v !== v) history.pushState({ v }, ''); navAtras = false; }
   if (modo === 'colegio') { view = v; try { sessionStorage.setItem('genesis:ir', v); } catch {} }
@@ -526,7 +609,7 @@ function vInicio() {
        <div class="stat"><div class="n">${c.filter(x => +x.saldo_vencido > 0).length}</div><div class="l">Estudiantes en mora</div></div></div>
        <div class="toolbar"><button class="btn" type="button" onclick="go('pagos')">Ir a pagos y cartera</button><button class="btn ghost" type="button" onclick="go('pedidos')">Tienda y pedidos${S.nov?.pedidosStaff ? ` (${S.nov.pedidosStaff} por atender)` : ''}</button></div>`;
   }
-  if (isFam() && !alDia()) return head(`Hola, ${esc((ctx.nombre || '').split(' ')[0])}`, esc(S.k.nombre)) + hoyFamilia() + avisoRestringido() + redesHTML();
+  if (isFam() && !alDia()) return head(`Hola, ${esc((ctx.nombre || '').split(' ')[0])}`, esc(S.k.nombre)) + avisoRestringido() + redesHTML();
   if (isDir()) {
     const r = resumen || {}; const pct = r.esperadas ? Math.round(r.registradas / r.esperadas * 100) : 0;
     return head(`Buen día, ${esc(ctx.nombre.split(' ')[0])}`, `${esc(S.k.nombre)}. Año lectivo ${S.k.anio}, periodo ${pa} en curso.`) +
@@ -562,7 +645,7 @@ function vInicio() {
   const pr = promedio(e.id), pe = perdidas(e.id);
   return head(ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)}` : `Hola, ${esc(e.nombres)}`, `${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + hoyFamilia() +
     `<div class="stats">
-      <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : pr.toFixed(1)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado' + (pr == null ? '' : ', ' + desem(pr))}</div></div>
+      <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : N(pr)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado' + (pr == null ? '' : ', ' + desem(pr))}</div></div>
       <div class="stat"><div class="n">${pe.length}</div><div class="l">Asignaturas en bajo</div></div>
       <div class="stat"><div class="n">${fallas(e.id)}</div><div class="l">${porClase() ? 'Fallas (horas de clase)' : 'Fallas registradas'} · <button class="linkbtn" type="button" onclick="detalleFallas('${e.id}')">Ver fechas</button></div></div>
     </div>
@@ -743,7 +826,7 @@ async function guardarRetiro(id) {
   if (r) { Object.assign(est(id), r); closeModal(); drawEst(); }
 }
 async function reactivar(id) {
-  if (!confirm('¿Reactivar la matrícula de este estudiante? Se volverán a generar sus cobros.')) return;
+  if (!await confirmar('¿Reactivar la matrícula de este estudiante? Se volverán a generar sus cobros.')) return;
   const r = await guard(() => q(db.from('estudiantes').update({ estado: 'Activo', fecha_retiro: null, motivo_retiro: null }).eq('id', id).select().single()), 'Estudiante reactivado');
   if (r) { Object.assign(est(id), r); drawEst(); }
 }
@@ -783,11 +866,14 @@ function textoInvitacion(m) {
   return `Hola, ${m.nombre}. ${S.k.nombre} le da acceso a Colegio-IA como ${ROL_TXT[m.rol].toLowerCase()}.\n\n1. Entre a ${url}\n2. Elija "Cree su cuenta" y regístrese con este correo: ${m.email}\n3. Escriba el código de activación: ${m.codigo}\n\nEl código es personal; no lo compartas.`;
 }
 async function copiar(s) { const t = $(s); try { await navigator.clipboard.writeText(t.value); toast('Mensaje copiado'); } catch { t.select(); document.execCommand('copy'); toast('Mensaje copiado'); } }
+const ROLES_DIRECTIVOS = ['rector', 'coordinador', 'secretaria', 'tesoreria'];
+// Solo el rector(a) maneja usuarios directivos; coordinación y secretaría manejan docentes y familias
+const puedeManejar = m => esRector() || !ROLES_DIRECTIVOS.includes(m.rol);
 function filaAcceso(m, extra) {
   return `<li style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
     <span><strong>${esc(m.nombre)}</strong> <span class="tag">${ROL_TXT[m.rol]}</span> ${m.activo ? '' : '<span class="tag t3">Inactivo</span>'}<br>
     <span class="muted">${esc(m.email)} · ${m.user_id ? 'Cuenta activa' : `Pendiente, código <span class="code">${esc(m.codigo)}</span>`}</span>${extra || ''}</span>
-    <span style="white-space:nowrap">${m.user_id ? '' : `<button class="btn ghost sm" type="button" onclick="verInvitacion('${m.id}')">Mensaje</button> `}<button class="btn ghost sm" type="button" onclick="nuevoCodigo('${m.id}')">Nuevo código</button> <button class="btn ghost sm" type="button" onclick="toggleMiembro('${m.id}')">${m.activo ? 'Desactivar' : 'Activar'}</button></span></li>`;
+    <span style="white-space:nowrap">${!puedeManejar(m) ? '<span class="muted">Solo el rector(a) lo modifica</span>' : `${m.user_id ? '' : `<button class="btn ghost sm" type="button" onclick="verInvitacion('${m.id}')">Mensaje</button> `}<button class="btn ghost sm" type="button" onclick="nuevoCodigo('${m.id}')">Nuevo código</button> ${m.user_id === me?.id ? '' : `<button class="btn ghost sm" type="button" onclick="toggleMiembro('${m.id}')">${m.activo ? 'Desactivar' : 'Activar'}</button>`}`}</span></li>`;
 }
 function verInvitacion(id) {
   const m = S.miembros.find(x => x.id === id);
@@ -796,7 +882,7 @@ function verInvitacion(id) {
 }
 async function nuevoCodigo(id) {
   const m = S.miembros.find(x => x.id === id);
-  if (m.user_id && !confirm(`${m.nombre} ya activó su cuenta. Un código nuevo desvincula su acceso actual hasta que lo vuelva a activar. ¿Continuar?`)) return;
+  if (m.user_id && !await confirmar(`${m.nombre} ya activó su cuenta. Un código nuevo desvincula su acceso actual hasta que lo vuelva a activar. ¿Continuar?`)) return;
   const c = await guard(() => q(db.rpc('regenerar_codigo', { p_miembro: id })), 'Código nuevo generado');
   if (c) { m.codigo = c; m.user_id = null; verInvitacion(id); }
 }
@@ -819,7 +905,7 @@ function vUsuarios() {
 }
 function formUsuario() {
   openModal('Invitar usuario', `<div class="formgrid">
-    <label class="field"><span>Perfil</span><select id="uRol">${['docente', 'coordinador', 'secretaria', 'tesoreria', 'rector'].map(r => opt(r, ROL_TXT[r])).join('')}</select></label>
+    <label class="field"><span>Perfil</span><select id="uRol">${(esRector() ? ['docente', 'coordinador', 'secretaria', 'tesoreria', 'rector'] : ['docente']).map(r => opt(r, ROL_TXT[r])).join('')}</select></label>
     <label class="field"><span>Nombre completo</span><input id="uNom"></label>
     <label class="field"><span>Correo electrónico</span><input id="uEmail" type="email"></label></div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="invitar(null)">Crear invitación</button></div>`);
@@ -869,10 +955,10 @@ const cerrado = p => !isDir() && !!cierreDe(p) && hoy() > cierreDe(p);
 const selGrupoHTML = gs => `<label class="field"><span>Grupo</span><select onchange="cambiarGrupo(this.value)">${gs.map(x => opt(x.id, x.nombre, sel.g)).join('')}</select></label>`;
 const actsDe = (g, a, p) => S.acts.filter(x => x.grupo_id === g && x.asignatura_id === a && x.periodo === +p).sort((x, y) => x.orden - y.orden || String(x.creado_en).localeCompare(String(y.creado_en)));
 function calcActs(eid, acts) {
-  let s = 0, w = 0, n = 0, t = 0;
-  acts.forEach(a => { const v = S.nact[`${a.id}|${eid}`]; if (v == null) return; s += v * +a.peso; w += +a.peso; t += v; n++; });
-  if (!n) return null;
-  return Math.round((w ? s / w : t / n) * 10) / 10;
+  // Promedio simple de las actividades calificadas, sin porcentajes
+  let n = 0, t = 0;
+  acts.forEach(a => { const v = S.nact[`${a.id}|${eid}`]; if (v == null) return; t += +v; n++; });
+  return n ? Math.round(t / n) : null;
 }
 function vNotas() {
   const gs = gruposVis(); if (!gs.length) return head('Calificaciones') + sinGrupos();
@@ -886,37 +972,38 @@ function vNotas() {
   const pre = g.nivel === 'preescolar', es = estsDe(g.id); const reg = es.filter(e => notaRaw(e.id, sel.a, sel.p) != null).length;
   const cerr = cerrado(sel.p), dis = cerr ? 'disabled' : '', ci = cierreDe(sel.p);
   const acts = pre ? [] : actsDe(g.id, sel.a, sel.p), conAct = !pre && (acts.length > 0 || sel.modoAct);
-  const sumP = acts.reduce((a, x) => a + +x.peso, 0);
   const aviso = cerr ? `<div class="note">El periodo ${sel.p} se cerró el ${fmtF(ci)}. Si necesita corregir una calificación, solicítelo a coordinación.</div>`
     : ci ? `<p class="muted" style="margin:0 0 8px">Fecha límite para registrar calificaciones del periodo ${sel.p}: <strong>${fmtF(ci)}</strong>.</p>` : '';
   const modoBtns = pre ? '' : `<div class="seg" role="group" aria-label="Forma de calificar"><button type="button" aria-pressed="${!conAct}" onclick="sel.modoAct=false;render()" ${acts.length ? 'disabled title="Hay actividades creadas: la calificación del periodo se calcula con ellas"' : ''}>Calificación directa</button><button type="button" aria-pressed="${conAct}" onclick="sel.modoAct=true;render()">Por actividades</button></div>`;
   let tabla = '';
   if (!es.length) tabla = '<div class="empty">Este grupo no tiene estudiantes activos.</div>';
   else if (conAct) {
-    tabla = `<div class="toolbar"><button class="btn sm" type="button" onclick="formActividad()" ${dis}>Agregar actividad</button>
-      ${acts.length ? `<span class="muted">Los porcentajes suman ${sumP}%${sumP !== 100 ? '. La calificación del periodo se calcula en proporción a las actividades calificadas' : ''}.</span>` : '<span class="muted">Cree las actividades del periodo (talleres, evaluaciones, proyectos) con su porcentaje. La calificación del periodo se calcula sola.</span>'}</div>
-    ${acts.length ? `<div class="tbl"><table class="planilla"><thead><tr><th>Estudiante</th>${acts.map(a => `<th><button class="linkbtn" type="button" onclick="formActividad('${a.id}')" title="Editar actividad">${esc(a.nombre)}</button><br><span class="muted">${+a.peso}%${a.fecha ? ' · ' + fmtF(a.fecha).slice(0, 5) : ''}</span></th>`).join('')}<th>Periodo ${sel.p}</th><th>Acumulado</th><th>Estado</th><th></th></tr></thead><tbody>
-    ${es.map(e => `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td>${acts.map(a => { const v = S.nact[`${a.id}|${e.id}`]; return `<td><input class="actnota" type="number" inputmode="decimal" step="0.1" min="1" max="5" value="${v == null ? '' : v.toFixed(1)}" aria-label="${esc(a.nombre)} de ${esc(nom(e))}" onchange="setNotaAct('${a.id}','${e.id}',this)" ${dis}></td>`; }).join('')}
+    tabla = `<div class="toolbar"><button class="btn sm" type="button" onclick="formActividad()" ${dis}>+ Agregar actividad</button>
+      <span class="muted">Cree las actividades que quiera (talleres, tareas, evaluaciones). La calificación del periodo es el <strong>promedio</strong> de las actividades calificadas, sin porcentajes.</span></div>
+    ${acts.length ? `<div class="tbl"><table class="planilla"><thead><tr><th>Estudiante</th>${acts.map(a => `<th><button class="linkbtn" type="button" onclick="formActividad('${a.id}')" title="Cambiar nombre o fecha">${esc(a.nombre)}</button>${a.fecha ? `<br><span class="muted">${fmtF(a.fecha).slice(0, 5)}</span>` : ''}${dis ? '' : `<br><button class="linkbtn malo" type="button" onclick="borrarActividad('${a.id}')" title="Borrar esta actividad">Borrar</button>`}</th>`).join('')}<th>Periodo ${sel.p}</th><th>Acumulado</th><th>Estado</th><th></th></tr></thead><tbody>
+    ${es.map(e => `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td>${acts.map(a => { const v = S.nact[`${a.id}|${e.id}`]; return `<td><input class="actnota" ${NOTA_ATTR} value="${N(v)}" aria-label="${esc(a.nombre)} de ${esc(nom(e))}" onchange="setNotaAct('${a.id}','${e.id}',this)" ${dis}></td>`; }).join('')}
       <td id="pn-${e.id}">${chip(notaRaw(e.id, sel.a, sel.p))}</td><td id="ac-${e.id}">${chip(defin(e.id, sel.a))}</td><td id="st-${e.id}">${estadoCal(e.id)}</td><td>${recBtn(e.id)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   } else {
-    const ps = periodos(), txt = x => x == null ? '—' : pre ? desem(x) : x.toFixed(1);
+    const ps = periodos(), txt = x => x == null ? '—' : pre ? desem(x) : N(x);
     tabla = `<div class="tbl"><table class="califs"><thead><tr><th>Estudiante</th>${ps.map(p => `<th class="num ${p.n === sel.p ? 'actual' : ''}">${p.n === sel.p ? `Periodo ${p.n}<br><small>calificando</small>` : `P${p.n}`}</th>`).join('')}<th class="num">${pre ? '' : 'Acumulado'}</th><th>Estado</th>${pre ? '' : '<th></th>'}</tr></thead><tbody>
     ${es.map(e => {
       const v = notaRaw(e.id, sel.a, sel.p);
       const cell = pre ? `<select aria-label="Desempeño de ${esc(nom(e))}" onchange="setNotaPre('${e.id}',this)" ${dis}><option value="">Sin valorar</option>${Object.keys(PRE_VAL).map(d => opt(d, d, v == null ? '' : desem(v))).join('')}</select>`
-        : `<input type="number" inputmode="decimal" step="0.1" min="1" max="5" value="${v == null ? '' : v.toFixed(1)}" aria-label="Calificación de ${esc(nom(e))}" onchange="setNota('${e.id}',this)" ${dis}>`;
+        : `<input ${NOTA_ATTR} value="${N(v)}" aria-label="Calificación de ${esc(nom(e))}" onchange="setNota('${e.id}',this)" ${dis}>`;
       return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)} ${e.piar ? '<span class="tag piar">PIAR</span>' : ''}</td>${ps.map(p => p.n === sel.p ? `<td class="num actual">${cell}</td>` : `<td class="num">${txt(nota(e.id, sel.a, p.n))}</td>`).join('')}<td class="num" id="ac-${e.id}">${pre ? '' : chip(defin(e.id, sel.a))}</td><td id="st-${e.id}">${estadoCal(e.id)}</td>${pre ? '' : `<td>${recBtn(e.id)}</td>`}</tr>`;
     }).join('')}</tbody></table></div>`;
   }
-  return head('Calificaciones', pre ? 'Preescolar se valora de forma cualitativa por dimensiones.' : 'Escala 1.0 a 5.0 según el SIEE. Cada calificación se guarda al salir de la casilla.') +
+  return head('Calificaciones', pre ? 'Preescolar se valora de forma cualitativa por dimensiones.' : 'Escala de 0 a 100, sin decimales. Cada calificación se guarda sola al salir de la casilla.') +
     `<div class="panel"><div class="toolbar">${selGrupoHTML(gs)}
       <label class="field"><span>${pre ? 'Dimensión' : 'Asignatura'}</span><select onchange="sel.a=this.value;render()">${as.map(a => opt(a.id, a.nombre, sel.a)).join('')}</select></label>
       <label class="field periodo-sel"><span>Periodo que está calificando</span><select onchange="sel.p=+this.value;render();toast('Mostrando las calificaciones del periodo '+sel.p)">${perOpts(sel.p)}</select></label>
       ${modoBtns}
-      <span class="muted" style="margin-left:auto"><strong id="regN">${reg}</strong> de ${es.length} guardadas en el periodo ${sel.p} · <button class="linkbtn" type="button" onclick="refrescar()">Actualizar</button></span></div>
-    ${aviso}
-    <label class="field full" style="margin:6px 0 12px"><span>Logro de ${pre ? 'la dimensión' : 'la asignatura'} en el periodo ${sel.p} (un logro por línea; aparece en el boletín)</span><textarea id="logroTxt" placeholder="Ejemplo: Resuelve problemas de suma y resta con números hasta 1.000." onchange="setLogro(this)" ${dis}>${esc(S.logros[`${sel.g}|${sel.a}|${sel.p}`] || '')}</textarea></label>
-    ${tabla}</div>`;
+      <span class="muted" style="margin-left:auto"><strong id="regN">${reg}</strong> de ${es.length} con calificación en el periodo ${sel.p}</span></div>
+    ${aviso}${tabla}</div>
+    <section class="panel logros-box"><h2>Logros del periodo ${sel.p}</h2>
+      <p class="muted">Los logros describen lo que el estudiante debe alcanzar en ${pre ? 'la dimensión' : 'la asignatura'} durante el periodo. Escriba uno por línea: aparecen en el boletín de todos los estudiantes del curso.</p>
+      <textarea id="logroTxt" rows="3" placeholder="Ejemplo: Resuelve problemas de suma y resta con números hasta 1.000." ${dis}>${esc(S.logros[`${sel.g}|${sel.a}|${sel.p}`] || '')}</textarea>
+      ${dis ? '' : `<div class="toolbar" style="margin-top:8px"><button class="btn" type="button" id="logroBtn" onclick="setLogro()">Guardar logros</button><span class="ok" id="logroOk"></span></div>`}</section>`;
 }
 const horaAhora = () => new Date().toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' });
 const guardadasHoy = {};
@@ -932,13 +1019,13 @@ function marcarGuardada(eid) {
 }
 function recBtn(eid) {
   const r = S.rec[`${eid}|${sel.a}|${sel.p}`], v = notaRaw(eid, sel.a, sel.p);
-  if (r) return `<button class="btn ghost sm" type="button" onclick="formRecup('${eid}')">Recuperación${r.nota != null ? ' ' + (+r.nota).toFixed(1) : ': pendiente'}</button>`;
+  if (r) return `<button class="btn ghost sm" type="button" onclick="formRecup('${eid}')">Recuperación${r.nota != null ? ' ' + N(r.nota) : ': pendiente'}</button>`;
   return v != null && desem(v) === 'Bajo' ? `<button class="btn ghost sm" type="button" onclick="formRecup('${eid}')">Plan de recuperación</button>` : '';
 }
 async function setNotaAct(aid, eid, el) {
-  const raw = el.value.replace(',', '.').trim(), k = `${aid}|${eid}`, prev = S.nact[k];
-  let v = null;
-  if (raw !== '') { v = Math.round(parseFloat(raw) * 10) / 10; if (isNaN(v) || v < 1 || v > 5) { toast('La calificación debe estar entre 1.0 y 5.0'); el.value = prev == null ? '' : prev.toFixed(1); return; } }
+  const k = `${aid}|${eid}`, prev = S.nact[k], ln = leerNota(el.value);
+  if (ln.err) { toast(ln.err); el.value = N(prev); return; }
+  const v = ln.v;
   el.disabled = true;
   const ok = await guard(async () => {
     if (v == null) await q(db.from('notas_act').delete().eq('actividad_id', aid).eq('estudiante_id', eid));
@@ -949,8 +1036,8 @@ async function setNotaAct(aid, eid, el) {
     return true;
   });
   el.disabled = false;
-  if (!ok) { el.value = prev == null ? '' : prev.toFixed(1); return; }
-  el.value = v == null ? '' : v.toFixed(1);
+  if (!ok) { el.value = N(prev); return; }
+  el.value = N(v);
   const pn = $('#pn-' + eid); if (pn) pn.innerHTML = chip(notaRaw(eid, sel.a, sel.p));
   marcarGuardada(eid);
 }
@@ -961,24 +1048,25 @@ async function recalcularPeriodo() {
 function formActividad(id) {
   const a = id ? S.acts.find(x => x.id === id) : { nombre: '', peso: '', fecha: hoy() };
   const cerr = cerrado(sel.p);
-  openModal(id ? 'Editar actividad' : 'Nueva actividad', `<div class="formgrid">${fIn('aNom', 'Nombre de la actividad', a.nombre, 'placeholder="Ejemplo: Taller 1, Evaluación escrita"')}
-    ${fIn('aPeso', 'Porcentaje dentro del periodo (%)', a.peso, 'type="number" min="0" max="100"')}${fIn('aFec', 'Fecha', a.fecha || '', 'type="date"')}</div>
-    <div class="modal-foot">${id && !cerr ? `<button class="btn ghost" type="button" onclick="borrarActividad('${id}')">Eliminar</button>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button>${cerr ? '' : `<button class="btn" type="button" onclick="guardarActividad('${id || ''}')">Guardar</button>`}</div>`);
+  openModal(id ? 'Editar actividad' : 'Nueva actividad', `<div class="formgrid">${fIn('aNom', 'Nombre de la actividad', a.nombre, 'maxlength="80" placeholder="Ejemplo: Taller 1, Evaluación escrita"')}
+    ${fIn('aFec', 'Fecha', a.fecha || '', 'type="date"')}</div><p class="muted">La calificación del periodo será el promedio de todas las actividades calificadas.</p>
+    <div class="modal-foot">${id && !cerr ? `<button class="btn ghost" type="button" onclick="borrarActividad('${id}')">Borrar actividad</button>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button>${cerr ? '' : `<button class="btn" type="button" id="aBtn" onclick="guardarActividad('${id || ''}')">Guardar</button>`}</div>`);
 }
 async function guardarActividad(id) {
-  const d = { nombre: vv('aNom'), peso: +vv('aPeso') || 0, fecha: vv('aFec') || null };
+  const d = { nombre: vv('aNom'), fecha: vv('aFec') || null };
   if (!d.nombre) return toast('Escriba el nombre de la actividad');
-  if (d.peso < 0 || d.peso > 100) return toast('El porcentaje debe estar entre 0 y 100');
-  const r = await guard(async () => {
+  if (!id && actsDe(sel.g, sel.a, sel.p).some(x => x.nombre.toLowerCase() === d.nombre.toLowerCase())) return toast('Ya existe una actividad con ese nombre en este periodo');
+  const r = await busy('#aBtn', () => guard(async () => {
     const x = id ? await q(db.from('actividades').update(d).eq('id', id).select().single())
       : await q(db.from('actividades').insert({ ...d, colegio_id: ctx.colegio_id, grupo_id: sel.g, asignatura_id: sel.a, anio: S.k.anio, periodo: sel.p, orden: actsDe(sel.g, sel.a, sel.p).length + 1 }).select().single());
     S.acts = S.acts.filter(a => a.id !== x.id).concat(x);
     await recalcularPeriodo(); return x;
-  }, 'Actividad guardada');
+  }, 'Actividad guardada'));
   if (r) { sel.modoAct = true; closeModal(); render(); }
 }
 async function borrarActividad(id) {
-  if (!confirm('Se borrarán las calificaciones de esta actividad y se recalculará la calificación del periodo. ¿Continuar?')) return;
+  const a = S.acts.find(x => x.id === id);
+  if (!(await confirmar(`¿Borrar la actividad "${a?.nombre || ''}"? Se borrarán sus calificaciones y se recalculará la calificación del periodo.`, 'Borrar actividad'))) return;
   const ok = await guard(async () => {
     await q(db.from('actividades').delete().eq('id', id));
     S.acts = S.acts.filter(a => a.id !== id); Object.keys(S.nact).forEach(k => { if (k.startsWith(id + '|')) delete S.nact[k]; });
@@ -989,16 +1077,15 @@ async function borrarActividad(id) {
 /* ---------- Recuperaciones (Decreto 1290) ---------- */
 function formRecup(eid) {
   const r = S.rec[`${eid}|${sel.a}|${sel.p}`] || {}, a = S.asigs.find(x => x.id === sel.a), v = notaRaw(eid, sel.a, sel.p);
-  openModal(`Recuperación: ${nom(est(eid))}`, `<p class="muted">${esc(a?.nombre || '')}, periodo ${sel.p}. Calificación del periodo: ${v == null ? 'sin calificación' : v.toFixed(1)}. Si la calificación de recuperación es mayor, reemplaza la del periodo en el boletín y en los promedios.</p>
+  openModal(`Recuperación: ${nom(est(eid))}`, `<p class="muted">${esc(a?.nombre || '')}, periodo ${sel.p}. Calificación del periodo: ${v == null ? 'sin calificación' : N(v)}. Si la calificación de recuperación es mayor, reemplaza la del periodo en el boletín y en los promedios.</p>
     <div class="formgrid">${fTa('rPlan', 'Plan de recuperación (actividades, temas, compromisos)', r.plan, 'Ejemplo: Taller de fracciones y sustentación oral.')}
-    ${fIn('rFec', 'Fecha de presentación', r.fecha || '', 'type="date"')}${fIn('rNota', 'Nota obtenida (deje vacío si aún no la presenta)', r.nota ?? '', 'type="number" step="0.1" min="1" max="5"')}</div>
+    ${fIn('rFec', 'Fecha de presentación', r.fecha || '', 'type="date"')}${fIn('rNota', 'Calificación obtenida, de 0 a 100 (deje vacío si aún no la presenta)', r.nota == null ? '' : N(r.nota), NOTA_ATTR)}</div>
     ${r.registrado_por ? `<p class="muted">Registró: ${esc(r.registrado_por)}</p>` : ''}
     <div class="modal-foot">${r.id ? `<button class="btn ghost" type="button" onclick="borrarRecup('${eid}')">Eliminar</button>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarRecup('${eid}')">Guardar</button></div>`);
 }
 async function guardarRecup(eid) {
   const plan = vv('rPlan'), raw = vv('rNota'); if (!plan) return toast('Escriba el plan de recuperación');
-  const n = raw === '' ? null : Math.round(parseFloat(raw.replace(',', '.')) * 10) / 10;
-  if (n != null && (isNaN(n) || n < 1 || n > 5)) return toast('La calificación debe estar entre 1.0 y 5.0');
+  const ln = leerNota(raw); if (ln.err) return toast(ln.err); const n = ln.v;
   const r = await guard(() => q(db.from('recuperaciones').upsert({ colegio_id: ctx.colegio_id, estudiante_id: eid, asignatura_id: sel.a, anio: S.k.anio, periodo: sel.p, plan, fecha: vv('rFec') || null, nota: n }, { onConflict: 'estudiante_id,asignatura_id,anio,periodo' }).select().single()), 'Recuperación guardada');
   if (r) { S.rec[`${eid}|${sel.a}|${sel.p}`] = r; closeModal(); render(); }
 }
@@ -1012,10 +1099,10 @@ function planillaHTML(g, p) {
   const as = asigsDe(g), es = estsDe(g.id), pre = g.nivel === 'preescolar';
   if (!es.length) return '<div class="empty">Este grupo no tiene estudiantes activos.</div>';
   const val = (e, a) => p === 'acum' ? defin(e, a) : nota(e, a, p);
-  const celda = v => `<td>${v == null ? '—' : pre ? desem(v) : `<span class="${desem(v) === 'Bajo' ? 'd d-Bajo' : ''}">${v.toFixed(1)}</span>`}</td>`;
+  const celda = v => `<td>${v == null ? '—' : pre ? desem(v) : `<span class="${desem(v) === 'Bajo' ? 'd d-Bajo' : ''}">${N(v)}</span>`}</td>`;
   return `<div class="tbl"><table class="planilla"><thead><tr><th>Estudiante</th>${as.map(a => `<th title="${esc(a.nombre)}">${esc(abrev(a.nombre))}</th>`).join('')}${pre ? '' : '<th>Prom.</th><th>En bajo</th>'}</tr></thead><tbody>
     ${es.map(e => { const vs = as.map(a => val(e.id, a.id)), ok = vs.filter(x => x != null), pr = ok.length ? ok.reduce((a, b) => a + b, 0) / ok.length : null;
-      return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td>${vs.map(celda).join('')}${pre ? '' : `<td><strong>${pr == null ? '—' : pr.toFixed(1)}</strong></td><td>${ok.filter(x => desem(x) === 'Bajo').length || ''}</td>`}</tr>`; }).join('')}
+      return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td>${vs.map(celda).join('')}${pre ? '' : `<td><strong>${pr == null ? '—' : N(pr)}</strong></td><td>${ok.filter(x => desem(x) === 'Bajo').length || ''}</td>`}</tr>`; }).join('')}
     </tbody></table></div>`;
 }
 async function guardarNota(eid, v) {
@@ -1025,24 +1112,24 @@ async function guardarNota(eid, v) {
   if (v == null) delete S.notas[k]; else S.notas[k] = v;
 }
 async function setNota(eid, el) {
-  const raw = el.value.replace(',', '.').trim(); const prev = notaRaw(eid, sel.a, sel.p);
-  let v = null;
-  if (raw !== '') { v = Math.round(parseFloat(raw) * 10) / 10; if (isNaN(v) || v < 1 || v > 5) { toast('La calificación debe estar entre 1.0 y 5.0'); el.value = prev == null ? '' : prev.toFixed(1); return; } }
+  const prev = notaRaw(eid, sel.a, sel.p), ln = leerNota(el.value);
+  if (ln.err) { toast(ln.err); el.value = N(prev); return; }
+  const v = ln.v;
   el.disabled = true;
   const ok = await guard(async () => { await guardarNota(eid, v); return true; });
   el.disabled = false;
-  if (!ok) { el.value = prev == null ? '' : prev.toFixed(1); return; }
-  el.value = v == null ? '' : v.toFixed(1); marcarGuardada(eid);
-  toast(v == null ? 'Calificación borrada' : `Guardada: ${est(eid).nombres} ${v.toFixed(1)} en el periodo ${sel.p}`);
+  if (!ok) { el.value = N(prev); return; }
+  el.value = N(v); marcarGuardada(eid);
+  
 }
-async function setLogro(el) {
-  const t = el.value.trim(), k = `${sel.g}|${sel.a}|${sel.p}`;
-  const ok = await guard(async () => {
+async function setLogro() {
+  const t = $('#logroTxt').value.trim(), k = `${sel.g}|${sel.a}|${sel.p}`;
+  const ok = await busy('#logroBtn', () => guard(async () => {
     if (!t) await q(db.from('logros').delete().eq('grupo_id', sel.g).eq('asignatura_id', sel.a).eq('anio', S.k.anio).eq('periodo', sel.p));
     else await q(db.from('logros').upsert({ colegio_id: ctx.colegio_id, grupo_id: sel.g, asignatura_id: sel.a, anio: S.k.anio, periodo: sel.p, texto: t }, { onConflict: 'grupo_id,asignatura_id,anio,periodo' }));
     return true;
-  }, 'Logro guardado');
-  if (ok) { if (t) S.logros[k] = t; else delete S.logros[k]; }
+  }, 'Logros guardados'));
+  if (ok) { if (t) S.logros[k] = t; else delete S.logros[k]; const o = $('#logroOk'); if (o) o.textContent = '✓ Guardados ' + horaAhora(); }
 }
 async function setNotaPre(eid, el) { const d = el.value; const ok = await guard(async () => { await guardarNota(eid, d ? PRE_VAL[d] : null); return true; }, d ? `Guardada: ${est(eid).nombres} ${d} en el periodo ${sel.p}` : 'Valoración borrada'); if (!ok) render(); else marcarGuardada(eid); }
 
@@ -1059,16 +1146,18 @@ function vAsistencia() {
   const key = eid => pc ? `${sel.fecha}|${eid}|${sel.a}` : `${sel.fecha}|${eid}`;
   const mapa = pc ? S.asisC : S.asis;
   const c = { P: 0, A: 0, T: 0, E: 0 }; es.forEach(e => c[mapa[key(e.id)] || 'P']++);
-  return head('Asistencia', pc ? 'Asistencia por clase: cada docente la toma en su asignatura. Todos inician como presentes.' : 'Todos inician como presentes. Marque solo las novedades; cada cambio se guarda de inmediato.') +
+  return head('Asistencia', pc ? 'Asistencia por clase: cada docente la toma en su asignatura. Todos inician como presentes.' : 'Todos inician como presentes. Marque solo las novedades: cada cambio se guarda solo y verá "✓ Guardado" al lado.') +
     `<div class="panel"><div class="toolbar">${selGrupoHTML(gs)}
       ${pc ? `<label class="field"><span>Asignatura</span><select onchange="sel.a=this.value;render()">${as.map(a => opt(a.id, a.nombre, sel.a)).join('')}</select></label>` : ''}
       <label class="field"><span>Fecha</span><input type="date" value="${sel.fecha}" max="${hoy()}" onchange="sel.fecha=this.value;render()"></label>
       <span class="muted" style="margin-left:auto">Presentes ${c.P}, ausentes ${c.A}, tarde ${c.T}, con excusa ${c.E}</span></div>
     ${soloVer ? '<div class="note">Como director(a) de grupo puede consultar la asistencia; cada docente la registra en su clase.</div>' : ''}
-    ${es.length ? `<div class="tbl"><table><thead><tr><th>Estudiante</th><th>Asistencia</th><th>${pc ? 'Fallas en la asignatura' : 'Fallas en el año'}</th></tr></thead><tbody>
-    ${es.map(e => { const v = mapa[key(e.id)] || 'P'; return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td><td><div class="seg" role="group" aria-label="Asistencia de ${esc(nom(e))}">${Object.keys(L).map(x => `<button type="button" title="${L[x]}" aria-pressed="${v === x}" onclick="setAsis('${e.id}','${x}')" ${soloVer ? 'disabled' : ''}>${x}</button>`).join('')}</div></td><td>${pc ? fallasAsig(e.id, sel.a) : fallas(e.id)}</td></tr>`; }).join('')}
-    </tbody></table></div><p class="muted" style="margin-top:10px">P presente, A ausente, T tarde, E excusa justificada.</p>` : '<div class="empty">Este grupo no tiene estudiantes activos.</div>'}</div>`;
+    <div class="ley-asis">${Object.keys(L).map(x => `<span class="as-${x}"><b>${x}</b> ${L[x]}${x === 'E' ? ' (justificada)' : ''}</span>`).join('')}</div>
+    ${es.length ? `<div class="tbl"><table><thead><tr><th>Estudiante</th><th>Asistencia</th><th>${pc ? 'Fallas en la asignatura' : 'Fallas en el año'}</th><th></th></tr></thead><tbody>
+    ${es.map(e => { const v = mapa[key(e.id)] || 'P', gh = asisGuardada[key(e.id)]; return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td><td><div class="seg seg-asis" role="group" aria-label="Asistencia de ${esc(nom(e))}">${Object.keys(L).map(x => `<button type="button" class="as-${x}" title="${L[x]}" aria-pressed="${v === x}" onclick="setAsis('${e.id}','${x}')" ${soloVer ? 'disabled' : ''}>${x}</button>`).join('')}</div></td><td>${pc ? fallasAsig(e.id, sel.a) : fallas(e.id)}</td><td>${gh ? `<span class="ok">✓ Guardado ${gh}</span>` : ''}</td></tr>`; }).join('')}
+    </tbody></table></div>` : '<div class="empty">Este grupo no tiene estudiantes activos.</div>'}</div>`;
 }
+const asisGuardada = {};
 async function setAsis(eid, v) {
   const pc = porClase(), k = pc ? `${sel.fecha}|${eid}|${sel.a}` : `${sel.fecha}|${eid}`, t = pc ? 'asistencia_clase' : 'asistencia';
   const ok = await guard(async () => {
@@ -1078,7 +1167,7 @@ async function setAsis(eid, v) {
     return true;
   });
   const m = pc ? S.asisC : S.asis;
-  if (ok) { if (v === 'P') delete m[k]; else m[k] = v; render(); }
+  if (ok) { if (v === 'P') delete m[k]; else m[k] = v; asisGuardada[k] = horaAhora(); render(); }
 }
 
 /* =====================================================================
@@ -1088,7 +1177,7 @@ function docHead(t, sub) {
   const k = S.k;
   return `<header class="dh"><div style="display:flex;gap:12px;align-items:flex-start">${k.logo ? `<img src="${k.logo}" alt="" style="max-height:70px;max-width:90px">` : ''}<div><div class="dh-inst">${esc(k.nombre)}</div><div class="dh-meta">${esc(k.resolucion || '')}${k.dane ? `<br>Código DANE ${esc(k.dane)}` : ''}${k.nit ? `, NIT ${esc(k.nit)}` : ''}<br>${esc([k.direccion, k.ciudad].filter(Boolean).join(', '))}${k.telefono ? ` · Tel. ${esc(k.telefono)}` : ''}${k.web ? `<br>${esc(k.web)}` : ''}${k.lema ? `<br><em>${esc(k.lema)}</em>` : ''}</div></div></div><div class="dh-t"><strong>${t}</strong><br>${sub || ''}</div></header>`;
 }
-const firmas = (...f) => `<div class="firmas">${f.map(([c, n]) => `<div>${esc(n || '')}<br>${c}</div>`).join('')}</div>`;
+const firmas = (...f) => `<div class="firmas">${f.map(([c, n]) => `<div>${/^Rector/.test(c) && S.k?.firma_rector ? `<img class="firma-img" src="${S.k.firma_rector}" alt="Firma">` : ''}<span class="firma-l">${esc(n || '')}<br>${c}</span></div>`).join('')}</div>`;
 const dato = (l, v) => `<div><span>${l}</span>${esc(v ?? '') || '—'}</div>`;
 const fechaLarga = f => { const d = new Date((f || hoy()) + 'T12:00:00'); return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' }); };
 
@@ -1104,7 +1193,7 @@ async function prepDocsEst(ids, conContactos) {
 }
 function hojaMatricula(eid) {
   const e = est(eid), g = grupo(e.grupo_id), ac = acudDe(eid);
-  const ce = contEst[eid] || [];
+  const ce = (contEst[eid] || []).filter(c => c.activo !== false);
   return `<section class="doc compacta">${docHead('Hoja de matrícula', `Año lectivo ${S.k.anio}<br>Folio ${e.folio} · Matrícula ${esc(e.matricula || '')}`)}
   ${fotoDoc(eid)}<h3 style="color:#0B4F8A;margin:0 0 6px">Datos del estudiante</h3>
   <div class="dgrid">${dato('Apellidos', e.apellidos)}${dato('Nombres', e.nombres)}${dato('Documento', `${e.tipo_doc} ${e.doc}`)}
@@ -1157,8 +1246,8 @@ function certificado(eid) {
   return `<section class="doc">${docHead('Constancia de estudio con calificaciones', `Año lectivo ${S.k.anio}`)}${fotoDoc(eid)}
   <p style="margin-top:14px">El suscrito rector(a) de <strong>${esc(S.k.nombre)}</strong> hace constar que <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, ${e.estado === 'Activo' ? 'cursa' : 'cursó'} el grado <strong>${esc(g.nombre)}</strong> en el año lectivo ${S.k.anio}, con las siguientes valoraciones acumuladas a la fecha:</p>
   <table><thead><tr><th>${pre ? 'Dimensión' : 'Asignatura'}</th><th>IH</th>${pre ? '' : periodos().filter(p => p.n <= pa).map(p => `<th>P${p.n}</th>`).join('')}<th>Valoración</th><th>Desempeño</th></tr></thead><tbody>
-  ${as.map(a => { const v = defin(eid, a.id); return `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : periodos().filter(p => p.n <= pa).map(p => { const x = nota(eid, a.id, p.n); return `<td>${x == null ? '—' : x.toFixed(1)}</td>`; }).join('')}<td>${v == null || pre ? '—' : v.toFixed(1)}</td><td>${v == null ? 'Sin valorar' : desem(v)}</td></tr>`; }).join('')}</tbody></table>
-  <p class="dnote">Escala institucional: ${escala().map(s => `${s.d} de ${(+s.min).toFixed(1)} a ${(+s.max).toFixed(1)}`).join(', ')}. Decreto 1290 de 2009.</p>
+  ${as.map(a => { const v = defin(eid, a.id); return `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : periodos().filter(p => p.n <= pa).map(p => { const x = nota(eid, a.id, p.n); return `<td>${x == null ? '—' : N(x)}</td>`; }).join('')}<td>${v == null || pre ? '—' : N(v)}</td><td>${v == null ? 'Sin valorar' : desem(v)}</td></tr>`; }).join('')}</tbody></table>
+  <p class="dnote">Escala institucional: ${escala().map(s => `${s.d} de ${N(s.min)} a ${N(s.max)}`).join(', ')}. Decreto 1290 de 2009.</p>
   <p>Se expide a solicitud del interesado en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
   ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`;
 }
@@ -1167,15 +1256,15 @@ function boletinHTML(eid, per) {
   const e = est(eid), g = grupo(e.grupo_id); if (!g) return '';
   const as = asigsDe(g), pre = g.nivel === 'preescolar', ps = periodos().filter(p => p.n <= per), pr = promedio(eid, per);
   const body = pre ? `<table><thead><tr><th>Dimensión</th><th>Desempeño</th><th>Descripción</th></tr></thead><tbody>${as.map(a => { const v = nota(eid, a.id, per), d = desem(v); const lo = S.logros[`${g.id}|${a.id}|${per}`]; return `<tr><td>${esc(a.nombre)}</td><td>${v == null ? 'Sin valorar' : d}</td><td>${lo ? logroLista(lo) + (v == null ? '' : `<span class="logro">${DESC[d] || ''}</span>`) : (v == null ? '' : DESC[d] || '')}</td></tr>`; }).join('')}</tbody></table>`
-    : `<table><thead><tr><th>Asignatura</th><th>IH</th>${ps.map(p => `<th>P${p.n}</th>`).join('')}<th>Acum.</th><th>Desempeño</th></tr></thead><tbody>${as.map(a => { const d = defin(eid, a.id, per), lo = S.logros[`${g.id}|${a.id}|${per}`]; return `<tr><td>${esc(a.nombre)}${logroLista(lo)}</td><td>${a.ih}</td>${ps.map(p => { const v = nota(eid, a.id, p.n), r = S.rec[`${eid}|${a.id}|${p.n}`]; return `<td>${v == null ? '—' : v.toFixed(1)}${r?.nota != null && v === +r.nota ? '<sup>R</sup>' : ''}</td>`; }).join('')}<td><strong>${d == null ? '—' : d.toFixed(1)}</strong></td><td>${d == null ? '' : desem(d)}</td></tr>`; }).join('')}</tbody></table>`;
+    : `<table><thead><tr><th>Asignatura</th><th>IH</th>${ps.map(p => `<th>P${p.n}</th>`).join('')}<th>Acum.</th><th>Desempeño</th></tr></thead><tbody>${as.map(a => { const d = defin(eid, a.id, per), lo = S.logros[`${g.id}|${a.id}|${per}`]; return `<tr><td>${esc(a.nombre)}${logroLista(lo)}</td><td>${a.ih}</td>${ps.map(p => { const v = nota(eid, a.id, p.n), r = S.rec[`${eid}|${a.id}|${p.n}`]; return `<td>${v == null ? '—' : N(v)}${r?.nota != null && v === +r.nota ? '<sup>R</sup>' : ''}</td>`; }).join('')}<td><strong>${d == null ? '—' : N(d)}</strong></td><td>${d == null ? '' : desem(d)}</td></tr>`; }).join('')}</tbody></table>`;
   return `<section class="doc">${docHead('Informe académico', `Periodo ${per} de ${periodos().length}, año ${S.k.anio}`)}
   ${fotoDoc(eid)}<div class="dgrid"><div><span>Estudiante</span>${esc(nom(e))}</div><div><span>Documento</span>${e.tipo_doc} ${esc(e.doc)}</div><div><span>Grado y grupo</span>${esc(g.nombre)}</div>
-  <div><span>Director(a) de grupo</span>${esc(g.director_nombre || '')}</div><div><span>${porClase() ? 'Fallas (horas de clase)' : 'Fallas a la fecha'}</span>${fallas(eid)}</div>${pre ? '' : `<div><span>Promedio acumulado</span>${pr == null ? '—' : pr.toFixed(2) + ' ' + desem(pr)}</div>`}</div>
+  <div><span>Director(a) de grupo</span>${esc(g.director_nombre || '')}</div><div><span>${porClase() ? 'Fallas (horas de clase)' : 'Fallas a la fecha'}</span>${fallas(eid)}</div>${pre ? '' : `<div><span>Promedio acumulado</span>${pr == null ? '—' : N(pr) + ' ' + desem(pr)}</div>`}</div>
   ${body}
   ${!pre && Object.keys(S.rec).some(k => k.startsWith(eid + '|') && S.rec[k].nota != null) ? '<p class="dnote"><sup>R</sup> Calificación obtenida en actividad de recuperación (Decreto 1290 de 2009).</p>' : ''}
   ${e.piar ? '<p class="dnote">Estudiante valorado con ajustes razonables según su Plan Individual de Ajustes Razonables (PIAR), Decreto 1421 de 2017.</p>' : ''}
   <div class="dobs"><span>Observaciones</span><p>${esc(S.obs[eid + '|' + per] || 'Sin observaciones para este periodo.')}</p></div>
-  ${pre ? '<p class="dnote">En el nivel de preescolar la evaluación es cualitativa y no se reprueba el grado.</p>' : `<p class="dnote">Escala institucional: ${escala().map(s => `${s.d} de ${(+s.min).toFixed(1)} a ${(+s.max).toFixed(1)}`).join(', ')}. Equivalencia con la escala nacional del Decreto 1290 de 2009.</p>`}
+  ${pre ? '<p class="dnote">En el nivel de preescolar la evaluación es cualitativa y no se reprueba el grado.</p>' : `<p class="dnote">Escala institucional: ${escala().map(s => `${s.d} de ${N(s.min)} a ${N(s.max)}`).join(', ')}. Equivalencia con la escala nacional del Decreto 1290 de 2009.</p>`}
   ${firmas(['Rector(a)', S.k.rector_nombre], ['Director(a) de grupo', g.director_nombre])}</section>`;
 }
 function vBoletines() {
@@ -1185,19 +1274,20 @@ function vBoletines() {
     return head('Boletín', 'Consulta e imprime el informe de cada periodo.', `<div class="toolbar" style="margin:0"><label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label><button class="btn" type="button" onclick="imprimirBoletin('${eid}')">Imprimir</button></div>`) + boletinHTML(eid, sel.p);
   }
   const gs = gruposVis(); if (!gs.length) return head('Boletines') + sinGrupos();
-  const es = estsDe(sel.g);
-  return head('Boletines', 'Escriba la observación de cada estudiante y genera los informes del periodo.', `<button class="btn" type="button" onclick="boletinesGrupo()" ${es.length ? '' : 'disabled'}>Generar boletines del grupo</button>`) +
+  const es = estsDe(sel.g), ret = S.ret || new Set(), nRet = es.filter(e => ret.has(e.id)).length;
+  return head('Boletines', isDoc() ? 'Escriba la observación de cada estudiante para el boletín. Los boletines los generan y entregan coordinación y rectoría.' : 'Escriba la observación de cada estudiante y genere los informes del periodo.', isDoc() ? '' : `<button class="btn" type="button" onclick="boletinesGrupo()" ${es.length > nRet ? '' : 'disabled'}>Generar boletines del grupo</button>`) +
+    (nRet ? `<div class="note">${nRet} ${nRet === 1 ? 'boletín está retenido' : 'boletines están retenidos'} por pagos pendientes: no se incluyen al generar los del grupo. Se liberan solos cuando la familia se pone al día.</div>` : '') +
     `<div class="panel"><div class="toolbar">
       <label class="field"><span>Grupo</span><select onchange="cambiarGrupo(this.value)">${gs.map(x => opt(x.id, x.nombre, sel.g)).join('')}</select></label>
       <label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label></div>
-    ${es.length ? `<ul class="list">${es.map(e => `<li><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px"><strong>${esc(e.apellidos)} ${esc(e.nombres)} ${e.piar ? '<span class="tag piar">PIAR</span>' : ''}</strong><button class="btn ghost sm" type="button" onclick="verBoletin('${e.id}')">Ver boletín</button></div>
-      <label class="field"><span>Observación del periodo ${sel.p}</span><textarea id="ob-${e.id}" onchange="setObs('${e.id}',this)">${esc(S.obs[e.id + '|' + sel.p] || '')}</textarea></label>
+    ${es.length ? `<ul class="list">${es.map(e => `<li><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px"><strong>${esc(e.apellidos)} ${esc(e.nombres)} ${e.piar ? '<span class="tag piar">PIAR</span>' : ''} ${ret.has(e.id) ? '<span class="tag t3">Retenido</span>' : ''}</strong>${isDoc() || ret.has(e.id) ? '' : `<button class="btn ghost sm" type="button" onclick="verBoletin('${e.id}')">Ver boletín</button>`}</div>
+      <label class="field"><span>Observación del periodo ${sel.p} (se guarda sola al salir de la casilla) <span class="ok" id="obok-${e.id}"></span></span><textarea id="ob-${e.id}" onchange="setObs('${e.id}',this)">${esc(S.obs[e.id + '|' + sel.p] || '')}</textarea></label>
       <select class="acc" aria-label="Agregar frase frecuente" onchange="agregarFrase('${e.id}',this.value);this.value=''"><option value="">Agregar frase frecuente…</option>${BANCO_OBS.map((f, i) => `<option value="${i}">${esc(f.length > 70 ? f.slice(0, 70) + '…' : f)}</option>`).join('')}</select></li>`).join('')}</ul>` : '<div class="empty">Este grupo no tiene estudiantes activos.</div>'}</div>`;
 }
 const nomArchivo = (t, e) => `${t} ${e ? e.apellidos + ' ' + e.nombres : ''} ${S.k.anio}`.replace(/\s+/g, ' ').trim();
 async function verBoletin(eid) { await guard(() => cargarFotoEst([eid])); showDocs(boletinHTML(eid, sel.p), 'Boletín', nomArchivo(`Boletín P${sel.p}`, est(eid))); }
 async function imprimirBoletin(eid) { await guard(() => cargarFotoEst([eid])); lastDocs = boletinHTML(eid, sel.p); lastTitulo = nomArchivo(`Boletín P${sel.p}`, est(eid)); printDocs(); }
-async function boletinesGrupo() { await guard(() => cargarFotoEst(estsDe(sel.g).map(e => e.id))); showDocs(estsDe(sel.g).map(e => boletinHTML(e.id, sel.p)).join(''), 'Boletines del grupo', `Boletines P${sel.p} ${grupo(sel.g)?.nombre || ''} ${S.k.anio}`); }
+async function boletinesGrupo() { const l = estsDe(sel.g).filter(e => !(S.ret || new Set()).has(e.id)); await guard(() => cargarFotoEst(l.map(e => e.id))); showDocs(l.map(e => boletinHTML(e.id, sel.p)).join(''), 'Boletines del grupo', `Boletines P${sel.p} ${grupo(sel.g)?.nombre || ''} ${S.k.anio}`); }
 async function setObs(eid, el) {
   const t = el.value.trim(), p = sel.p;
   const ok = await guard(async () => {
@@ -1205,7 +1295,7 @@ async function setObs(eid, el) {
     else await q(db.from('observaciones').upsert({ colegio_id: ctx.colegio_id, estudiante_id: eid, anio: S.k.anio, periodo: p, texto: t }, { onConflict: 'estudiante_id,anio,periodo' }));
     return true;
   }, 'Observación guardada');
-  if (ok) { if (t) S.obs[`${eid}|${p}`] = t; else delete S.obs[`${eid}|${p}`]; }
+  if (ok) { if (t) S.obs[`${eid}|${p}`] = t; else delete S.obs[`${eid}|${p}`]; const o = $('#obok-' + eid); if (o) o.textContent = '✓ Guardada ' + horaAhora(); }
 }
 
 /* =====================================================================
@@ -1246,7 +1336,7 @@ function paramLogros() {
       <label class="field"><span>Periodo</span><select onchange="sel.lp=+this.value;render()">${perOpts(p)}</select></label></div>
     <div class="formgrid">${asigsDe(g).map(a => `<label class="field full"><span>${esc(a.nombre)}</span><textarea class="lgTxt" data-a="${a.id}" placeholder="Ejemplo: Reconoce y escribe números hasta 1.000.">${esc(S.logros[`${g.id}|${a.id}|${p}`] || '')}</textarea></label>`).join('')}</div>
     ${otros.length ? `<label class="chk" style="margin-top:10px"><input type="checkbox" id="lgOtros"> Aplicar también a ${otros.map(x => esc(x.nombre)).join(', ')}</label>` : ''}
-    <div class="toolbar" style="margin-top:12px"><button class="btn" type="button" onclick="guardarLogros()">Guardar logros del periodo ${p}</button></div></div>`;
+    <div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarLogros()">Guardar logros del periodo ${p}</button></div></div>`;
 }
 async function guardarLogros() {
   const g = grupo(sel.lg) || S.grupos[0], p = sel.lp || S.k.periodo_actual;
@@ -1271,14 +1361,32 @@ function paramInst() {
   return (r ? '' : '<div class="note">Solo el rector o la rectora pueden cambiar estos datos.</div>') +
     `<div class="panel"><h2>Datos institucionales</h2><div class="formgrid">${f('iN', 'Nombre', k.nombre)}${f('iNit', 'NIT', k.nit)}${f('iDane', 'Código DANE', k.dane)}${f('iRes', 'Licencia de funcionamiento o resolución', k.resolucion)}${f('iCiu', 'Ciudad', k.ciudad)}${f('iDir', 'Dirección', k.direccion)}${f('iTel', 'Teléfono', k.telefono)}${f('iWeb', 'Página web', k.web)}${f('iLema', 'Lema o mensaje institucional', k.lema)}${f('iRec', 'Rector(a) que firma', k.rector_nombre)}${f('iSec', 'Secretaría académica', k.secretaria_nombre)}
       <label class="field full"><span>Política de tratamiento de datos (enlace o texto breve, aparece en la hoja de matrícula)</span><textarea id="iPol" ${r ? '' : 'disabled'}>${esc(k.politica_datos || '')}</textarea></label></div>
-      ${r ? '<div class="toolbar" style="margin-top:12px"><button class="btn" type="button" onclick="guardarInst()">Guardar datos</button></div>' : ''}</div>
+      ${r ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarInst()">Guardar datos</button></div>' : ''}</div>
     <div class="panel"><h2>Logo institucional</h2>
       <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
         <div style="width:120px;height:120px;border:1px dashed var(--line);border-radius:8px;display:grid;place-items:center;background:#fff">${k.logo ? `<img src="${k.logo}" alt="Logo" style="max-width:110px;max-height:110px">` : '<span class="muted" style="font-size:.85rem">Sin logo</span>'}</div>
         ${r ? `<div><p class="muted" style="margin:0 0 8px">Imagen PNG o JPG. Aparece en boletines, constancias y hojas de matrícula.</p>
         <label class="btn ghost" style="display:inline-block">Subir logo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onchange="subirLogo(this)"></label>
         ${k.logo ? '<button class="btn ghost" type="button" onclick="quitarLogo()">Quitar</button>' : ''}</div>` : ''}
-      </div></div>${panelRedes()}`;
+      </div></div>
+    <div class="panel"><h2>Firma del rector(a)</h2><p class="muted">Foto o escaneo de la firma sobre papel blanco. Aparece en boletines, constancias y certificados.</p>
+      <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap"><div style="width:200px;height:90px;border:1px dashed var(--line);border-radius:8px;display:grid;place-items:center;background:#fff">${k.firma_rector ? `<img src="${k.firma_rector}" alt="Firma" style="max-width:190px;max-height:80px">` : '<span class="muted" style="font-size:.85rem">Sin firma</span>'}</div>
+      ${r ? `<label class="btn ghost">Subir firma<input type="file" accept="image/*" hidden onchange="subirFirma(this)"></label>${k.firma_rector ? '<button class="btn ghost" type="button" onclick="guardarColegio({firma_rector:null},\'Firma quitada\')">Quitar</button>' : ''}` : ''}</div></div>
+    ${panelAtencion(r)}${panelRedes()}`;
+}
+async function subirFirma(input) { const f = input.files[0]; if (!f) return; const img = await guard(() => leerImagen(f, 500)); if (img) await guardarColegio({ firma_rector: img }, 'Firma guardada'); }
+function panelAtencion(r) {
+  const a = atn(), dis = r ? '' : 'disabled';
+  return `<div class="panel"><h2>Horario de atención a padres</h2><p class="muted">Las familias solo podrán pedir citas en estos días y horas, desde un calendario.</p>
+    <div class="cuotas">${[1, 2, 3, 4, 5, 6].map(d => `<label class="chk"><input type="checkbox" class="atD" value="${d}" ${a.dias.includes(d) ? 'checked' : ''} ${dis}> ${DSEM[d][0].toUpperCase() + DSEM[d].slice(1)}</label>`).join('')}</div>
+    <div class="formgrid" style="margin-top:8px">${fIn('atDe', 'Desde', a.desde, `type="time" ${dis}`)}${fIn('atHa', 'Hasta', a.hasta, `type="time" ${dis}`)}</div>
+    ${r ? '<div class="toolbar" style="margin-top:10px"><button class="btn" type="button" onclick="guardarAtencion()">Guardar horario de atención</button></div>' : ''}</div>`;
+}
+async function guardarAtencion() {
+  const d = { dias: [...document.querySelectorAll('.atD:checked')].map(x => +x.value), desde: vv('atDe'), hasta: vv('atHa') };
+  if (!d.dias.length) return toast('Marque al menos un día de atención');
+  if (!d.desde || !d.hasta || d.hasta <= d.desde) return toast('La hora final debe ser posterior a la inicial');
+  await guardarColegio({ atencion: d }, 'Horario de atención guardado');
 }
 async function guardarColegio(d, okMsg) {
   const r = await guard(() => q(db.from('colegios').update(d).eq('id', S.k.id).select().single()), okMsg);
@@ -1289,6 +1397,7 @@ async function guardarInst() {
   const d = { nombre: vv('iN'), nit: vv('iNit'), dane: vv('iDane'), resolucion: vv('iRes'), ciudad: vv('iCiu'), direccion: vv('iDir'), telefono: vv('iTel'),
     web: vv('iWeb'), lema: vv('iLema'), rector_nombre: vv('iRec'), secretaria_nombre: vv('iSec'), politica_datos: vv('iPol') };
   if (!d.nombre) return toast('El nombre del colegio es obligatorio');
+  if (d.web) { const u = normUrl(d.web); if (!u) return toast('La página web no parece válida. Escríbala como colegio.edu.co'); d.web = u; }
   await guardarColegio(d, 'Datos guardados');
 }
 function subirLogo(input) {
@@ -1320,9 +1429,9 @@ function paramPeriodos() {
       <div class="toolbar"><label class="field"><span>Número de periodos</span><select id="nPer" ${dis} onchange="cambiarNumPeriodos(+this.value)">${[1, 2, 3, 4, 5, 6].map(n => opt(n, n, ps.length)).join('')}</select></label>
       <label class="field"><span>Periodo en curso</span><select id="pAct" ${dis}>${perOpts(k.periodo_actual)}</select></label></div>
       <div id="perBox">${ps.map(p => filaPer(p, dis)).join('')}</div></div>
-    <div class="panel"><h2>Escala de valoración</h2><div class="toolbar">${es.map((s, i) => `<label class="field"><span>${esc(s.d)} desde</span><input type="number" step="0.1" min="1" max="5" id="es${i}" value="${(+s.min).toFixed(1)}" ${dis}></label>`).join('')}
+    <div class="panel"><h2>Escala de valoración</h2><div class="toolbar">${es.map((s, i) => `<label class="field"><span>${esc(s.d)} desde</span><input ${NOTA_ATTR} id="es${i}" value="${N(s.min)}" ${dis}></label>`).join('')}
       <label class="field"><span>Asignaturas en bajo para no promover</span><input type="number" min="1" max="10" id="mxP" value="${k.max_perdidas}" ${dis}></label></div>
-      ${r ? '<div class="toolbar" style="margin-top:12px"><button class="btn" type="button" onclick="guardarPeriodos()">Guardar periodos y escala</button></div>' : ''}</div>
+      ${r ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarPeriodos()">Guardar periodos y escala</button></div>' : ''}</div>
     <div class="panel"><h2>Asistencia</h2><label class="chk"><input type="checkbox" id="asPC" ${k.asistencia_por_clase ? 'checked' : ''} ${dis} onchange="setPorClase(this.checked)"> Tomar asistencia por clase (cada docente en su asignatura). Si no se marca, la asistencia es diaria por grupo.</label></div>`;
 }
 function cambiarNumPeriodos(n) {
@@ -1332,15 +1441,16 @@ function cambiarNumPeriodos(n) {
   $('#pAct').innerHTML = Array.from({ length: n }, (_, i) => opt(i + 1, 'Periodo ' + (i + 1), pa)).join('');
 }
 async function guardarPeriodos() {
+  if (+$('#nPer').value !== periodos().length && !(await confirmar(`Va a cambiar el número de periodos de ${periodos().length} a ${$('#nPer').value}. Esto cambia el boletín y los promedios del año; las calificaciones ya registradas de periodos que desaparezcan dejarán de contar. ¿Continuar?`, 'Sí, cambiar periodos'))) return;
   const n = +$('#nPer').value, pw = Array.from({ length: n }, (_, i) => +$('#pw' + (i + 1)).value || 0);
   if (pw.reduce((a, b) => a + b, 0) !== 100) return toast('Los porcentajes de los periodos deben sumar 100');
   const fechas = Array.from({ length: n }, (_, i) => ({ inicio: $('#pi' + (i + 1)).value || '', fin: $('#pf' + (i + 1)).value || '', cierre: $('#pc' + (i + 1)).value || '' }));
   if (fechas.some(f => f.inicio && f.fin && f.fin < f.inicio)) return toast('La fecha de terminación no puede ser anterior a la de inicio');
-  const es = escala(), mins = es.map((s, i) => Math.round(+$('#es' + i).value * 10) / 10);
-  if (mins[0] !== 1 || mins.some((m, i) => i && m <= mins[i - 1]) || mins[mins.length - 1] > 5) return toast('La escala debe iniciar en 1.0 y cada nivel ser mayor que el anterior');
+  const es = escala(), mins = es.map((s, i) => Math.round(+$('#es' + i).value));
+  if (mins[0] !== 0 || mins.some((m, i) => i && m <= mins[i - 1]) || mins[mins.length - 1] > 100) return toast('La escala va de 0 a 100: Bajo empieza en 0 y cada nivel debe empezar más arriba que el anterior');
   await guardarColegio({
     periodos: pw.map((peso, i) => ({ n: i + 1, peso, ...fechas[i] })), periodo_actual: Math.min(+$('#pAct').value || 1, n), max_perdidas: +$('#mxP').value || 1,
-    escala: es.map((s, i) => ({ d: s.d, min: mins[i], max: i < es.length - 1 ? Math.round((mins[i + 1] - .1) * 10) / 10 : 5 })),
+    escala: es.map((s, i) => ({ d: s.d, min: mins[i], max: i < es.length - 1 ? mins[i + 1] - 1 : 100 })),
   }, 'Periodos y escala guardados');
 }
 function paramGrupos() {
@@ -1364,13 +1474,14 @@ function panelMediosPago() {
       ${fIn('mpBoU', 'Enlace de pago de Bold del colegio', k.pago_bold_url || '', `placeholder="https://" ${ro ? 'disabled' : ''}`)}
       <div class="field full" style="margin-top:6px">${chk('mpRes', '<strong>Familias con pagos pendientes:</strong> mientras tengan cuotas sin pagar, solo ven comunicados, horario, excusas y estado de cuenta (no calificaciones, boletines, observador ni PIAR).', k.restringir_morosos)}</div>
     </div>
-    ${ro ? '<p class="muted">Solo el rector o la rectora pueden cambiar los medios de pago.</p>' : '<div class="toolbar" style="margin-top:12px"><button class="btn" type="button" onclick="guardarMediosPago()">Guardar medios de pago</button></div>'}</div>`;
+    ${ro ? '<p class="muted">Solo el rector o la rectora pueden cambiar los medios de pago.</p>' : '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarMediosPago()">Guardar medios de pago</button></div>'}</div>`;
 }
 async function guardarMediosPago() {
   const d = { pago_efectivo: $('#mpEf').checked, pago_efectivo_texto: vv('mpEfTxt') || null, pago_llave: $('#mpLl').checked, pago_llave_valor: vv('mpLlV') || null, pago_llave_titular: vv('mpLlT') || null,
     pago_bold: $('#mpBo').checked, pago_bold_url: vv('mpBoU') || null, restringir_morosos: $('#mpRes').checked };
   if (d.pago_llave && !d.pago_llave_valor) return toast('Escriba la llave o el número de cuenta');
-  if (d.pago_bold && !/^https:\/\//.test(d.pago_bold_url || '')) return toast('Escriba el enlace de pago de Bold (empieza por https://)');
+  if (d.pago_bold_url) { const u = normUrl(d.pago_bold_url); if (!u) return toast('Ese enlace de Bold no parece válido. Cópielo tal como se lo da Bold, por ejemplo checkout.bold.co/payment/...'); d.pago_bold_url = u; }
+  if (d.pago_bold && !d.pago_bold_url) return toast('Pegue el enlace de pago que le da Bold');
   if (!d.pago_efectivo && !d.pago_llave && !d.pago_bold) return toast('Marque al menos un medio de pago');
   await guardarColegio(d, 'Medios de pago guardados');
 }
@@ -1379,7 +1490,7 @@ function paramCostos() {
   const gradosUsados = [...new Set(S.grupos.map(g => g.grado))].sort((a, b) => a - b);
   return `<div class="panel"><h2>Resolución de costos ${S.k.anio}</h2><p class="muted">Tarifas autorizadas por la Secretaría de Educación para el año lectivo.</p>
     <div class="formgrid">${fIn('cRes', 'Número de resolución', c.resolucion)}${fIn('cFec', 'Fecha de la resolución', c.fecha_resolucion, 'type="date"')}${fIn('cEnt', 'Entidad que la expide', c.entidad || 'Secretaría de Educación')}${fTa('cObs', 'Observaciones', c.observaciones)}</div>
-    <div class="toolbar" style="margin-top:12px"><button class="btn" type="button" onclick="guardarResolucion()">Guardar resolución</button></div></div>
+    <div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarResolucion()">Guardar resolución</button></div></div>
   ${panelMediosPago()}
   <div class="panel"><h2>Día límite de pago</h2><p class="muted">Cada cuota mensual se considera vencida después de este día de su mes.</p>
     <div class="toolbar"><label class="field"><span>Pagar hasta el día</span><select id="cDia">${Array.from({ length: 28 }, (_, i) => opt(i + 1, i + 1, S.k.dia_limite_pago || 5)).join('')}</select></label>
@@ -1450,10 +1561,10 @@ function setCierre(id, k, v) { const c = cierre.find(x => x.id === id); if (!c) 
 function sinCursoSiguiente() { return cierre.filter(c => c.resultado === 'Promovido' && (!c.destino || c.destino === est(c.id)?.grupo_id)); }
 async function confirmarCierre() {
   const n = cierre.length, hoyD = new Date();
-  if (hoyD.getFullYear() === S.k.anio && hoyD.getMonth() < 11 && !confirm(`El año lectivo ${S.k.anio} termina el 31 de diciembre y aún no estamos en diciembre. ¿Desea cerrarlo de todas formas?`)) return;
+  if (hoyD.getFullYear() === S.k.anio && hoyD.getMonth() < 11 && !await confirmar(`El año lectivo ${S.k.anio} termina el 31 de diciembre y aún no estamos en diciembre. ¿Desea cerrarlo de todas formas?`)) return;
   const sc = sinCursoSiguiente().length;
-  if (sc && !confirm(`${sc} estudiante(s) promovido(s) quedarían en el mismo curso porque no hay curso del grado siguiente. ¿Desea cerrar el año de todas formas?`)) return;
-  if (!confirm(`Se cerrará el año ${S.k.anio} para ${n} estudiantes y el colegio pasará al año ${S.k.anio + 1}. ¿Continuar?`)) return;
+  if (sc && !await confirmar(`${sc} estudiante(s) promovido(s) quedarían en el mismo curso porque no hay curso del grado siguiente. ¿Desea cerrar el año de todas formas?`)) return;
+  if (!await confirmar(`Se cerrará el año ${S.k.anio} para ${n} estudiantes y el colegio pasará al año ${S.k.anio + 1}. ¿Continuar?`)) return;
   const dec = cierre.map(c => ({ estudiante_id: c.id, resultado: c.resultado, grupo_destino: c.destino || '' }));
   const r = await guard(() => q(db.rpc('cerrar_anio', { p_colegio: ctx.colegio_id, p_decisiones: dec })));
   if (r) { sel.ptab = 'inst'; cierre = []; try { sessionStorage.setItem('genesis:ir', 'inicio'); } catch {} toast(`Año cerrado. Bienvenido al año ${r.nuevo_anio}`); await entrarContexto(ctx.id); }
@@ -1462,21 +1573,55 @@ async function confirmarCierre() {
 const GRADOS = { '-2': 'Prejardín', '-1': 'Jardín', '0': 'Transición', 1: 'Primero', 2: 'Segundo', 3: 'Tercero', 4: 'Cuarto', 5: 'Quinto', 6: 'Sexto', 7: 'Séptimo', 8: 'Octavo', 9: 'Noveno', 10: 'Décimo', 11: 'Undécimo' };
 const gradoTxt = g => GRADOS[g] ?? g;
 const nivelDe = g => g <= 0 ? 'preescolar' : g <= 5 ? 'primaria' : g <= 9 ? 'secundaria' : 'media';
+// Listas preestablecidas: dimensiones de preescolar y áreas obligatorias de la Ley 115 de 1994 (art. 23 y 31)
+const PRESET_ASIG = {
+  preescolar: ['Dimensión comunicativa', 'Dimensión cognitiva', 'Dimensión corporal', 'Dimensión socioafectiva', 'Dimensión estética', 'Dimensión ética', 'Dimensión espiritual'],
+  primaria: ['Ciencias naturales y educación ambiental', 'Ciencias sociales', 'Educación artística y cultural', 'Educación ética y en valores humanos', 'Educación física, recreación y deportes', 'Educación religiosa', 'Lengua castellana', 'Inglés', 'Matemáticas', 'Tecnología e informática'],
+};
+PRESET_ASIG.secundaria = PRESET_ASIG.primaria;
+PRESET_ASIG.media = [...PRESET_ASIG.primaria, 'Química', 'Física', 'Filosofía', 'Ciencias económicas y políticas'];
+const GRADOS_NIVEL = { preescolar: [-2, -1, 0], primaria: [1, 2, 3, 4, 5], secundaria: [6, 7, 8, 9], media: [10, 11] };
+const gradosTxt = a => a.grados?.length ? a.grados.slice().sort((x, y) => x - y).map(gradoTxt).join(', ') : 'Todos los grados del nivel';
 function planHTML(n) {
-  const as = S.asigs.filter(a => a.nivel === n).sort((a, b) => a.orden - b.orden);
-  return `<div class="tbl"><table><thead><tr><th>Nombre</th><th>IH</th><th>Orden</th><th></th></tr></thead><tbody>
-    ${as.map(a => `<tr><td><input value="${esc(a.nombre)}" onchange="editAsig('${a.id}',{nombre:this.value.trim()})"></td><td><input type="number" min="0" max="40" value="${a.ih}" onchange="editAsig('${a.id}',{ih:+this.value})"></td><td><input type="number" value="${a.orden}" onchange="editAsig('${a.id}',{orden:+this.value})"></td><td><button class="btn ghost sm" type="button" onclick="borrarAsig('${a.id}')">Eliminar</button></td></tr>`).join('')}
-    <tr><td><input id="naNom" placeholder="Nueva ${n === 'preescolar' ? 'dimensión' : 'asignatura'}"></td><td><input id="naIh" type="number" min="0" max="40" value="1"></td><td></td><td><button class="btn sm" type="button" onclick="nuevaAsig('${n}')">Agregar</button></td></tr>
-  </tbody></table></div>`;
+  const as = S.asigs.filter(a => a.nivel === n).sort((a, b) => a.orden - b.orden), tipo = n === 'preescolar' ? 'dimensión' : 'asignatura';
+  const ya = new Set(as.map(a => a.nombre.toLowerCase()));
+  return `<div class="tbl"><table><thead><tr><th>Nombre</th><th>Horas por semana</th><th>Grados</th><th>Orden</th><th></th></tr></thead><tbody>
+    ${as.map(a => `<tr><td><input value="${esc(a.nombre)}" maxlength="80" onchange="editAsig('${a.id}',{nombre:this.value.trim()})"></td><td><input type="number" min="0" max="40" value="${a.ih}" style="width:70px" onchange="editAsig('${a.id}',{ih:+this.value},this)"></td>
+      <td><button class="linkbtn" type="button" onclick="formGradosAsig('${a.id}')">${esc(gradosTxt(a))}</button></td><td><input type="number" value="${a.orden}" style="width:60px" onchange="editAsig('${a.id}',{orden:+this.value})"></td><td><button class="btn ghost sm" type="button" onclick="borrarAsig('${a.id}')">Eliminar</button></td></tr>`).join('') || `<tr><td colspan="5" class="muted">Aún no hay ${tipo === 'dimensión' ? 'dimensiones' : 'asignaturas'} en este nivel.</td></tr>`}
+  </tbody></table></div>
+  <div class="panel sub"><h3>Agregar ${tipo}</h3><div class="formgrid">
+    <label class="field"><span>Elija de la lista${n === 'preescolar' ? ' (dimensiones del preescolar)' : ' (áreas obligatorias, Ley 115)'}</span><select id="naSel" onchange="document.getElementById('naNom').value=this.value"><option value="">Otra (escríbala abajo)…</option>${PRESET_ASIG[n].filter(x => !ya.has(x.toLowerCase())).map(x => opt(x, x)).join('')}</select></label>
+    ${fIn('naNom', 'Nombre', '', 'maxlength="80"')}${fIn('naIh', 'Horas por semana (0 a 40)', 1, 'type="number" min="0" max="40"')}
+    <div class="field full"><span>Grados donde se dicta (si no marca ninguno, en todos los del nivel)</span><div class="cuotas">${GRADOS_NIVEL[n].map(g => `<label class="chk"><input type="checkbox" class="naG" value="${g}"> ${gradoTxt(g)}</label>`).join('')}</div></div></div>
+    <div class="toolbar" style="margin-top:10px"><button class="btn" type="button" id="naBtn" onclick="nuevaAsig('${n}')">Agregar ${tipo}</button></div></div>`;
 }
 function planTabs() {
   const n = sel.nivel || 'primaria';
-  return `<div class="panel"><h2>Plan de estudios</h2><p class="muted">Asignaturas o dimensiones por nivel, con su intensidad horaria semanal (IH). Puede cambiar nombres, agregar o eliminar.</p>
+  return `<div class="panel"><h2>Plan de estudios</h2><p class="muted">Asignaturas (o dimensiones en preescolar) por nivel, con sus horas semanales. Puede indicar en qué grados se dicta cada una: por ejemplo, una asignatura solo para Quinto.</p>
     <div class="tabs" role="tablist">${Object.entries(NIVELES).map(([k, l]) => `<button type="button" role="tab" aria-selected="${n === k}" onclick="sel.nivel='${k}';render()">${l}</button>`).join('')}</div>${planHTML(n)}</div>`;
+}
+// Avisos de sensatez: nombres que no corresponden al nivel
+function rarezaAsig(n, nombre) {
+  const t = nombre.toLowerCase();
+  if (n === 'preescolar' && /álgebra|algebra|cálculo|calculo|trigonom|física|fisica|química|quimica|filosof|geometría analítica|estadística/.test(t)) return `"${nombre}" no es habitual en preescolar, donde se trabaja por dimensiones del desarrollo.`;
+  if ((n === 'secundaria' || n === 'media') && /pre ?escritura|pre ?matem|aprestamiento|dimensión|dimension|pre ?lectura/.test(t)) return `"${nombre}" es propia del preescolar, no de ${NIVELES[n].toLowerCase()}.`;
+  if (n === 'primaria' && /cálculo|calculo|trigonom|física nuclear|química orgánica|filosof/.test(t)) return `"${nombre}" no es habitual en primaria.`;
+  return '';
+}
+async function formGradosAsig(id) {
+  const a = S.asigs.find(x => x.id === id);
+  openModal(`Grados de ${a.nombre}`, `<p class="muted">Marque los grados donde se dicta. Si no marca ninguno, se dicta en todos los grados del nivel.</p>
+    <div class="cuotas">${GRADOS_NIVEL[a.nivel].map(g => `<label class="chk"><input type="checkbox" class="gaG" value="${g}" ${a.grados?.includes(g) ? 'checked' : ''}> ${gradoTxt(g)}</label>`).join('')}</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarGradosAsig('${id}')">Guardar</button></div>`);
+}
+async function guardarGradosAsig(id) {
+  const grados = [...document.querySelectorAll('.gaG:checked')].map(x => +x.value);
+  const r = await guard(() => q(db.from('asignaturas').update({ grados }).eq('id', id).select().single()), 'Grados guardados');
+  if (r) { Object.assign(S.asigs.find(a => a.id === id), r); closeModal(); render(); }
 }
 function docentesSel(g) {
   const ds = (S.miembros || []).filter(m => m.rol === 'docente' && m.activo);
-  if (!ds.length) return `<label class="field"><span>Director(a) de grupo</span><input id="gDir" value="${esc(g.director_nombre || '')}"></label><p class="muted full">Cuando invite a los docentes en Usuarios y accesos podrá elegir aquí al director(a) para que vea todas las calificaciones del grupo.</p>`;
+  if (!ds.length) return `<p class="muted full">Para elegir el director(a) de grupo, primero invite a los docentes en <strong>Usuarios y accesos</strong>. Luego lo elige aquí de la lista.</p>`;
   return `<label class="field"><span>Director(a) de grupo</span><select id="gDirM"><option value="">Sin asignar</option>${ds.map(m => opt(m.id, m.nombre, g.director_miembro_id || '')).join('')}</select></label>`;
 }
 function formGrupo(id) {
@@ -1490,7 +1635,8 @@ function formGrupo(id) {
 async function guardarGrupo(id) {
   const grado = +$('#gGr').value;
   const dm = $('#gDirM')?.value || null, doc = (S.miembros || []).find(m => m.id === dm);
-  const d = { grado, nivel: nivelDe(grado), nombre: $('#gNom').value.trim() || gradoTxt(grado), director_nombre: doc ? doc.nombre : ($('#gDir')?.value.trim() || ''), director_miembro_id: doc ? doc.id : null };
+  const d = { grado, nivel: nivelDe(grado), nombre: $('#gNom').value.trim() || gradoTxt(grado), director_nombre: doc ? doc.nombre : (id ? grupo(id)?.director_nombre || '' : ''), director_miembro_id: doc ? doc.id : null };
+  if (!/[a-záéíóúñ]/i.test(d.nombre)) return toast('Escriba el nombre del curso, por ejemplo Séptimo A');
   const r = await guard(() => id ? q(db.from('grupos').update(d).eq('id', id).select().single()) : q(db.from('grupos').insert({ ...d, colegio_id: ctx.colegio_id }).select().single()), 'Grupo guardado');
   if (!r) return;
   if (id) Object.assign(grupo(id), r); else S.grupos.push(r);
@@ -1499,23 +1645,29 @@ async function guardarGrupo(id) {
 }
 async function borrarGrupo(id) {
   if (S.ests.some(e => e.grupo_id === id)) return toast('El grupo tiene estudiantes. Muévelos a otro grupo antes de eliminarlo');
-  if (!confirm('¿Eliminar este grupo?')) return;
+  if (!await confirmar('¿Eliminar este grupo?')) return;
   const ok = await guard(async () => { await q(db.from('grupos').delete().eq('id', id)); return true; }, 'Grupo eliminado');
   if (ok) { S.grupos = S.grupos.filter(g => g.id !== id); render(); }
 }
-async function editAsig(id, d) {
+async function editAsig(id, d, el) {
+  if ('ih' in d && !(d.ih >= 0 && d.ih <= 40)) { toast('Las horas por semana van de 0 a 40'); if (el) el.value = S.asigs.find(a => a.id === id)?.ih ?? 1; return; }
+  if ('nombre' in d && d.nombre.length < 3) return toast('Escriba el nombre completo');
   const r = await guard(() => q(db.from('asignaturas').update(d).eq('id', id).select().single()), 'Guardado');
   if (r) Object.assign(S.asigs.find(a => a.id === id), r);
 }
 async function nuevaAsig(n) {
-  const nombre = $('#naNom').value.trim(); if (!nombre) return toast('Escriba el nombre');
+  const nombre = $('#naNom').value.trim(); if (nombre.length < 3) return toast('Elija de la lista o escriba el nombre');
+  const ih = +$('#naIh').value; if (!(ih >= 0 && ih <= 40)) return toast('Las horas por semana van de 0 a 40');
+  if (S.asigs.some(a => a.nivel === n && a.nombre.toLowerCase() === nombre.toLowerCase())) return toast('Ya existe con ese nombre en este nivel');
+  const raro = rarezaAsig(n, nombre); if (raro && !(await confirmar(raro + ' ¿Desea agregarla de todas formas?', 'Sí, agregar'))) return;
+  const grados = [...document.querySelectorAll('.naG:checked')].map(x => +x.value);
   const codigo = nombre.normalize('NFD').replace(/[^a-zA-Z]/g, '').slice(0, 6).toLowerCase() + Math.random().toString(36).slice(2, 5);
   const orden = Math.max(0, ...S.asigs.filter(a => a.nivel === n).map(a => a.orden)) + 1;
-  const r = await guard(() => q(db.from('asignaturas').insert({ colegio_id: ctx.colegio_id, nivel: n, codigo, nombre, ih: +$('#naIh').value || 1, orden }).select().single()), 'Agregada');
+  const r = await guard(() => q(db.from('asignaturas').insert({ colegio_id: ctx.colegio_id, nivel: n, codigo, nombre, ih, orden, grados }).select().single()), 'Agregada');
   if (r) { S.asigs.push(r); render(); }
 }
 async function borrarAsig(id) {
-  if (!confirm('Se eliminarán también las calificaciones registradas en esta asignatura. ¿Continuar?')) return;
+  if (!await confirmar('Se eliminarán también las calificaciones registradas en esta asignatura. ¿Continuar?')) return;
   const ok = await guard(async () => { await q(db.from('asignaturas').delete().eq('id', id)); return true; }, 'Eliminada');
   if (ok) { S.asigs = S.asigs.filter(a => a.id !== id); render(); }
 }
@@ -1585,7 +1737,8 @@ async function abrirCuenta(eid, anio) {
   if (ok) modalCuenta();
 }
 function tablaCuenta(conCheck) {
-  const f = cuenta.filas;
+  // La familia ve lo pagado y lo pendiente a hoy; no se le muestran las cuotas futuras (no presionar)
+  const f = isFam() ? cuenta.filas.filter(x => x.vencido || +x.pagado > 0) : cuenta.filas;
   return f.length ? `<div class="tbl"><table><thead><tr>${conCheck ? '<th></th>' : ''}<th>Concepto</th><th>Mes</th><th>Valor</th><th>Pagado</th><th>Saldo</th></tr></thead><tbody>
     ${f.map((x, i) => `<tr>${conCheck ? `<td>${+x.saldo > 0 ? `<input type="checkbox" class="cuotaChk" value="${i}" aria-label="Pagar ${esc(x.concepto)} ${MESES[x.mes]}">` : ''}</td>` : ''}
       <td>${esc(x.concepto)}</td><td>${MESES[x.mes]}</td><td>${cop(x.valor)}</td><td>${cop(x.pagado)}</td>
@@ -1647,7 +1800,7 @@ async function registrarPago() {
   if (r) { toast(`Pago de ${cop(valor)} registrado. Recibo No. ${r[0].recibo}`); await cargarCuenta(cuenta.eid, cuenta.anio); await prepPagos(); render(); modalCuenta(); reciboPago(r[0].recibo); }
 }
 async function anularPago(n) {
-  const motivo = prompt(`Motivo de la anulación del recibo No. ${n} (queda registrado):`);
+  const motivo = await pedirTexto(`Motivo de la anulación del recibo No. ${n} (queda registrado):`);
   if (!motivo) return;
   const ok = await guard(() => q(db.from('pagos').update({ anulado: true, anulado_motivo: motivo }).eq('colegio_id', S.k.id).eq('recibo', n).eq('anulado', false)), `Recibo No. ${n} anulado`);
   if (ok !== undefined) { await cargarCuenta(cuenta.eid, cuenta.anio); await prepPagos(); render(); modalCuenta(); }
@@ -1683,19 +1836,20 @@ function vCuenta() {
   const previo = saldoPrevio();
   return head(`Estado de cuenta de ${esc(e.nombres)}`, `Año ${S.k.anio}. Si ya pagó, envíe el comprobante en esta misma página.`) +
     (previo > 0 ? `<div class="note bloqueo">Tiene saldos pendientes de años anteriores por <strong>${cop(previo)}</strong>: ${aniosConDeuda().map(a => `${a}: ${cop(cuenta.prevFilas.filter(x => x.anioCobro === a).reduce((s, x) => s + +x.saldo, 0))}`).join(', ')}. Comuníquese con la tesorería del colegio.</div>` : '') +
-    `<div class="stats"><div class="stat"><div class="n" style="color:${venc ? 'var(--red)' : 'inherit'}">${cop(venc)}</div><div class="l">Pendiente por pagar a hoy</div></div>
-      <div class="stat"><div class="n">${cop(total)}</div><div class="l">Saldo pendiente del año</div></div></div>
-    ${(S.cuentaHijos || []).length > 1 ? `<div class="panel"><h2>Todos sus hijos</h2><div class="tbl"><table><thead><tr><th>Estudiante</th><th>Pendiente por pagar a hoy</th><th>Saldo del año</th><th></th></tr></thead><tbody>
-      ${S.cuentaHijos.map(x => `<tr><td><strong>${esc(x.m.estudiantes?.nombres || '')} ${esc(x.m.estudiantes?.apellidos || '')}</strong></td><td>${x.venc > 0 ? `<strong style="color:var(--red)">${cop(x.venc)}</strong>` : cop(0)}</td><td>${cop(x.total)}</td>
+    `<div class="stats"><div class="stat"><div class="n" style="color:${venc ? 'var(--red)' : 'var(--teal-d)'}">${cop(venc)}</div><div class="l">${venc ? 'Pendiente por pagar a hoy' : 'Está al día'}</div></div>
+      <div class="stat"><div class="n">${cop(cuenta.filas.reduce((a, x) => a + +x.pagado, 0))}</div><div class="l">Pagado en el año</div></div>
+      ${(() => { const px = cuenta.filas.find(x => !x.vencido && +x.saldo > 0); return px ? `<div class="stat"><div class="n">${cop(px.saldo)}</div><div class="l">Próxima cuota: ${esc(px.concepto)}${px.mes ? ' de ' + MESES[px.mes].toLowerCase() : ''}</div></div>` : ''; })()}</div>
+    ${(S.cuentaHijos || []).length > 1 ? `<div class="panel"><h2>Todos sus hijos</h2><div class="tbl"><table><thead><tr><th>Estudiante</th><th>Pendiente por pagar a hoy</th><th></th></tr></thead><tbody>
+      ${S.cuentaHijos.map(x => `<tr><td><strong>${esc(x.m.estudiantes?.nombres || '')} ${esc(x.m.estudiantes?.apellidos || '')}</strong></td><td>${x.venc > 0 ? `<strong style="color:var(--red)">${cop(x.venc)}</strong>` : '<span class="ok">Al día</span>'}</td>
         <td>${x.m.id === ctx.id ? '<span class="tag">Viendo</span>' : `<button class="btn ghost sm" type="button" onclick="entrarContexto('${x.m.id}')">Ver detalle</button>`}</td></tr>`).join('')}
-      <tr><td><strong>Total</strong></td><td><strong>${cop(S.cuentaHijos.reduce((a, x) => a + x.venc, 0))}</strong></td><td><strong>${cop(S.cuentaHijos.reduce((a, x) => a + x.total, 0))}</strong></td><td></td></tr></tbody></table></div></div>` : ''}
+      <tr><td><strong>Total</strong></td><td><strong>${cop(S.cuentaHijos.reduce((a, x) => a + x.venc, 0))}</strong></td><td></td></tr></tbody></table></div></div>` : ''}
     <div class="panel"><h2>Cobros</h2>${tablaCuenta(false)}</div>${panelPagarFam(venc)}<div class="panel"><h2>Pagos realizados</h2>${tablaPagos(false)}</div>`;
 }
 
 /* =====================================================================
    Observador del estudiante (convivencia, académico, compromisos)
    ===================================================================== */
-const TIPOS_OBS = ['Positiva', 'Convivencia', 'Académica', 'Compromiso', 'Citación a acudiente'];
+const TIPOS_OBS = ['Felicitación', 'Positiva', 'Convivencia', 'Académica', 'Compromiso', 'Citación a acudiente'];
 let obsv = [];
 async function prepObservador() {
   if (isFam()) { obsv = await all(() => db.from('observador').select('*').eq('estudiante_id', propio()).eq('anio', S.k.anio).order('fecha', { ascending: false })); return; }
@@ -1705,7 +1859,7 @@ async function prepObservador() {
   for (const part of chunks(ids, 60)) obsv.push(...await all(() => db.from('observador').select('*').eq('anio', S.k.anio).in('estudiante_id', part).order('fecha', { ascending: false })));
 }
 const obsDe = eid => obsv.filter(o => o.estudiante_id === eid);
-const tagObs = t => `<span class="tag ${t === 'Positiva' ? '' : t === 'Convivencia' || t === 'Citación a acudiente' ? 't3' : 't2'}">${esc(t)}</span>`;
+const tagObs = t => `<span class="tag ${t === 'Felicitación' ? 'felic' : t === 'Positiva' ? 'piar' : t === 'Convivencia' || t === 'Citación a acudiente' ? 't3' : 't2'}">${t === 'Felicitación' ? '⭐ ' : ''}${esc(t)}</span>`;
 function filaObs(o, editable) {
   const puede = editable && (isDir() || o.creado_por === me?.id);
   return `<li><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><span><strong>${fmtF(o.fecha)}</strong> ${tagObs(o.tipo)} <span class="muted">por ${esc(o.autor_nombre || '')}</span></span>
@@ -1724,10 +1878,10 @@ function vObservador() {
   if (sel.oe && est(sel.oe)) {
     const e = est(sel.oe), l = obsDe(e.id);
     return head(`Observador de ${esc(nom(e))}`, `${esc(grupo(e.grupo_id)?.nombre || '')}. Año ${S.k.anio}.`,
-      `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="sel.oe='';render()">Volver</button><button class="btn ghost" type="button" onclick="verObservador('${e.id}')">Ver e imprimir</button></div>`) +
+      `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="sel.oe='';render()">Volver</button>${isDoc() ? '' : `<button class="btn ghost" type="button" onclick="verObservador('${e.id}')">Ver e imprimir</button>`}</div>`) +
       `<div class="panel"><h2>Nueva anotación</h2><div class="formgrid">
         ${fIn('oFec', 'Fecha', hoy(), 'type="date"')}
-        <label class="field"><span>Tipo</span><select id="oTipo">${TIPOS_OBS.map(t => opt(t, t, 'Convivencia')).join('')}</select></label>
+        <label class="field"><span>Tipo</span><select id="oTipo">${TIPOS_OBS.map(t => opt(t, t === 'Felicitación' ? '⭐ Felicitación (destaque algo positivo)' : t, 'Felicitación')).join('')}</select></label>
         ${fTa('oDesc', 'Descripción de la situación', '', 'Qué ocurrió, cuándo y dónde. Escriba hechos, sin juicios.')}
         ${fTa('oComp', 'Compromiso o acción acordada (opcional)', '')}</div>
         <div class="toolbar" style="margin-top:10px"><button class="btn" type="button" onclick="guardarObs('${e.id}')">Guardar anotación</button></div></div>
@@ -1750,7 +1904,7 @@ async function setSegObs(id, el) {
   if (r) Object.assign(obsv.find(o => o.id === id), r);
 }
 async function borrarObs(id) {
-  if (!confirm('¿Eliminar esta anotación del observador?')) return;
+  if (!await confirmar('¿Eliminar esta anotación del observador?')) return;
   const ok = await guard(async () => { await q(db.from('observador').delete().eq('id', id)); return true; }, 'Anotación eliminada');
   if (ok) { obsv = obsv.filter(o => o.id !== id); render(); }
 }
@@ -1785,7 +1939,7 @@ function vPiar() {
   if (isAcud()) {
     const e = est(propio());
     return head(`PIAR de ${esc(e?.nombres || '')}`, 'Plan Individual de Ajustes Razonables acordado con el colegio.') +
-      (piars[e?.id] ? `<div class="toolbar"><button class="btn" type="button" onclick="showDocs(piarHTML('${e.id}'),'PIAR')">Ver e imprimir</button></div>${piarHTML(e.id)}` : '<div class="panel empty">No hay un PIAR registrado para este año.</div>');
+      (piars[e?.id] ? `${isDoc() ? '' : `<div class="toolbar"><button class="btn" type="button" onclick="showDocs(piarHTML('${e.id}'),'PIAR')">Ver e imprimir</button></div>`}${piarHTML(e.id)}` : '<div class="panel empty">No hay un PIAR registrado para este año.</div>');
   }
   if (sel.piarE && est(sel.piarE)) return piarEditor(sel.piarE);
   const l = S.ests.filter(e => e.piar && e.estado === 'Activo' && (isDir() || S.misGrupos.includes(e.grupo_id)));
@@ -1934,7 +2088,7 @@ async function revisarCompPlat(id) {
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="decidirCompPlat('${id}', false)">Rechazar</button><button class="btn" type="button" onclick="decidirCompPlat('${id}', true)">Confirmar pago</button></div>`);
 }
 async function decidirCompPlat(id, aprobar) {
-  const resp = aprobar ? null : prompt('Motivo del rechazo (el colegio lo verá):');
+  const resp = aprobar ? null : await pedirTexto('Motivo del rechazo (el colegio lo verá):');
   if (!aprobar && !resp) return;
   const r = await guard(() => q(db.rpc('plataforma_revisar_comprobante', { p_id: id, p_aprobar: aprobar, p_respuesta: resp })), aprobar ? 'Pago confirmado: el colegio quedó al día' : 'Comprobante rechazado');
   if (r) { closeModal(); await guard(prepPlataforma); render(); }
@@ -2019,7 +2173,7 @@ async function guardarPagoSusc(id) {
   if (ok !== undefined) { await guard(prepPlataforma); closeModal(); render(); }
 }
 async function toggleColegio(id, activo) {
-  if (!activo && !confirm('Mientras esté suspendido, nadie del colegio podrá ingresar. Los datos se conservan. ¿Suspender?')) return;
+  if (!activo && !await confirmar('Mientras esté suspendido, nadie del colegio podrá ingresar. Los datos se conservan. ¿Suspender?')) return;
   const ok = await guard(async () => { await q(db.rpc('plataforma_activar_colegio', { p_colegio: id, p_activo: activo })); return true; }, activo ? 'Colegio reactivado' : 'Colegio suspendido');
   if (ok) { await guard(prepPlataforma); render(); }
 }
@@ -2075,7 +2229,7 @@ function exportarPlanilla() {
   const g = grupo(sel.ag), p = sel.app || S.k.periodo_actual, as = asigsDe(g);
   const val = (e, a) => p === 'acum' ? defin(e, a) : nota(e, a, p);
   descargarCSV(`Planilla ${g.nombre} ${p === 'acum' ? 'acumulado' : 'periodo ' + p} ${S.k.anio}`, [['Estudiante', ...as.map(a => a.nombre), 'Promedio'],
-    ...estsDe(g.id).map(e => { const vs = as.map(a => val(e.id, a.id)), ok = vs.filter(x => x != null); return [`${e.apellidos} ${e.nombres}`, ...vs.map(v => v == null ? '' : v.toFixed(1).replace('.', ',')), ok.length ? (ok.reduce((a, b) => a + b, 0) / ok.length).toFixed(2).replace('.', ',') : '']; })]);
+    ...estsDe(g.id).map(e => { const vs = as.map(a => val(e.id, a.id)), ok = vs.filter(x => x != null); return [`${e.apellidos} ${e.nombres}`, ...vs.map(v => N(v)), ok.length ? N(ok.reduce((a, b) => a + b, 0) / ok.length) : '']; })]);
 }
 // Reduce una foto a JPEG liviano para guardarla en la base de datos
 function leerImagen(file, max = 1100) {
@@ -2120,8 +2274,8 @@ function detalleAsig(aid) {
     const v = nota(e.id, aid, p.n), acts = actsDe(g.id, aid, p.n), r = S.rec[`${e.id}|${aid}|${p.n}`], lo = S.logros[`${g.id}|${aid}|${p.n}`];
     return `<div class="item" style="margin-bottom:10px"><h3>Periodo ${p.n}: ${pre ? (v == null ? 'Sin valorar' : desem(v)) : chip(v)}</h3>
       ${lo ? `<div class="meta">Logros</div>${logroLista(lo)}` : ''}
-      ${acts.length ? `<div class="tbl"><table><thead><tr><th>Actividad</th><th>%</th><th>Calificación</th></tr></thead><tbody>${acts.map(x => { const n = S.nact[`${x.id}|${e.id}`]; return `<tr><td>${esc(x.nombre)}${x.fecha ? ` <span class="muted">${fmtF(x.fecha)}</span>` : ''}</td><td>${+x.peso}</td><td>${n == null ? '<span class="muted">Pendiente</span>' : n.toFixed(1)}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
-      ${r ? `<p><strong>Plan de recuperación:</strong> ${esc(r.plan)}${r.fecha ? ` (fecha: ${fmtF(r.fecha)})` : ''}${r.nota != null ? `. Calificación obtenida: ${(+r.nota).toFixed(1)}` : ''}</p>` : ''}
+      ${acts.length ? `<div class="tbl"><table><thead><tr><th>Actividad</th><th>Calificación</th></tr></thead><tbody>${acts.map(x => { const n = S.nact[`${x.id}|${e.id}`]; return `<tr><td>${esc(x.nombre)}${x.fecha ? ` <span class="muted">${fmtF(x.fecha)}</span>` : ''}</td><td>${n == null ? '<span class="muted">Pendiente</span>' : N(n)}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
+      ${r ? `<p><strong>Plan de recuperación:</strong> ${esc(r.plan)}${r.fecha ? ` (fecha: ${fmtF(r.fecha)})` : ''}${r.nota != null ? `. Calificación obtenida: ${N(r.nota)}` : ''}</p>` : ''}
       ${porClase() ? `<p class="muted">Fallas en la asignatura: ${fallasAsig(e.id, aid)}</p>` : ''}</div>`;
   }).join('');
   openModal(a.nombre, html || '<p class="muted">Aún no hay información.</p>');
@@ -2238,7 +2392,7 @@ function verLecturas(id) {
   openModal(`Lecturas: ${c.titulo}`, `<h3>Leído (${l.length})</h3>${l.length ? `<ul class="list">${l.map(x => `<li>${esc(x.nombre || 'Usuario')} <span class="muted">${fechaHora(x.leido_en)}</span></li>`).join('')}</ul>` : '<p class="muted">Nadie lo ha leído todavía.</p>'}${pend}`);
 }
 async function borrarComunicado(id) {
-  if (!confirm('¿Eliminar este comunicado? Las familias ya no lo verán.')) return;
+  if (!await confirmar('¿Eliminar este comunicado? Las familias ya no lo verán.')) return;
   const ok = await guard(async () => { await q(db.from('comunicados').delete().eq('id', id)); return true; }, 'Comunicado eliminado');
   if (ok) { S.coms = S.coms.filter(c => c.id !== id); render(); }
 }
@@ -2287,25 +2441,25 @@ function vGaleria() {
     `<div class="panel">${gs.length > 1 ? `<div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.gal=this.value;go('galeria')">${gs.map(x => opt(x.id, x.nombre, sel.gal)).join('')}</select></label></div>` : ''}
       <div class="tabs" role="tablist">${[1, 2, 3, 4, 5, 6, 7].map(n => { const f = sumarDias(lun, n - 1), c = fotos.filter(x => x.fecha === f).length; if (f > h && !c) return ''; return `<button type="button" role="tab" aria-selected="${f === sel.gdia}" onclick="sel.gdia='${f}';render()">${DIAS_SEM[n]}${c ? ` <span class="badge">${c}</span>` : ''}</button>`; }).join('')}</div>
       <p class="muted">${fechaLarga(sel.gdia)} · ${esc(g?.nombre || '')}. Las fotos se borran automáticamente al terminar la semana (domingo a medianoche).</p>
-      ${puede && sel.gdia === h ? `<div class="toolbar"><label class="btn" id="galBtn">Subir fotos de hoy<input type="file" accept="image/*" multiple hidden onchange="subirFotosClase(this)"></label><span class="muted">Hasta 8 fotos por curso cada día.</span></div>` : ''}
+      ${puede && sel.gdia <= h ? `<div class="toolbar"><label class="btn" id="galBtn">Subir fotos del ${sel.gdia === h ? 'día de hoy' : DIAS_SEM[isoDow(sel.gdia)].toLowerCase()}<input type="file" accept="image/*" multiple hidden onchange="subirFotosClase(this)"></label><span class="muted">Hasta 8 fotos por curso cada día. Sirven para que las familias vean las actividades y para que quien faltó vea el tablero y los cuadernos.</span></div>` : ''}
       ${delDia.length ? `<div class="galeria">${delDia.map(f => `<figure class="foto-box"><img class="foto-cl" data-id="${f.id}" alt="${esc(f.pie || 'Foto de clase')}" onclick="verFotoEl(this)">
         <figcaption>${f.pie ? esc(f.pie) + '<br>' : ''}<span class="muted">${esc(f.autor_nombre || '')}</span>${f.creado_por === me.id || isDir() ? ` <button class="linkbtn" type="button" onclick="borrarFotoClase('${f.id}')">Borrar</button>` : ''}</figcaption></figure>`).join('')}</div>`
         : `<p class="empty">${sel.gdia === h ? 'Aún no hay fotos de hoy.' : 'No hubo fotos este día.'}</p>`}</div>`;
 }
 async function subirFotosClase(input) {
   const files = [...input.files]; if (!files.length) return;
-  const pie = files.length === 1 ? (prompt('Escriba una frase para la foto (opcional):') || '').slice(0, 200) : '';
+  const pie = files.length === 1 ? (await pedirTexto('Escriba una frase para la foto (opcional):') || '').slice(0, 200) : '';
   let n = 0;
   await busy('#galBtn', async () => {
     for (const f of files) {
-      const r = await guard(async () => { const imagen = await leerImagen(f, 900); return q(db.from('fotos_clase').insert({ grupo_id: sel.gal, imagen, pie: pie || null }).select('id').single()); });
+      const r = await guard(async () => { const imagen = await leerImagen(f, 900); return q(db.from('fotos_clase').insert({ grupo_id: sel.gal, imagen, pie: pie || null, fecha: sel.gdia }).select('id').single()); });
       if (!r) break; n++;
     }
   });
   if (n) { toast(n === 1 ? 'Foto publicada' : `${n} fotos publicadas`); await go('galeria'); }
 }
 async function borrarFotoClase(id) {
-  if (!confirm('¿Borrar esta foto?')) return;
+  if (!await confirmar('¿Borrar esta foto?')) return;
   const ok = await guard(async () => { await q(db.from('fotos_clase').delete().eq('id', id)); return true; }, 'Foto borrada');
   if (ok) { fotos = fotos.filter(f => f.id !== id); render(); }
 }
@@ -2334,10 +2488,13 @@ function carnetHTML(eid) {
     <div class="carnet-pie">${esc([k.ciudad, k.telefono ? 'Tel. ' + k.telefono : ''].filter(Boolean).join(' · '))}</div></div>`;
 }
 const TIPO_CONT = { emergencia: 'Contactos de emergencia', recoger: 'Personas autorizadas para recoger' };
+// Las personas retiradas no se borran: quedan en el historial con fecha y quién las retiró (respaldo del colegio)
 function listaContactos(l, tipo, borrar) {
-  const xs = l.filter(c => c.tipo === tipo);
-  return xs.length ? `<ul class="list">${xs.map(c => `<li><strong>${esc(c.nombre)}</strong>${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br>${c.telefono ? `<a href="tel:${esc(c.telefono)}">${esc(c.telefono)}</a>` : ''}${c.doc ? ` · Doc. ${esc(c.doc)}` : ''}${borrar ? ` <button class="linkbtn" type="button" onclick="borrarContacto('${c.id}')">Quitar</button>` : ''}</li>`).join('')}</ul>`
-    : `<p class="muted">${tipo === 'emergencia' ? 'No hay contactos de emergencia registrados.' : 'No hay personas autorizadas registradas.'}</p>`;
+  const xs = l.filter(c => c.tipo === tipo && c.activo !== false), ret = l.filter(c => c.tipo === tipo && c.activo === false);
+  const desde = c => `<span class="muted" style="font-size:.85rem">Registrado el ${fmtF(c.creado_en)}${c.creado_nombre ? ' por ' + esc(c.creado_nombre) : ''}</span>`;
+  return (xs.length ? `<ul class="list">${xs.map(c => `<li><strong>${esc(c.nombre)}</strong>${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br>${c.telefono ? `<a href="tel:${esc(c.telefono)}">${esc(c.telefono)}</a>` : ''}${c.doc ? ` · Doc. ${esc(c.doc)}` : ''}${borrar ? ` <button class="linkbtn" type="button" onclick="borrarContacto('${c.id}')">Retirar</button>` : ''}<br>${desde(c)}</li>`).join('')}</ul>`
+    : `<p class="muted">${tipo === 'emergencia' ? 'No hay contactos de emergencia registrados.' : 'No hay personas autorizadas registradas.'}</p>`) +
+    (ret.length ? `<details class="hist"><summary>Historial: ${ret.length} ${ret.length === 1 ? 'persona retirada' : 'personas retiradas'}</summary><ul class="list">${ret.map(c => `<li class="dim"><strong>${esc(c.nombre)}</strong>${c.parentesco ? ` (${esc(c.parentesco)})` : ''}${c.doc ? ` · Doc. ${esc(c.doc)}` : ''}<br><span class="muted" style="font-size:.85rem">Autorizado(a) del ${fmtF(c.creado_en)} al ${fmtF(c.retirado_en)}${c.retirado_nombre ? '; retirado(a) por ' + esc(c.retirado_nombre) : ''}</span></li>`).join('')}</ul></details>` : '');
 }
 function vFamilia() {
   const e = est(propio()); if (!e) return head('Carnet y contactos') + '<div class="panel empty">No encontramos la información del estudiante.</div>';
@@ -2375,9 +2532,9 @@ async function guardarContacto(tipo) {
   if (r) { contactos.push(r); closeModal(); render(); }
 }
 async function borrarContacto(id) {
-  if (!confirm('¿Quitar a esta persona de la lista?')) return;
-  const ok = await guard(async () => { await q(db.from('contactos_est').delete().eq('id', id)); return true; }, 'Quitado de la lista');
-  if (ok) { contactos = contactos.filter(c => c.id !== id); render(); }
+  if (!await confirmar('¿Retirar a esta persona? Desde ahora no aparecerá como autorizada, pero queda en el historial con la fecha de hoy.', 'Sí, retirar')) return;
+  const ok = await guard(async () => { await q(db.rpc('retirar_contacto', { p_id: id })); return true; }, 'Persona retirada. Queda en el historial');
+  if (ok) { const c = contactos.find(x => x.id === id); if (c) Object.assign(c, { activo: false, retirado_en: new Date().toISOString(), retirado_nombre: ctx.nombre }); render(); }
 }
 
 /* ---------- Contactos y recogida (personal del colegio) ---------- */
@@ -2399,10 +2556,10 @@ function vContactos() {
     `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.cg=this.value;go('contactos')">${gs.map(g => opt(g.id, g.nombre, sel.cg)).join('')}</select></label>
       <label class="field"><span>Buscar</span><input type="search" placeholder="Nombre del estudiante" oninput="filtrarFilas(this.value)"></label></div>
       <div class="tbl"><table><thead><tr><th>Estudiante</th><th>Emergencia</th><th>Autorizados para recoger</th><th></th></tr></thead><tbody>
-      ${es.map(e => { const l = contactosG.filter(c => c.estudiante_id === e.id), em = l.filter(c => c.tipo === 'emergencia'), rc = l.filter(c => c.tipo === 'recoger');
+      ${es.map(e => { const l = contactosG.filter(c => c.estudiante_id === e.id && c.activo !== false), em = l.filter(c => c.tipo === 'emergencia'), rc = l.filter(c => c.tipo === 'recoger'), nr = contactosG.filter(c => c.estudiante_id === e.id && c.activo === false && c.tipo === 'recoger');
         return `<tr class="fila-busca" data-n="${esc(nom(e).toLowerCase())}"><td><strong>${esc(e.apellidos)}</strong> ${esc(e.nombres)}</td>
           <td>${em.length ? em.map(c => `${esc(c.nombre)}${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br>${c.telefono ? `<a href="tel:${esc(c.telefono)}">${esc(c.telefono)}</a>` : ''}`).join('<hr>') : '<span class="muted">Sin registrar</span>'}</td>
-          <td>${rc.length ? rc.map(c => `${esc(c.nombre)}${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br><span class="muted">Doc. ${esc(c.doc || '—')}</span>`).join('<hr>') : '<span class="muted">Sin registrar</span>'}</td>
+          <td>${rc.length ? rc.map(c => `${esc(c.nombre)}${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br><span class="muted">Doc. ${esc(c.doc || '—')}</span>`).join('<hr>') : '<span class="muted">Sin registrar</span>'}${nr.length ? `<details class="hist"><summary>${nr.length} retirado(s)</summary>${nr.map(c => `<div class="dim">${esc(c.nombre)} · ${fmtF(c.creado_en)} al ${fmtF(c.retirado_en)}</div>`).join('')}</details>` : ''}</td>
           <td><button class="btn ghost sm" type="button" onclick="verCarnet('${e.id}')">Carnet</button></td></tr>`; }).join('')}</tbody></table></div></div>`;
 }
 function filtrarFilas(t) { const x = t.toLowerCase().trim(); document.querySelectorAll('.fila-busca').forEach(r => r.hidden = !!x && !r.dataset.n.includes(x)); }
@@ -2410,7 +2567,7 @@ async function verCarnet(eid) {
   await guard(() => cargarFotoEst([eid]));
   const puede = isDir() || ctx.rol === 'secretaria';
   openModal('Carnet estudiantil', `<div style="display:flex;justify-content:center">${carnetHTML(eid)}</div>
-    <div class="modal-foot">${puede ? `<label class="btn ghost" id="fotoBtn">${fotoEst[eid] ? 'Cambiar foto' : 'Subir foto'}<input type="file" accept="image/*" hidden onchange="subirFotoEstModal('${eid}',this)"></label>` : ''}<button class="btn" type="button" onclick="imprimirCarnet('${eid}')">Descargar carnet</button></div>`);
+    <div class="modal-foot">${puede ? `<label class="btn ghost" id="fotoBtn">${fotoEst[eid] ? 'Cambiar foto' : 'Subir foto'}<input type="file" accept="image/*" hidden onchange="subirFotoEstModal('${eid}',this)"></label>` : ''}${isDoc() ? '' : `<button class="btn" type="button" onclick="imprimirCarnet('${eid}')">Descargar carnet</button>`}</div>`);
 }
 async function subirFotoEstModal(eid, input) {
   const f = input.files[0]; if (!f) return;
@@ -2422,7 +2579,7 @@ async function subirFotoEstModal(eid, input) {
 async function prepCronograma() { await cargarComs(); }
 function eventosCrono() {
   const items = [], vis = isFam() ? comsMios() : (S.coms || []).filter(c => isDir() || isTes() || c.destino === 'todos' || gruposVis().some(g => g.id === c.grupo_id || g.id === est(c.estudiante_id)?.grupo_id));
-  vis.forEach(c => { if (c.fecha_evento) items.push({ f: c.fecha_evento.slice(0, 10), hora: new Date(c.fecha_evento).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }), t: c.titulo, tipo: c.tipo, d: c.destino === 'todos' ? '' : destinoTxt(c) }); });
+  vis.forEach(c => { if (c.fecha_evento) items.push({ f: new Date(c.fecha_evento).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }), hora: new Date(c.fecha_evento).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }), t: c.titulo, tipo: c.tipo, d: c.destino === 'todos' ? '' : destinoTxt(c) }); });
   periodos().forEach(p => {
     if (p.inicio) items.push({ f: p.inicio, t: `Inicia el periodo ${p.n}`, tipo: 'Académico' });
     if (p.fin) items.push({ f: p.fin, t: `Termina el periodo ${p.n}`, tipo: 'Académico' });
@@ -2443,6 +2600,12 @@ function vCronograma() {
 /* ---------- Redes sociales del colegio ---------- */
 const REDES = [['red_facebook', 'Facebook'], ['red_instagram', 'Instagram'], ['red_youtube', 'YouTube'], ['red_tiktok', 'TikTok']];
 const urlSegura = u => /^https:\/\/[^\s"'<>]+$/.test(u || '') ? u : '';
+// Acepta el enlace como lo pegue la persona (con o sin https://) y lo deja en https://
+function normUrl(v) {
+  let t = String(v || '').trim(); if (!t) return '';
+  t = t.replace(/^http:\/\//i, 'https://'); if (!/^https:\/\//i.test(t)) t = 'https://' + t.replace(/^\/+/, '');
+  try { const u = new URL(t); return /\./.test(u.hostname) && !/[\s"'<>]/.test(t) ? u.href : null; } catch { return null; }
+}
 function redesHTML() {
   const k = S.k, l = REDES.filter(([c]) => urlSegura(k[c])).map(([c, n]) => `<a class="btn ghost sm" href="${esc(k[c])}" target="_blank" rel="noopener">${n}</a>`);
   if (urlSegura(k.web)) l.push(`<a class="btn ghost sm" href="${esc(k.web)}" target="_blank" rel="noopener">Página web</a>`);
@@ -2456,7 +2619,7 @@ function panelRedes() {
 }
 async function guardarRedes() {
   const d = {};
-  for (const [c, n] of REDES) { const v = vv('rs_' + c); if (v && !urlSegura(v)) return toast(`El enlace de ${n} debe empezar por https://`); d[c] = v || null; }
+  for (const [c, n] of REDES) { const v = vv('rs_' + c), u = v ? normUrl(v) : ''; if (u === null) return toast(`El enlace de ${n} no parece válido. Cópielo desde la barra de direcciones`); d[c] = u || null; }
   await guardarColegio(d, 'Redes guardadas');
 }
 
@@ -2680,7 +2843,7 @@ function detalleAut(id) {
   showDocs(lastDocs, 'Respuestas de la autorización', `Autorizacion ${a.titulo}`);
 }
 async function borrarAut(id) {
-  if (!confirm('¿Eliminar esta autorización y sus respuestas?')) return;
+  if (!await confirmar('¿Eliminar esta autorización y sus respuestas?')) return;
   const ok = await guard(async () => { await q(db.from('autorizaciones').delete().eq('id', id)); return true; }, 'Autorización eliminada');
   if (ok) { auts = auts.filter(a => a.id !== id); render(); }
 }
@@ -2708,7 +2871,7 @@ function vCitas() {
   const card = c => { const e = est(c.estudiante_id), mia = !fam && c.personal_id === ctx.id;
     return `<article class="item ${c.estado === 'Solicitada' && mia ? 'unread' : ''}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><h3>${fam ? esc(nomPersonal(c.personal_id) || 'Colegio') : 'Familia de ' + esc(e ? nom(e) : '')}</h3><span class="tag ${ESTADO_CITA[c.estado]}">${c.estado}</span></div>
       <div class="meta">${c.fecha ? fechaHoraCorta(c.fecha) + ' · ' : ''}${esc(c.modalidad)}${!fam ? ` · ${esc(grupo(e?.grupo_id)?.nombre || '')}` : ''}${!fam && !mia ? ` · Con ${esc(nomPersonal(c.personal_id))}` : ''} · ${c.pedida_por === 'familia' ? 'Pedida por la familia' : 'Programada por el colegio'}</div>
-      <p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.preferencia ? `<p class="muted">Horario que prefiere la familia: ${esc(c.preferencia)}</p>` : ''}${c.respuesta ? `<p><strong>Nota del colegio:</strong> ${esc(c.respuesta)}</p>` : ''}
+      <p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.fecha_propuesta && c.estado === 'Solicitada' ? `<p class="muted">Fecha propuesta por la familia: ${fechaHoraCorta(c.fecha_propuesta)}</p>` : c.preferencia ? `<p class="muted">Horario que prefiere la familia: ${esc(c.preferencia)}</p>` : ''}${c.respuesta ? `<p><strong>Nota del colegio:</strong> ${esc(c.respuesta)}</p>` : ''}
       ${['Solicitada', 'Confirmada'].includes(c.estado) ? `<div class="toolbar" style="margin:6px 0 0">${mia ? `<button class="btn sm" type="button" onclick="formConfirmarCita('${c.id}')">${c.estado === 'Solicitada' ? 'Confirmar fecha' : 'Cambiar fecha'}</button>${c.estado === 'Confirmada' && c.fecha && c.fecha.slice(0, 10) <= hoy() ? `<button class="btn ghost sm" type="button" onclick="estadoCita('${c.id}','Realizada')">Marcar realizada</button>` : ''}` : ''}${mia || (fam && isAcud()) ? `<button class="btn ghost sm" type="button" onclick="estadoCita('${c.id}','Cancelada')">Cancelar cita</button>` : ''}</div>` : ''}</article>`; };
   return head('Citas', fam ? 'Pida una cita con el director de grupo, un docente o coordinación. El colegio le confirma la fecha y la hora.' : 'Solicitudes de cita de las familias y citas que usted programa.',
     fam ? '<button class="btn" type="button" onclick="formCita()">Pedir una cita</button>' : (atiende() ? '<button class="btn" type="button" onclick="formCita()">Programar una cita</button>' : '')) +
@@ -2716,6 +2879,13 @@ function vCitas() {
     `<h2>Próximas y pendientes</h2>${act.length ? `<div class="card-list">${act.map(card).join('')}</div>` : '<div class="panel empty">No hay citas pendientes.</div>'}
     ${pas.length ? `<h2 style="margin-top:18px">Anteriores</h2><div class="card-list">${pas.slice(0, 30).map(card).join('')}</div>` : ''}`;
 }
+// Horario de atención a padres (Parametrización → Institución)
+const DSEM = ['', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+const atn = () => S.k.atencion || { dias: [1, 2, 3, 4, 5], desde: '07:00', hasta: '12:00' };
+const atnTxt = () => { const a = atn(), d = a.dias.slice().sort(); const seg = d.length && d.every((x, i) => !i || x === d[i - 1] + 1) && d.length > 2 ? `${DSEM[d[0]]} a ${DSEM[d[d.length - 1]]}` : d.map(x => DSEM[x]).join(', '); return `${seg}, de ${a.desde} a ${a.hasta}`; };
+function franjasAtn() { const a = atn(), out = []; let [h, m] = a.desde.split(':').map(Number); const [hh, mm] = a.hasta.split(':').map(Number); while (h * 60 + m < hh * 60 + mm) { out.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`); m += 30; if (m >= 60) { h++; m -= 60; } } return out; }
+const hora12 = t => { const [h, m] = t.split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'a. m.' : 'p. m.'}`; };
+function revisarDiaCita(el) { const ok = !el.value || atn().dias.includes(isoDow(el.value)); $('#ciAviso').textContent = ok ? '' : `Ese día el colegio no atiende a padres. Horario de atención: ${atnTxt()}.`; }
 function formCita() {
   const fam = isFam(), gs = isDir() ? S.grupos : gruposVis();
   if (fam && !contactos2.length) return toast('Aún no hay docentes asignados al curso');
@@ -2727,13 +2897,20 @@ function formCita() {
          <label class="field"><span>Fecha y hora</span><input id="ciF" type="datetime-local"></label>`}
     <label class="field"><span>Modalidad</span><select id="ciM">${['Presencial', 'Virtual', 'Llamada'].map(m => opt(m, m, 'Presencial')).join('')}</select></label>
     ${fTa('ciX', 'Motivo', '', fam ? 'Cuéntele al colegio de qué quiere hablar' : 'Motivo de la cita')}
-    ${fam ? fIn('ciPr', 'Días u horas que le quedan mejor (opcional)', '', 'maxlength="200" placeholder="Ejemplo: martes o jueves después de las 2 p. m."') : fIn('ciR', 'Indicaciones para la familia (opcional)', '', 'maxlength="500" placeholder="Ejemplo: sala de profesores, traer el cuaderno"')}</div>
+    ${fam ? `<div class="field full"><span>¿Cuándo le queda bien? El colegio atiende a padres los ${atnTxt()}.</span></div>
+       <label class="field"><span>Día</span><input id="ciD" type="date" min="${sumarDias(hoy(), 1)}" max="${sumarDias(hoy(), 60)}" onchange="revisarDiaCita(this)"></label>
+       <label class="field"><span>Hora</span><select id="ciH">${franjasAtn().map(t => opt(t, hora12(t))).join('')}</select></label>
+       <p class="err full" id="ciAviso"></p>` : fIn('ciR', 'Indicaciones para la familia (opcional)', '', 'maxlength="500" placeholder="Ejemplo: sala de profesores, traer el cuaderno"')}</div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="ciBtn" onclick="guardarCita()">${fam ? 'Enviar solicitud' : 'Programar y avisar'}</button></div>`);
 }
 async function guardarCita() {
   const fam = isFam(), d = { motivo: vv('ciX'), modalidad: $('#ciM').value };
   if (d.motivo.length < 3) return toast('Escriba el motivo');
-  if (fam) Object.assign(d, { estudiante_id: propio(), personal_id: $('#ciP').value, preferencia: vv('ciPr') || null });
+  if (fam) {
+    const dia = $('#ciD').value; if (!dia) return toast('Elija el día de la cita');
+    if (!atn().dias.includes(isoDow(dia))) return toast(`Ese día no hay atención a padres. Horario: ${atnTxt()}`);
+    Object.assign(d, { estudiante_id: propio(), personal_id: $('#ciP').value, fecha_propuesta: new Date(`${dia}T${$('#ciH').value}:00-05:00`).toISOString() });
+  }
   else {
     const f = $('#ciF').value; if (!f) return toast('Escriba la fecha y hora');
     if (new Date(f) < new Date()) return toast('La fecha ya pasó');
@@ -2744,8 +2921,8 @@ async function guardarCita() {
 }
 function formConfirmarCita(id) {
   const c = citas.find(x => x.id === id), e = est(c.estudiante_id);
-  const loc = c.fecha ? new Date(new Date(c.fecha).getTime() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : '';
-  openModal(`Cita con la familia de ${e ? nom(e) : ''}`, `<p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.preferencia ? `<p class="muted">Prefiere: ${esc(c.preferencia)}</p>` : ''}
+  const fx = c.fecha || c.fecha_propuesta, loc = fx ? new Date(new Date(fx).getTime() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : '';
+  openModal(`Cita con la familia de ${e ? nom(e) : ''}`, `<p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.fecha_propuesta ? `<p class="muted">La familia propuso: <strong>${fechaHoraCorta(c.fecha_propuesta)}</strong>. Puede confirmarla o cambiarla.</p>` : c.preferencia ? `<p class="muted">Prefiere: ${esc(c.preferencia)}</p>` : ''}
     <div class="formgrid"><label class="field"><span>Fecha y hora</span><input id="ccF" type="datetime-local" value="${loc}"></label>
     <label class="field"><span>Modalidad</span><select id="ccM">${['Presencial', 'Virtual', 'Llamada'].map(m => opt(m, m, c.modalidad)).join('')}</select></label>
     ${fIn('ccR', 'Indicaciones para la familia (opcional)', c.respuesta || '', 'maxlength="500"')}</div>
@@ -2758,7 +2935,7 @@ async function confirmarCita(id) {
   if (r) { citas = citas.map(c => c.id === id ? r : c); closeModal(); await cargarNovedades(); render(); }
 }
 async function estadoCita(id, estado) {
-  if (estado === 'Cancelada' && !confirm('¿Cancelar esta cita?')) return;
+  if (estado === 'Cancelada' && !await confirmar('¿Cancelar esta cita?')) return;
   const r = await guard(() => q(db.from('citas').update({ estado }).eq('id', id).select().single()), estado === 'Cancelada' ? 'Cita cancelada' : 'Cita marcada como realizada');
   if (r) { citas = citas.map(c => c.id === id ? r : c); await cargarNovedades(); render(); }
 }
@@ -2895,7 +3072,7 @@ async function guardarExcusaStaff() {
 function diasHabiles(a, b) { const l = []; const d = new Date(a + 'T12:00:00'), f = new Date(b + 'T12:00:00'); while (d <= f && l.length < 62) { const w = d.getDay(); if (w >= 1 && w <= 5) l.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); } return l; }
 async function revisarExcusa(id, estado) {
   const x = excusas.find(y => y.id === id);
-  const respuesta = estado === 'Rechazada' ? prompt('Motivo del rechazo (la familia lo verá):') : '';
+  const respuesta = estado === 'Rechazada' ? await pedirTexto('Motivo del rechazo (la familia lo verá):') : '';
   if (estado === 'Rechazada' && !respuesta) return;
   const r = await guard(async () => {
     const u = await q(db.from('excusas').update({ estado, respuesta: respuesta || null }).eq('id', id).select(COLS_EXC).single());
@@ -2942,11 +3119,13 @@ async function confirmarComp(id) {
   toast(`Comprobante de ${cop(c.valor)} confirmado (la foto se borró). Revise y pulse Registrar pago`);
 }
 async function rechazarComp(id) {
-  const m = prompt('Motivo del rechazo (la familia lo verá):'); if (!m) return;
+  const m = await pedirTexto('Motivo del rechazo (la familia lo verá):'); if (!m) return;
   const ok = await guard(async () => { await q(db.from('comprobantes').update({ estado: 'Rechazado', respuesta: m }).eq('id', id)); return true; }, 'Comprobante rechazado');
   if (ok) { comps = comps.filter(x => x.id !== id); render(); }
 }
 const MEDIOS = ['Transferencia', 'Consignación', 'Nequi', 'Daviplata', 'PSE', 'Efectivo', 'Otro'];
+// Medios con los que la familia puede enviar comprobante: solo los que el colegio recibe
+const mediosComprobante = () => [S.k.pago_llave && S.k.pago_llave_valor ? 'Llave Bre-B' : null, S.k.pago_bold && S.k.pago_bold_url ? 'Bold (en línea)' : null].filter(Boolean);
 function panelPagarFam(venc) {
   if (!isAcud()) return '';
   const k = S.k, llave = k.pago_llave && k.pago_llave_valor;
@@ -2956,9 +3135,9 @@ function panelPagarFam(venc) {
       ${llave ? `<div class="medio"><h3>Con llave Bre-B</h3><p>Llave Bre-B: <strong class="code">${esc(k.pago_llave_valor)}</strong> <button class="btn ghost sm" type="button" onclick="copiarTexto('${esc(k.pago_llave_valor)}')">Copiar</button>${k.pago_llave_titular ? `<br><span class="muted">A nombre de ${esc(k.pago_llave_titular)}</span>` : ''}</p><p class="muted">Después de pagar, oprima "Ya pagué" abajo y adjunte el comprobante.</p></div>` : ''}
       ${k.pago_efectivo ? `<div class="medio"><h3>En efectivo en el colegio</h3><p class="muted">${esc(k.pago_efectivo_texto || 'En la tesorería del colegio.')} Le entregan el recibo en el momento.</p></div>` : ''}
     </div></div>
-  ${llave || !k.pago_bold ? `<div class="panel"><h2>Ya pagué</h2><p class="muted">Si pagó con llave Bre-B, envíe aquí el comprobante. Cuando el colegio confirme que el dinero llegó, el pago queda registrado y le llega el recibo.</p>
-    <div class="formgrid">${fIn('cVal', 'Valor pagado', venc || '', 'type="number" min="1"')}${fIn('cFec', 'Fecha del pago', hoy(), 'type="date"')}
-      <label class="field"><span>Medio de pago</span><select id="cMed">${MEDIOS.map(m => opt(m, m)).join('')}</select></label>${fIn('cRef', 'Número de referencia o aprobación', '')}
+  ${mediosComprobante().length ? `<div class="panel"><h2>Ya pagué</h2><p class="muted">Si pagó con ${mediosComprobante().join(' o ').toLowerCase().replace('llave bre-b', 'llave Bre-B')}, envíe aquí el comprobante. Cuando el colegio confirme que el dinero llegó, el pago queda registrado y le llega el recibo. Puede pagar una cuota completa o hacer un abono.</p>
+    <div class="formgrid">${fIn('cVal', 'Valor pagado (puede ser un abono)', venc || '', 'type="number" min="1" oninput="this.dataset.manual=1"')}${fIn('cFec', 'Fecha del pago', hoy(), 'type="date"')}
+      <label class="field"><span>Medio de pago</span><select id="cMed">${mediosComprobante().map(m => opt(m, m)).join('')}</select></label>${fIn('cRef', 'Número de referencia o aprobación', '')}
       <div class="field full"><span>¿Qué cuotas pagó? Marque las que corresponden a este pago</span>${cuotasFam().length ? `<div class="cuotas">${cuotasFam().map((x, i) => `<label class="chk"><input type="checkbox" class="cCuota" value="${i}" onchange="sumarCuotas()"${x.vencido ? ' checked' : ''}> ${esc(x.concepto)}${x.mes ? ' ' + MESES[x.mes] : ''} ${x.anioCobro || cuenta.anio} <span class="muted">${cop(x.saldo)}</span></label>`).join('')}</div>` : '<p class="muted">No tiene cuotas pendientes.</p>'}</div>
       <label class="field"><span>Foto o captura del comprobante (se borra al confirmarse; quedan el valor y la referencia)</span><input type="file" id="cImg" accept="image/*"></label></div>
     <div class="toolbar" style="margin-top:12px"><button class="btn" type="button" id="cBtn" onclick="enviarComprobante()">Ya pagué: enviar comprobante</button>
@@ -2969,10 +3148,11 @@ function panelPagarFam(venc) {
 // Cuotas pendientes de la familia (años anteriores primero, luego las del año); de aquí sale la nota del comprobante
 const cuotasFam = () => [...cuenta.prevFilas, ...cuenta.filas.filter(x => +x.saldo > 0)];
 const cuotasMarcadas = () => [...document.querySelectorAll('.cCuota:checked')].map(c => cuotasFam()[+c.value]).filter(Boolean);
-function sumarCuotas() { const el = $('#cVal'); if (el) el.value = cuotasMarcadas().reduce((a, x) => a + +x.saldo, 0) || ''; }
+function sumarCuotas() { const el = $('#cVal'); if (el && !el.dataset.manual) el.value = cuotasMarcadas().reduce((a, x) => a + +x.saldo, 0) || ''; }
 async function enviarComprobante() {
   const marc = cuotasMarcadas();
-  const nota = marc.map(x => `${x.concepto}${x.mes ? ' ' + MESES[x.mes] : ''} ${x.anioCobro || cuenta.anio}`).join(', ');
+  const suma = marc.reduce((a, x) => a + +x.saldo, 0), val = +vv('cVal') || 0;
+  const nota = (val > 0 && val < suma ? 'Abono a: ' : '') + marc.map(x => `${x.concepto}${x.mes ? ' ' + MESES[x.mes] : ''} ${x.anioCobro || cuenta.anio}`).join(', ');
   const d = { estudiante_id: propio(), colegio_id: ctx.colegio_id, valor: +vv('cVal') || 0, fecha: vv('cFec') || hoy(), medio: vv('cMed'), referencia: vv('cRef'), nota };
   if (cuotasFam().length && !marc.length) return toast('Marque qué cuotas pagó');
   if (d.valor <= 0) return toast('Escriba el valor pagado');
@@ -3019,13 +3199,13 @@ async function certAnio(eid, anio) {
   // periodos y escala tal como estaban ese año (si el colegio los cambió después, el certificado no cambia)
   const { h, ns, rc } = r, e = est(eid), pre = h.nivel === 'preescolar', pers = r.cfg?.periodos?.length ? r.cfg.periodos : periodos(), escAnio = r.cfg?.escala?.length ? r.cfg.escala : escala();
   const as = S.asigs.filter(a => a.nivel === h.nivel).sort((a, b) => a.orden - b.orden);
-  const def = aid => { let s = 0, w = 0; pers.forEach(p => { const n = ns.find(x => x.asignatura_id === aid && x.periodo === p.n), x = rc.find(y => y.asignatura_id === aid && y.periodo === p.n); let v = n ? +n.valor : null; if (x?.nota != null && (v == null || +x.nota > v)) v = +x.nota; if (v != null) { s += v * p.peso; w += p.peso; } }); return w ? Math.round(s / w * 10) / 10 : null; };
+  const def = aid => { let s = 0, w = 0; pers.forEach(p => { const n = ns.find(x => x.asignatura_id === aid && x.periodo === p.n), x = rc.find(y => y.asignatura_id === aid && y.periodo === p.n); let v = n ? +n.valor : null; if (x?.nota != null && (v == null || +x.nota > v)) v = +x.nota; if (v != null) { s += v * p.peso; w += p.peso; } }); return w ? Math.round(s / w) : null; };
   const filas = as.map(a => ({ a, v: def(a.id) })).filter(x => x.v != null);
   showDocs(`<section class="doc">${docHead('Certificado de estudios', `Año lectivo ${anio}`)}
     <p style="margin-top:14px">El suscrito rector(a) de <strong>${esc(S.k.nombre)}</strong> certifica que <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, cursó en esta institución el grado <strong>${esc(gradoTxt(h.grado))}</strong>${h.grupo_nombre ? ` (${esc(h.grupo_nombre)})` : ''} durante el año lectivo ${anio}, con resultado <strong>${h.resultado.toLowerCase()}</strong>, y obtuvo las siguientes valoraciones finales:</p>
     <table><thead><tr><th>${pre ? 'Dimensión' : 'Asignatura'}</th><th>IH</th>${pre ? '' : '<th>Valoración</th>'}<th>Desempeño</th></tr></thead><tbody>
-    ${filas.length ? filas.map(({ a, v }) => `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : `<td>${v.toFixed(1)}</td>`}<td>${desem(v, escAnio)}</td></tr>`).join('') : `<tr><td colspan="4">No hay calificaciones registradas en Colegio-IA para ese año.</td></tr>`}</tbody></table>
-    <p class="dnote">Escala institucional: ${escAnio.map(s => `${s.d} de ${(+s.min).toFixed(1)} a ${(+s.max).toFixed(1)}`).join(', ')}. Decreto 1290 de 2009.</p>
+    ${filas.length ? filas.map(({ a, v }) => `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : `<td>${N(v)}</td>`}<td>${desem(v, escAnio)}</td></tr>`).join('') : `<tr><td colspan="4">No hay calificaciones registradas en Colegio-IA para ese año.</td></tr>`}</tbody></table>
+    <p class="dnote">Escala institucional: ${escAnio.map(s => `${s.d} de ${N(s.min)} a ${N(s.max)}`).join(', ')}. Decreto 1290 de 2009.</p>
     <p>Se expide a solicitud del interesado en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
     ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`, `Certificado ${anio}`, nomArchivo(`Certificado ${anio}`, e));
 }
@@ -3044,6 +3224,7 @@ async function prepAcademico() {
     if (!sel.ag || !gs.find(g => g.id === sel.ag)) sel.ag = gs[0]?.id || '';
     if (sel.ag) await cargarGrupo(sel.ag);
   }
+  if (sel.atab === 'estadisticas' && !sel.appElegido) { const pp = await periodoConDatos(S.k.periodo_actual); sel.app = pp; acad.aviso = pp !== S.k.periodo_actual ? `El periodo ${S.k.periodo_actual} aún no tiene calificaciones: se muestra el periodo ${pp}.` : ''; }
   if (sel.atab === 'estadisticas' || sel.atab === 'avance') {
     const p = sel.app === 'acum' ? S.k.periodo_actual : sel.app;
     acad.p = p; acad.notas = await all(() => db.from('notas').select('estudiante_id,asignatura_id,valor').eq('colegio_id', ctx.colegio_id).eq('anio', S.k.anio).eq('periodo', p).order('estudiante_id').order('asignatura_id'));
@@ -3058,13 +3239,13 @@ function vAcademico() {
   return head('Informes académicos', isDir() ? 'Para directivos: planilla consolidada por curso, estadísticas de estudiantes en bajo, gráficos que cruzan calificaciones, fallas y convivencia, cuánto lleva calificado cada docente antes del cierre y quién cambió una calificación.' : 'Calificaciones de su grupo como director(a).') +
     (tabs.length > 1 ? `<div class="tabs" role="tablist">${tabs.map(k => `<button type="button" role="tab" aria-selected="${k === t}" onclick="sel.atab='${k}';go('academico')">${ATABS[k]}</button>`).join('')}</div>` : '') + cuerpo;
 }
-const selPerAc = (acum = true) => `<label class="field"><span>Periodo</span><select onchange="sel.app=this.value==='acum'?'acum':+this.value;go('academico')">${perOpts(sel.app)}${acum ? opt('acum', 'Acumulado del año', sel.app) : ''}</select></label>`;
+const selPerAc = (acum = true) => `${acad.aviso && !sel.appElegido ? `<div class="note full">${acad.aviso}</div>` : ''}<label class="field"><span>Periodo</span><select onchange="sel.appElegido=1;sel.app=this.value==='acum'?'acum':+this.value;go('academico')">${perOpts(sel.app)}${acum ? opt('acum', 'Acumulado del año', sel.app) : ''}</select></label>`;
 function acPlanilla() {
   const gs = isDir() ? S.grupos : S.grupos.filter(g => S.dirGrupos.includes(g.id));
   if (!gs.length) return '<div class="panel empty">Aún no hay cursos.</div>';
   const g = grupo(sel.ag);
   return `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.ag=this.value;go('academico')">${gs.map(x => opt(x.id, x.nombre, sel.ag)).join('')}</select></label>${selPerAc()}
-    <button class="btn ghost" type="button" style="margin-left:auto" onclick="exportarPlanilla()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="showDocs(planillaDoc(),'Planilla')">Imprimir</button></div>
+    ${isDoc() ? '' : `<button class="btn ghost" type="button" style="margin-left:auto" onclick="exportarPlanilla()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="showDocs(planillaDoc(),'Planilla')">Imprimir</button>`}</div>
     ${planillaHTML(g, sel.app)}<p class="muted" style="margin-top:8px">Las calificaciones en rojo están en desempeño bajo. Pase el cursor sobre la abreviatura para ver el nombre completo de la asignatura.</p></div>`;
 }
 function planillaDoc() { const g = grupo(sel.ag); return `<section class="doc">${docHead(`Planilla consolidada: ${esc(g.nombre)}`, sel.app === 'acum' ? `Acumulado ${S.k.anio}` : `Periodo ${sel.app}, año ${S.k.anio}`)}${planillaHTML(g, sel.app)}</section>`; }
@@ -3083,11 +3264,11 @@ function acEstadisticas() {
   const bar = pct => `<div class="bar" style="min-width:90px"><i style="width:${pct}%;background:${pct >= 30 ? 'var(--red)' : pct >= 15 ? 'var(--pencil)' : 'var(--green)'}"></i></div>`;
   return `<div class="panel"><div class="toolbar">${selPerAc(false)}<span class="muted" style="margin-left:auto">${ns.length} calificaciones registradas en el periodo ${acad.p}</span></div></div>
     <div class="cols"><section class="panel"><h2>Por curso</h2><div class="tbl"><table><thead><tr><th>Curso</th><th>Registradas</th><th>Promedio</th><th>En bajo</th><th></th></tr></thead><tbody>
-      ${grupos.map(x => `<tr><td>${esc(x.g.nombre)}</td><td>${x.esperadas ? Math.round(x.n / x.esperadas * 100) : 0}%</td><td>${x.prom == null ? '—' : x.prom.toFixed(2)}</td><td>${x.bajo} (${x.pct}%)</td><td>${bar(x.pct)}</td></tr>`).join('') || '<tr><td colspan="5">Sin datos</td></tr>'}</tbody></table></div></section>
+      ${grupos.map(x => `<tr><td>${esc(x.g.nombre)}</td><td>${x.esperadas ? Math.round(x.n / x.esperadas * 100) : 0}%</td><td>${x.prom == null ? '—' : N(x.prom)}</td><td>${x.bajo} (${x.pct}%)</td><td>${bar(x.pct)}</td></tr>`).join('') || '<tr><td colspan="5">Sin datos</td></tr>'}</tbody></table></div></section>
     <section class="panel"><h2>Por asignatura (todo el colegio)</h2><div class="tbl"><table><thead><tr><th>Asignatura</th><th>Calificaciones</th><th>En bajo</th><th></th></tr></thead><tbody>
       ${asigOrden.map(x => `<tr><td>${esc(x.k)}</td><td>${x.n}</td><td>${x.bajo} (${x.pct}%)</td><td>${bar(x.pct)}</td></tr>`).join('') || '<tr><td colspan="4">Sin datos</td></tr>'}</tbody></table></div></section></div>
     <section class="panel"><h2>Cursos y asignaturas con mayor pérdida</h2><div class="tbl"><table><thead><tr><th>Curso</th><th>Asignatura</th><th>Promedio</th><th>En bajo</th><th></th></tr></thead><tbody>
-      ${pares.filter(p => p.bajo).slice(0, 15).map(p => `<tr><td>${esc(p.g.nombre)}</td><td>${esc(p.a.nombre)}</td><td>${p.prom.toFixed(2)}</td><td>${p.bajo} de ${p.n} (${p.pct}%)</td><td>${bar(p.pct)}</td></tr>`).join('') || '<tr><td colspan="5">Ninguna asignatura tiene estudiantes en bajo en este periodo.</td></tr>'}</tbody></table></div></section>`;
+      ${pares.filter(p => p.bajo).slice(0, 15).map(p => `<tr><td>${esc(p.g.nombre)}</td><td>${esc(p.a.nombre)}</td><td>${N(p.prom)}</td><td>${p.bajo} de ${p.n} (${p.pct}%)</td><td>${bar(p.pct)}</td></tr>`).join('') || '<tr><td colspan="5">Ninguna asignatura tiene estudiantes en bajo en este periodo.</td></tr>'}</tbody></table></div></section>`;
 }
 function acAvance() {
   const ns = new Set(acad.notas.map(n => `${n.estudiante_id}|${n.asignatura_id}`)), ci = cierreDe(acad.p);
@@ -3113,7 +3294,7 @@ async function recordarDoc(mid) {
 }
 function acCambios() {
   const l = acad.log.filter(x => !sel.acq || (est(x.estudiante_id) && nom(est(x.estudiante_id)).toLowerCase().includes(sel.acq.toLowerCase())) || (x.nombre || '').toLowerCase().includes(sel.acq.toLowerCase()));
-  const v = n => n == null ? '—' : (+n).toFixed(1);
+  const v = n => n == null ? '—' : N(n);
   return `<div class="panel"><p class="muted">Cada vez que alguien registra, cambia o borra una calificación del periodo queda aquí, con la fecha y el nombre de quien lo hizo. Se muestran los últimos 400 movimientos.</p>
     <div class="toolbar"><label class="field"><span>Buscar estudiante o usuario</span><input type="search" value="${esc(sel.acq || '')}" onchange="sel.acq=this.value;render()"></label></div>
     ${l.length ? `<div class="tbl"><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Estudiante</th><th>Asignatura</th><th>Periodo</th><th>Antes</th><th>Después</th></tr></thead><tbody>
@@ -3239,7 +3420,7 @@ function resultadoPedido() {
     `<div class="panel"><h2>Lo que pidió</h2><ul class="list">${(pedItems[p.id] || []).map(x => `<li>${x.cantidad} × ${esc(x.nombre)}${x.opcion ? ` (${esc(x.opcion)})` : ''} <span class="muted">${cop(x.subtotal)}</span></li>`).join('')}</ul>
       <p><strong>Total: ${cop(p.total)}</strong></p><h2>Cómo pagar</h2>${instruccionesPago(p)}
       <div class="toolbar" style="margin-top:12px">${p.medio !== 'efectivo' ? `<button class="btn" type="button" onclick="formComprobantePed('${p.id}')">Ya pagué: enviar comprobante</button>` : ''}
-        <button class="btn ghost" type="button" onclick="sel.pedOk='';render()">Seguir comprando</button><button class="btn ghost" type="button" onclick="sel.pedOk='';go('inicio')">Ir al inicio</button></div></div>`;
+        <button class="btn ghost" type="button" onclick="sel.pedOk='';render()">Seguir comprando</button><button class="btn ghost" type="button" onclick="sel.pedOk='';render();setTimeout(()=>document.getElementById('misPed')?.scrollIntoView(),50)">Ver mis pedidos</button></div></div>`;
 }
 function tablaPedidosFam() {
   return `<div class="tbl"><table><thead><tr><th>No.</th><th>Fecha</th><th>Artículos</th><th>Total</th><th>Estado</th><th></th></tr></thead><tbody>
@@ -3268,7 +3449,7 @@ async function enviarComprobantePed(id) {
 }
 async function cancelarPedidoFam(id) {
   const p = pedidos.find(x => x.id === id);
-  if (!confirm(`¿Cancelar el pedido No. ${p.numero}?`)) return;
+  if (!await confirmar(`¿Cancelar el pedido No. ${p.numero}?`)) return;
   const ok = await guard(async () => { await q(db.rpc('estado_pedido', { p_pedido: id, p_estado: 'Cancelado' })); return true; }, 'Pedido cancelado');
   if (ok) { sel.pedOk = ''; await go('tienda'); }
 }
@@ -3344,7 +3525,7 @@ async function cambiarEstadoPed(id, estado) {
   const resp = vv('peResp'), p = pedidos.find(x => x.id === id);
   if (estado === 'Por pagar' && !resp) return toast('Escriba el motivo para la familia');
   if (estado === 'Cancelado' && ['Pagado', 'Listo para entregar'].includes(p?.estado) && !resp) return toast('El pedido ya está pagado: escriba el motivo de la cancelación');
-  if (estado === 'Cancelado' && !confirm('¿Cancelar este pedido? La familia verá el mensaje que escribió.')) return;
+  if (estado === 'Cancelado' && !await confirmar('¿Cancelar este pedido? La familia verá el mensaje que escribió.')) return;
   const ok = await guard(async () => { await q(db.rpc('estado_pedido', { p_pedido: id, p_estado: estado, p_respuesta: resp || null })); return true; }, `Pedido: ${estado.toLowerCase()}`);
   if (ok) { delete imgCache[id]; closeModal(); await cargarNovedades(); await go('pedidos'); }
 }
@@ -3399,7 +3580,7 @@ async function guardarProducto(id) {
 }
 async function borrarProducto(id) {
   const p = productos.find(x => x.id === id);
-  if (!confirm(`¿Borrar "${p.nombre}"? Los pedidos que ya lo incluyen no cambian. Si solo quiere dejar de venderlo, edítelo y desmarque "Activo".`)) return;
+  if (!await confirmar(`¿Borrar "${p.nombre}"? Los pedidos que ya lo incluyen no cambian. Si solo quiere dejar de venderlo, edítelo y desmarque "Activo".`)) return;
   const ok = await guard(async () => { await q(db.from('productos').delete().eq('id', id)); return true; }, 'Artículo borrado');
   if (ok) await go('pedidos');
 }
@@ -3442,7 +3623,7 @@ function vUtiles() {
         ${utiles.some(x => x.grado !== g && x.lista.trim()) ? `<label class="field"><span>Copiar la lista de</span><select onchange="copiarUtiles(this.value)"><option value="">Elija un grado…</option>${utiles.filter(x => x.grado !== g && x.lista.trim()).map(x => opt(x.grado, gradoTxt(x.grado))).join('')}</select></label>` : ''}</div>
         ${u?.actualizado_nombre ? `<p class="muted">Actualizada por ${esc(u.actualizado_nombre)} el ${fmtF(u.actualizado_en)}.</p>` : ''}`
       : items.length ? `<ol class="utiles-l">${items.map(x => `<li>${esc(x)}</li>`).join('')}</ol>${u.nota ? `<p class="note">${esc(u.nota)}</p>` : ''}
-        <div class="toolbar"><button class="btn ghost" type="button" onclick="verUtiles()">Imprimir o guardar en PDF</button>${isAcud() && S.k.tienda_activa ? `<button class="btn" type="button" onclick="go('tienda')">Ver la tienda del colegio</button>` : ''}</div>`
+        <div class="toolbar">${isDoc() ? '' : `<button class="btn ghost" type="button" onclick="verUtiles()">Imprimir o guardar en PDF</button>`}${isAcud() && S.k.tienda_activa ? `<button class="btn" type="button" onclick="go('tienda')">Ver la tienda del colegio</button>` : ''}</div>`
       : '<p class="empty">El colegio aún no ha publicado la lista de útiles de este grado.</p>'}</div>`;
 }
 function verUtiles() { const g = sel.ugr; showDocs(utilesDoc(utiles.find(x => x.grado === g), g), 'Lista de útiles', `Lista de útiles ${gradoTxt(g)} ${S.k.anio}`); }
@@ -3457,9 +3638,15 @@ async function guardarUtiles() {
 }
 
 /* ---------- Gráficos que cruzan variables (Informes académicos) ---------- */
-const notaTope = () => Math.max(5, ...escala().map(x => Math.ceil(+x.min || 0)));
+const notaTope = () => 100;
 const VARS = { prom: 'Promedio del periodo', bajo: 'Asignaturas en bajo', fallas: 'Fallas en el año', conv: 'Anotaciones de convivencia' };
+async function periodoConDatos(p) {
+  // Si el periodo aún no tiene calificaciones, se abre el último que sí tenga (y se avisa)
+  for (let x = p; x >= 1; x--) { const r = await q(db.from('notas').select('periodo').eq('colegio_id', ctx.colegio_id).eq('anio', S.k.anio).eq('periodo', x).limit(1)).catch(() => []); if (r.length) return x; }
+  return p;
+}
 async function prepGraficos() {
+  if (!sel.appElegido) { const pp = await periodoConDatos(S.k.periodo_actual); if (pp !== S.k.periodo_actual) { sel.app = pp; acad.aviso = `El periodo ${S.k.periodo_actual} aún no tiene calificaciones: se muestra el periodo ${pp}.`; } else acad.aviso = ''; }
   const p = sel.app === 'acum' ? S.k.periodo_actual : sel.app; acad.p = p;
   const c = ctx.colegio_id, a = S.k.anio;
   const [ns, as, ob] = await Promise.all([
@@ -3497,7 +3684,7 @@ function dispersionSVG(pts, vx, vy) {
   const [x0, x1] = rango(xs, vx), [y0, y1] = rango(ys, vy);
   const sx = v => L + (v - x0) / (x1 - x0) * (W - L - R), sy = v => H - B - (v - y0) / (y1 - y0) * (H - B - T);
   const ticks = (a, b, k) => { if (k !== 'prom') { const st = Math.max(1, Math.ceil((b - a) / 5)); const r = []; for (let v = a; v <= b + 1e-9; v += st) r.push(v); return r; } const st = (b - a) / 5; return Array.from({ length: 6 }, (_, i) => a + st * i); };
-  const fmt = (v, k) => k === 'prom' ? v.toFixed(1) : Math.round(v);
+  const fmt = (v, k) => Math.round(v);
   const color = p => p.alerta ? 'var(--red)' : 'var(--pen)';
   const jit = (i, k) => k === 'prom' ? 0 : ((i * 37) % 9 - 4) * 0.035 * (k === 'x' ? (x1 - x0) / 10 : (y1 - y0) / 10);
   return `<svg class="graf" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(VARS[vx])} frente a ${esc(VARS[vy])}">
@@ -3512,7 +3699,7 @@ function dispersionSVG(pts, vx, vy) {
 function barrasSVG(filas) {
   const W = 640, fila = 26, L = 150, R = 70, H = filas.length * fila + 10, max = Math.max(notaTope(), ...filas.map(f => f.v));
   return `<svg class="graf" viewBox="0 0 ${W} ${H}" role="img" aria-label="Promedio por curso">${filas.map((f, i) => { const w = f.v / max * (W - L - R), y = i * fila + 4;
-    return `<text x="${L - 8}" y="${y + 15}" text-anchor="end" class="g-t">${esc(f.l)}</text><rect x="${L}" y="${y}" width="${Math.max(2, w)}" height="18" rx="3" fill="${desem(f.v) === 'Bajo' ? 'var(--red)' : 'var(--pencil)'}"/><text x="${L + w + 6}" y="${y + 15}" class="g-t">${f.v.toFixed(2)}${f.extra ? ` · ${f.extra}` : ''}</text>`; }).join('')}</svg>`;
+    return `<text x="${L - 8}" y="${y + 15}" text-anchor="end" class="g-t">${esc(f.l)}</text><rect x="${L}" y="${y}" width="${Math.max(2, w)}" height="18" rx="3" fill="${desem(f.v) === 'Bajo' ? 'var(--red)' : 'var(--pencil)'}"/><text x="${L + w + 6}" y="${y + 15}" class="g-t">${N(f.v)}${f.extra ? ` · ${f.extra}` : ''}</text>`; }).join('')}</svg>`;
 }
 function acGraficos() {
   const vx = VARS[sel.gvx] ? sel.gvx : (sel.gvx = 'fallas'), vy = VARS[sel.gvy] ? sel.gvy : (sel.gvy = 'prom');
@@ -3525,7 +3712,7 @@ function acGraficos() {
   // Mapa de calor curso × asignatura
   const asigsAll = [...new Map(S.grupos.filter(g => g.nivel !== 'preescolar').flatMap(g => asigsDe(g)).map(a => [a.nombre, a])).values()];
   const prCelda = (g, nomA) => { const a = asigsDe(g).find(x => x.nombre === nomA); if (!a) return null; const ids = new Set(estsDe(g.id).map(e => e.id)); const v = acad.notas.filter(n => n.asignatura_id === a.id && ids.has(n.estudiante_id)).map(n => +n.valor); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
-  const celda = v => v == null ? '<td class="muted">—</td>' : `<td class="hm hm-${desem(v)}">${v.toFixed(1)}</td>`;
+  const celda = v => v == null ? '<td class="muted">—</td>' : `<td class="hm hm-${desem(v)}">${N(v)}</td>`;
   const riesgo = (acad.filas || []).filter(f => (f.bajo >= (S.k.max_perdidas || 3) ? 1 : 0) + (f.fallas >= 10 ? 1 : 0) + (f.conv >= 2 ? 1 : 0) >= 2).sort((a, b) => b.bajo - a.bajo || b.fallas - a.fallas);
   const selV = (id, v) => `<select onchange="sel.${id}=this.value;render()">${Object.entries(VARS).map(([k, l]) => opt(k, l, v)).join('')}</select>`;
   return `<div class="panel"><div class="toolbar">${selPerAc(false)}<label class="field"><span>Curso</span><select onchange="sel.ggr=this.value;render()"><option value="">Todo el colegio</option>${cursos.map(({ g }) => opt(g.id, g.nombre, sel.ggr)).join('')}</select></label>
@@ -3549,7 +3736,7 @@ function imprimirGraficos() {
 /* =====================================================================
    Exponer funciones usadas en el HTML y arrancar
    ===================================================================== */
-Object.assign(window, { agregarCarrito, quitarCarrito, cambiarCant, hacerPedido, formComprobantePed, enviarComprobantePed, cancelarPedidoFam, reciboPedido, verPedido, cambiarEstadoPed, listaPreparar, formProducto, guardarProducto, borrarProducto, guardarTienda, verUtiles, copiarUtiles, guardarUtiles, imprimirGraficos,
+Object.assign(window, { subirFirma, guardarColegio, guardarAtencion, revisarDiaCita, formGradosAsig, guardarGradosAsig, toggleSec, volver, dlgFin, agregarCarrito, quitarCarrito, cambiarCant, hacerPedido, formComprobantePed, enviarComprobantePed, cancelarPedidoFam, reciboPedido, verPedido, cambiarEstadoPed, listaPreparar, formProducto, guardarProducto, borrarProducto, guardarTienda, verUtiles, copiarUtiles, guardarUtiles, imprimirGraficos,
   llenarEsts, verAvisos, abrirHilo, enviarMensaje, nuevoMensaje, formAutorizacion, guardarAut, responderAut, detalleAut, borrarAut, formCita, guardarCita, formConfirmarCita, confirmarCita, estadoCita, elegirPerfil, salirApp, verFotoEl, subirFotosClase, borrarFotoClase, subirFotoEst, imprimirCarnet, formContacto, guardarContacto, borrarContacto, filtrarFilas, verCarnet, subirFotoEstModal, guardarRedes, quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
   formActividad, guardarActividad, borrarActividad, setNotaAct, formRecup, guardarRecup, borrarRecup,
   formComunicado, destCom, guardarComunicado, marcarLeido, verLecturas, borrarComunicado, copiarCom,
