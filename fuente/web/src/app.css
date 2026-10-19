@@ -432,3 +432,4 @@ td.num,th.num{text-align:center}
 .pasos{padding-left:22px}.pasos li{margin:6px 0}
 .btn.wa{text-decoration:none;display:inline-block}
 @media (max-width:640px){.cta-demo{padding:8px 10px;bottom:6px}.cta-demo>div:first-child .muted{display:none}.cta-demo .btn{padding:6px 10px}}
+.medio-bold{grid-column:1/-1}.medio-bold .cuotas{max-height:260px;overflow:auto}

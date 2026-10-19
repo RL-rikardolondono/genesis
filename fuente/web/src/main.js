@@ -1493,18 +1493,18 @@ function panelMediosPago() {
       ${fIn('mpEfTxt', 'Lugar y horario de la caja', k.pago_efectivo_texto || '', `placeholder="Ejemplo: Tesorería, lunes a viernes de 7:00 a. m. a 12:00 m." ${ro ? 'disabled' : ''}`)}
       <div class="field full">${chk('mpLl', '<strong>Llave Bre-B</strong>: la familia paga, oprime "Ya pagué" y sube el comprobante; la tesorería confirma que el dinero llegó.', k.pago_llave)}</div>
       ${fIn('mpLlV', 'Llave Bre-B (número, celular o correo)', k.pago_llave_valor || '', ro ? 'disabled' : '')}${fIn('mpLlT', 'Titular', k.pago_llave_titular || k.nombre, ro ? 'disabled' : '')}
-      <div class="field full">${chk('mpBo', '<strong>Bold (tarjeta, PSE, Nequi)</strong>: pago en línea. Cuando Colegio-IA quede conectado con Bold, el pago se registra solo, sin intervención de la tesorería.', k.pago_bold)}</div>
-      ${fIn('mpBoU', 'Enlace de pago de Bold del colegio', k.pago_bold_url || '', `placeholder="https://" ${ro ? 'disabled' : ''}`)}
+      <div class="field full">${chk('mpBo', `<strong>Bold (tarjeta, PSE, Nequi)</strong>: pago en línea. ${k.pago_bold_auto ? 'El Bold del colegio está conectado: el pago se registra solo.' : 'Conecte el Bold del colegio (abajo) para que el pago se registre solo; mientras tanto puede usar un enlace de pago y la familia envía el comprobante.'}`, k.pago_bold)}</div>
+      ${k.pago_bold_auto ? '' : fIn('mpBoU', 'Enlace de pago de Bold del colegio (opcional si conecta las llaves)', k.pago_bold_url || '', `placeholder="https://" ${ro ? 'disabled' : ''}`)}
       <div class="field full" style="margin-top:6px">${chk('mpRes', '<strong>Familias con pagos pendientes:</strong> mientras tengan cuotas sin pagar, solo ven comunicados, horario, excusas y estado de cuenta (no calificaciones, boletines, observador ni PIAR).', k.restringir_morosos)}</div>
     </div>
-    ${ro ? '<p class="muted">Solo el rector o la rectora pueden cambiar los medios de pago.</p>' : '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarMediosPago()">Guardar medios de pago</button></div>'}</div>`;
+    ${ro ? '<p class="muted">Solo el rector o la rectora pueden cambiar los medios de pago.</p>' : '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarMediosPago()">Guardar medios de pago</button></div>'}</div>${panelBoldColegio()}`;
 }
 async function guardarMediosPago() {
   const d = { pago_efectivo: $('#mpEf').checked, pago_efectivo_texto: vv('mpEfTxt') || null, pago_llave: $('#mpLl').checked, pago_llave_valor: vv('mpLlV') || null, pago_llave_titular: vv('mpLlT') || null,
-    pago_bold: $('#mpBo').checked, pago_bold_url: vv('mpBoU') || null, restringir_morosos: $('#mpRes').checked };
+    pago_bold: $('#mpBo').checked, pago_bold_url: $('#mpBoU') ? vv('mpBoU') || null : S.k.pago_bold_url, restringir_morosos: $('#mpRes').checked };
   if (d.pago_llave && !d.pago_llave_valor) return toast('Escriba la llave o el número de cuenta');
   if (d.pago_bold_url) { const u = normUrl(d.pago_bold_url); if (!u) return toast('Ese enlace de Bold no parece válido. Cópielo tal como se lo da Bold, por ejemplo checkout.bold.co/payment/...'); d.pago_bold_url = u; }
-  if (d.pago_bold && !d.pago_bold_url) return toast('Pegue el enlace de pago que le da Bold');
+  if (d.pago_bold && !d.pago_bold_url && !S.k.pago_bold_auto) return toast('Pegue el enlace de pago que le da Bold o conecte el Bold del colegio');
   if (!d.pago_efectivo && !d.pago_llave && !d.pago_bold) return toast('Marque al menos un medio de pago');
   await guardarColegio(d, 'Medios de pago guardados');
 }
@@ -1705,6 +1705,7 @@ async function prepPagos() {
     all(() => db.from('acudientes').select('estudiante_id,nombres,telefono,responsable_pago,orden').eq('colegio_id', ctx.colegio_id).order('estudiante_id').order('orden')),
   ]);
   cartera = c; S.acud = a;
+  if (S.k.pago_bold_auto) { await verificarBold().catch(() => 0); boldOrdenes = await q(db.from('bold_ordenes').select('orden,valor,estado,creado_en,estudiante_id').eq('colegio_id', ctx.colegio_id).eq('estado', 'Pendiente').order('creado_en', { ascending: false }).limit(50)).catch(() => []); }
   comps = await all(() => db.from('comprobantes').select('id,estudiante_id,fecha,valor,medio,referencia,nota,estado,respuesta,enviado_por,revisado_por,creado_en').eq('colegio_id', ctx.colegio_id).eq('estado', 'Pendiente').order('creado_en')).catch(() => []);
 }
 function avisoMora(x) {
@@ -1720,7 +1721,7 @@ function vPagos() {
   const l = cartera.filter(x => (!fg || x.grupo === fg) && (!qq || x.nombre.toLowerCase().includes(qq)) && (!solo || +x.saldo_vencido > 0));
   const tot = k => cartera.reduce((a, x) => a + +x[k], 0);
   return head('Pagos y cartera', `Año ${anioCartera()}. Cada pago queda registrado con el nombre de quien lo recibió.`,
-    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarCartera()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="imprimirCartera()">Imprimir cartera</button></div>`) + panelComprobantes() +
+    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarCartera()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="imprimirCartera()">Imprimir cartera</button></div>`) + panelBoldStaff() + panelComprobantes() +
     `<div class="stats"><div class="stat"><div class="n">${cop(tot('pagado'))}</div><div class="l">Recaudado</div></div>
       <div class="stat"><div class="n">${cop(tot('saldo_vencido'))}</div><div class="l">Saldo vencido</div></div>
       <div class="stat"><div class="n">${cop(tot('saldo_total'))}</div><div class="l">Saldo total del año</div></div>
@@ -1852,7 +1853,7 @@ function imprimirCartera() {
 async function prepCuenta() {
   const h = hermanos();
   S.cuentaHijos = h.length > 1 ? await Promise.all(h.map(async m => { const f = await q(db.rpc('estado_cuenta', { p_estudiante: m.estudiante_id, p_anio: S.k.anio })).catch(() => []); return { m, venc: f.filter(x => x.vencido).reduce((a, x) => a + +x.saldo, 0), total: f.reduce((a, x) => a + +x.saldo, 0) }; })) : [];
-  await cargarCuenta(propio()); comps = await all(() => db.from('comprobantes').select('id,estudiante_id,fecha,valor,medio,referencia,nota,estado,respuesta,creado_en').eq('estudiante_id', propio()).order('creado_en', { ascending: false })).catch(() => []); }
+  await cargarCuenta(propio()); await cargarOrdenesFam(); comps = await all(() => db.from('comprobantes').select('id,estudiante_id,fecha,valor,medio,referencia,nota,estado,respuesta,creado_en').eq('estudiante_id', propio()).order('creado_en', { ascending: false })).catch(() => []); }
 function vCuenta() {
   const e = est(propio()); if (!e) return head('Estado de cuenta') + '<div class="panel empty">No encontramos la información del estudiante.</div>';
   const venc = cuenta.filas.filter(x => x.vencido).reduce((a, x) => a + +x.saldo, 0), total = cuenta.filas.reduce((a, x) => a + +x.saldo, 0);
@@ -2696,6 +2697,7 @@ async function cargarNovedades() {
       n.msg = m.length; n.citasPend = ci.filter(c => c.estado === 'Solicitada').length;
       n.citasProx = ci.filter(c => c.estado === 'Confirmada' && c.fecha && c.fecha.slice(0, 10) >= hoy());
     }
+    if (manejaPagos() && S.k?.pago_bold_auto) await verificarBold().catch(() => 0);
     if (manejaPagos()) n.pedidosStaff = (await q(db.from('pedidos').select('id').eq('colegio_id', ctx.colegio_id).in('estado', ['Por confirmar', 'Pagado']).limit(500)).catch(() => [])).length;
   } catch (e) { console.warn(e); }
   S.nov = n;
@@ -3158,13 +3160,13 @@ async function rechazarComp(id) {
 }
 const MEDIOS = ['Transferencia', 'Consignación', 'Nequi', 'Daviplata', 'PSE', 'Efectivo', 'Otro'];
 // Medios con los que la familia puede enviar comprobante: solo los que el colegio recibe
-const mediosComprobante = () => [S.k.pago_llave && S.k.pago_llave_valor ? 'Llave Bre-B' : null, S.k.pago_bold && S.k.pago_bold_url ? 'Bold (en línea)' : null].filter(Boolean);
+const mediosComprobante = () => [S.k.pago_llave && S.k.pago_llave_valor ? 'Llave Bre-B' : null, S.k.pago_bold && S.k.pago_bold_url && !S.k.pago_bold_auto ? 'Bold (en línea)' : null].filter(Boolean);
 function panelPagarFam(venc) {
   if (!isAcud()) return '';
   const k = S.k, llave = k.pago_llave && k.pago_llave_valor;
   return `<div class="panel"><h2>Cómo pagar</h2>${venc > 0 ? `<p>Valor pendiente por pagar a hoy: <strong>${cop(venc)}</strong>.</p>` : ''}
     <div class="medios">
-      ${k.pago_bold && k.pago_bold_url ? `<div class="medio"><h3>En línea con Bold</h3><p class="muted">Tarjeta, PSE o Nequi.</p><a class="btn" href="${esc(k.pago_bold_url)}" target="_blank" rel="noopener">Pagar en línea</a></div>` : ''}
+      ${k.pago_bold && k.pago_bold_auto ? bloqueBoldFam() : k.pago_bold && k.pago_bold_url ? `<div class="medio"><h3>En línea con Bold</h3><p class="muted">Tarjeta, PSE o Nequi.</p><a class="btn" href="${esc(k.pago_bold_url)}" target="_blank" rel="noopener">Pagar en línea</a></div>` : ''}
       ${llave ? `<div class="medio"><h3>Con llave Bre-B</h3><p>Llave Bre-B: <strong class="code">${esc(k.pago_llave_valor)}</strong> <button class="btn ghost sm" type="button" onclick="copiarTexto('${esc(k.pago_llave_valor)}')">Copiar</button>${k.pago_llave_titular ? `<br><span class="muted">A nombre de ${esc(k.pago_llave_titular)}</span>` : ''}</p><p class="muted">Después de pagar, oprima "Ya pagué" abajo y adjunte el comprobante.</p></div>` : ''}
       ${k.pago_efectivo ? `<div class="medio"><h3>En efectivo en el colegio</h3><p class="muted">${esc(k.pago_efectivo_texto || 'En la tesorería del colegio.')} Le entregan el recibo en el momento.</p></div>` : ''}
     </div></div>
@@ -4288,9 +4290,112 @@ function panelPruebasPlat() {
 }
 
 /* =====================================================================
+   Pagos de las familias con el Bold propio del colegio (pago en línea que se registra solo)
+   ===================================================================== */
+let boldOrdenes = [], boldVerif = 0, boldDup = [];
+async function cargarBoldScript() {
+  if (!window.BoldCheckout) await new Promise((ok, ko) => { const sc = document.createElement('script'); sc.src = 'https://checkout.bold.co/library/boldPaymentButton.js'; sc.onload = ok; sc.onerror = ko; document.head.appendChild(sc); });
+}
+function panelBoldColegio() {
+  const k = S.k, r = esRector();
+  return `<div class="panel"><h2>Pago en línea con el Bold del colegio</h2>
+    <p class="muted">Conecte la cuenta de Bold del colegio y las familias pagarán sus cuotas en línea (tarjeta, PSE, Nequi o Bancolombia) desde su estado de cuenta, sin enviar comprobantes. Cada pago aprobado se registra solo, con su recibo, y la familia recupera el acceso completo.</p>
+    ${k.demo ? '<div class="note">En el colegio de demostración no se conectan llaves reales.</div>' : k.pago_bold_auto
+      ? `<p><span class="tag ok-t">✓ Conectado</span> Llave de identidad terminada en <strong>…${esc((k.bold_llave_id || '').slice(-6))}</strong>.</p>${r ? '<div class="toolbar"><button class="btn ghost" type="button" onclick="formBoldColegio()">Cambiar llaves</button><button class="btn ghost" type="button" onclick="quitarBoldColegio()">Desconectar</button></div>' : ''}`
+      : r ? '<div class="toolbar"><button class="btn" type="button" onclick="formBoldColegio()">Conectar el Bold del colegio</button></div>' : '<p class="muted">Solo el rector o la rectora pueden conectar el Bold del colegio.</p>'}</div>`;
+}
+function formBoldColegio() {
+  openModal('Conectar el Bold del colegio', `<ol class="pasos"><li>Entre al panel de Bold del colegio (bold.co) con la cuenta del colegio.</li>
+      <li>Busque la sección de <strong>integraciones</strong> y el <strong>Botón de pagos</strong>: allí están la <strong>llave de identidad</strong> y la <strong>llave secreta</strong>.</li>
+      <li>Copie cada una y péguela aquí.</li></ol>
+    <div class="formgrid">${fIn('bkId', 'Llave de identidad', '', 'autocomplete="off" spellcheck="false"')}
+      <label class="field"><span>Llave secreta</span><span class="pw"><input id="bkSe" type="password" autocomplete="new-password" spellcheck="false">${ojo('bkSe')}</span></label></div>
+    <p class="muted">La llave secreta queda guardada de forma protegida: nadie la vuelve a ver en la pantalla, ni siquiera el rector.</p>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="bkBtn" onclick="guardarBoldColegio()">Conectar</button></div>`);
+}
+async function guardarBoldColegio() {
+  const l = vv('bkId'), s = $('#bkSe').value.trim();
+  if (!l || !s) return toast('Pegue las dos llaves');
+  const r = await busy('#bkBtn', () => guard(() => q(db.rpc('bold_colegio_guardar', { p_colegio: ctx.colegio_id, p_llave_id: l, p_secreto: s })), 'Bold del colegio conectado'));
+  if (r === undefined) return;
+  closeModal(); S.k = await q(db.from('colegios').select('*').eq('id', ctx.colegio_id).single()); render();
+}
+async function quitarBoldColegio() {
+  if (!(await confirmar('¿Desconectar el Bold del colegio? Las familias ya no podrán pagar en línea con él.', 'Sí, desconectar'))) return;
+  if (await guard(() => q(db.rpc('bold_colegio_quitar', { p_colegio: ctx.colegio_id })), 'Bold desconectado') === undefined) return;
+  S.k = await q(db.from('colegios').select('*').eq('id', ctx.colegio_id).single()); render();
+}
+// Familia: pagar las cuotas marcadas
+const ESTADO_ORDEN = { Pendiente: '<span class="tag t2">En verificación</span>', Aprobada: '<span class="tag ok-t">Pagado</span>', Rechazada: '<span class="tag t3">Rechazado por Bold</span>', 'Sin completar': '<span class="tag">Sin completar</span>', Duplicado: '<span class="tag t3">Pagado dos veces: el colegio le devolverá el dinero</span>' };
+function bloqueBoldFam() {
+  const cs = cuotasFam();
+  return `<div class="medio medio-bold"><h3>En línea con Bold</h3><p class="muted">Tarjeta, PSE, Nequi o Bancolombia. El pago se registra solo: no necesita enviar comprobante.</p>
+    ${cs.length ? `<div class="cuotas">${cs.map((x, i) => `<label class="chk"><input type="checkbox" class="bCuota" value="${i}" onchange="sumarBold()"${x.vencido ? ' checked' : ''}> ${esc(x.concepto)}${x.mes ? ' ' + MESES[x.mes] : ''} ${x.anioCobro || cuenta.anio} <span class="muted">${cop(x.saldo)}</span></label>`).join('')}</div>
+      <p style="margin:10px 0 6px">Total a pagar: <strong id="bTot">${cop(cs.filter(x => x.vencido).reduce((a, x) => a + +x.saldo, 0))}</strong></p>
+      <button class="btn" type="button" id="bBtn" onclick="pagarBoldFam()">Pagar con Bold</button>` : '<p>No tiene cuotas pendientes.</p>'}
+    ${boldOrdenes.length ? `<h4 style="margin:14px 0 4px">Sus pagos en línea</h4><ul class="list">${boldOrdenes.slice(0, 5).map(o => `<li>${fechaHoraTxt(o.creado_en)} · ${cop(o.valor)} ${ESTADO_ORDEN[o.estado] || ''}${o.estado === 'Pendiente' ? '<br><span class="muted">Si Bold aprobó el pago, el colegio lo registra en minutos y le llega el recibo.</span>' : ''}${o.recibo ? ` · Recibo No. ${o.recibo}` : ''}</li>`).join('')}</ul>` : ''}</div>`;
+}
+const marcadasBold = () => [...document.querySelectorAll('.bCuota:checked')].map(c => cuotasFam()[+c.value]).filter(Boolean);
+function sumarBold() { const t = $('#bTot'); if (t) t.textContent = cop(marcadasBold().reduce((a, x) => a + +x.saldo, 0)); }
+async function pagarBoldFam() {
+  const m = marcadasBold(); if (!m.length) return toast('Marque las cuotas que va a pagar');
+  const items = m.map(x => ({ concepto_id: x.concepto_id, anio: x.anioCobro || cuenta.anio, mes: x.mes }));
+  await busy('#bBtn', async () => {
+    const d = await guard(() => q(db.rpc('bold_familia_orden', { p_est: propio(), p_items: items }))); if (!d) return;
+    try {
+      await cargarBoldScript();
+      new window.BoldCheckout({ orderId: d.orderId, currency: d.currency, amount: String(d.amount), apiKey: d.apiKey, integritySignature: d.signature, description: d.description, redirectionUrl: location.origin + '/' }).open();
+    } catch { toast('No se pudo abrir el pago con Bold. Intente de nuevo o use otro medio de pago.'); }
+  });
+}
+async function cargarOrdenesFam() { boldOrdenes = S.k.pago_bold_auto ? await q(db.from('bold_ordenes').select('orden,valor,estado,creado_en,recibo').eq('estudiante_id', propio()).order('creado_en', { ascending: false }).limit(10)).catch(() => []) : []; }
+// Tesorería, secretaría y rectoría: la app consulta a Bold las órdenes pendientes y registra las aprobadas
+async function verificarBold(forzar) {
+  if (!manejaPagos() || !S.k?.pago_bold_auto || !S.k.bold_llave_id) return 0;
+  if (!forzar && Date.now() - boldVerif < 120000) return 0;
+  boldVerif = Date.now();
+  const desde = new Date(Date.now() - 10 * 864e5).toISOString();
+  const pend = await q(db.from('bold_ordenes').select('orden,valor,creado_en').eq('colegio_id', ctx.colegio_id).eq('estado', 'Pendiente').gte('creado_en', desde).order('creado_en').limit(40)).catch(() => []);
+  let ok = 0;
+  for (const o of pend) {
+    let est = null, total = 0, ref = '';
+    try {
+      const r = await fetch('https://payments.api.bold.co/v2/payment-voucher/' + encodeURIComponent(o.orden), { headers: { Authorization: 'x-api-key ' + S.k.bold_llave_id } });
+      if (r.status === 404) est = 'NO_ENCONTRADA';
+      else if (r.ok) { const d = await r.json(); est = String(d.payment_status || d.status || '').toUpperCase(); total = +(d.total ?? d.amount?.total ?? d.amount ?? 0); ref = d.payment_id || d.transaction_id || ''; }
+    } catch { continue; }
+    if (!est) continue;
+    const res = await q(db.rpc('bold_familia_aplicar', { p_orden: o.orden, p_estado: est, p_valor: total, p_ref: String(ref) })).catch(e => { console.warn(e); return null; });
+    if (res?.estado === 'Aprobada' && !res.repetido) ok++;
+  }
+  if (ok) toast(`Se registraron ${ok} ${ok === 1 ? 'pago en línea' : 'pagos en línea'} de familias con Bold`);
+  boldDup = await q(db.from('bold_ordenes').select('orden,valor,estado,creado_en,estudiante_id,bold_ref').eq('colegio_id', ctx.colegio_id).eq('estado', 'Duplicado').gte('creado_en', new Date(Date.now() - 30 * 864e5).toISOString()).order('creado_en', { ascending: false })).catch(() => []);
+  return ok;
+}
+function panelBoldStaff() {
+  if (!S.k.pago_bold_auto) return '';
+  const dup = boldDup.length ? `<div class="panel"><h2>Pagos en línea duplicados <span class="badge">${boldDup.length}</span></h2><p class="muted">Bold aprobó estos pagos, pero las cuotas ya estaban pagadas. Devuelva el dinero a la familia desde el panel de Bold.</p>
+    <ul class="list">${boldDup.map(o => { const e = est(o.estudiante_id); return `<li><strong>${esc(e ? nom(e) : '')}</strong> · ${cop(o.valor)} · ${fechaHoraTxt(o.creado_en)} · orden <span class="code">${esc(o.orden)}</span>${o.bold_ref ? ` · Bold ${esc(o.bold_ref)}` : ''}</li>`; }).join('')}</ul></div>` : '';
+  if (!boldOrdenes.length) return dup;
+  return dup + `<div class="panel"><h2>Pagos en línea con Bold en verificación <span class="badge">${boldOrdenes.length}</span></h2>
+    <p class="muted">Colegio-IA consulta a Bold cada vez que alguien de tesorería, secretaría o rectoría abre esta pantalla y registra solo los pagos aprobados. Si un pago aparece aprobado en su panel de Bold y sigue aquí, regístrelo a mano.</p>
+    <div class="tbl"><table><thead><tr><th>Estudiante</th><th>Fecha</th><th>Valor</th><th>Orden</th><th></th></tr></thead><tbody>
+    ${boldOrdenes.map(o => { const e = est(o.estudiante_id); return `<tr><td>${esc(e ? nom(e) : '')}</td><td>${fechaHoraTxt(o.creado_en)}</td><td>${cop(o.valor)}</td><td><span class="code">${esc(o.orden)}</span></td>
+      <td><button class="btn ghost sm" type="button" onclick="manualBold('${o.orden}')">Registrar a mano</button></td></tr>`; }).join('')}</tbody></table></div>
+    <div class="toolbar"><button class="btn sm" type="button" onclick="verificarBoldAhora()">Verificar ahora con Bold</button></div></div>`;
+}
+async function verificarBoldAhora() { const n = await verificarBold(true); if (!n) toast('No hay pagos nuevos aprobados'); await prepPagos(); render(); }
+async function manualBold(orden) {
+  const ref = await pedirTexto(`Confirme que el pago de la orden ${orden} aparece APROBADO en el panel de Bold del colegio y escriba la referencia de Bold:`, 'Referencia de la transacción');
+  if (!ref) return;
+  const r = await guard(() => q(db.rpc('bold_familia_aplicar', { p_orden: orden, p_estado: 'MANUAL', p_valor: 0, p_ref: ref })));
+  if (r) { toast(`Pago registrado. Recibo No. ${r.recibo}`); await prepPagos(); render(); }
+}
+
+/* =====================================================================
    Exponer funciones usadas en el HTML y arrancar
    ===================================================================== */
-Object.assign(window, { verPlanes, quiereRegistro, registrarColegio, cancelarRegistro, abrirItem, entregarTarea, enviarCuestionario, campusSel, formUnidad, guardarUnidad, borrarUnidad, elegirTipo, formItem, guardarItem, borrarItem, editorPreguntas, agregarPregunta, quitarPregunta, masOpcion, guardarPreguntas, verEntregas, calificarEntrega, darParticipacion, guardarCampusCfg,
+Object.assign(window, { formBoldColegio, guardarBoldColegio, quitarBoldColegio, sumarBold, pagarBoldFam, verificarBoldAhora, manualBold, verPlanes, quiereRegistro, registrarColegio, cancelarRegistro, abrirItem, entregarTarea, enviarCuestionario, campusSel, formUnidad, guardarUnidad, borrarUnidad, elegirTipo, formItem, guardarItem, borrarItem, editorPreguntas, agregarPregunta, quitarPregunta, masOpcion, guardarPreguntas, verEntregas, calificarEntrega, darParticipacion, guardarCampusCfg,
   subirFirma, guardarColegio, guardarAtencion, revisarDiaCita, formGradosAsig, guardarGradosAsig, toggleSec, volver, dlgFin, agregarCarrito, quitarCarrito, cambiarCant, hacerPedido, formComprobantePed, enviarComprobantePed, cancelarPedidoFam, reciboPedido, verPedido, cambiarEstadoPed, listaPreparar, formProducto, guardarProducto, borrarProducto, guardarTienda, verUtiles, copiarUtiles, guardarUtiles, imprimirGraficos,
   llenarEsts, verAvisos, abrirHilo, enviarMensaje, nuevoMensaje, formAutorizacion, guardarAut, responderAut, detalleAut, borrarAut, formCita, guardarCita, formConfirmarCita, confirmarCita, estadoCita, elegirPerfil, salirApp, verFotoEl, subirFotosClase, borrarFotoClase, subirFotoEst, imprimirCarnet, formContacto, guardarContacto, borrarContacto, filtrarFilas, verCarnet, subirFotoEstModal, guardarRedes, quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
   formActividad, guardarActividad, borrarActividad, setNotaAct, formRecup, guardarRecup, borrarRecup,
