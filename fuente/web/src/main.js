@@ -32,8 +32,10 @@ function dialogo(html) {
   });
 }
 function dlgFin(v) { document.getElementById('dlg')?._res?.(v); }
+// Para borrar algo con datos: hay que escribir el nombre exacto (evita borrados por un clic)
+const confirmarEscribiendo = (msg, palabra, si = 'Sí, eliminar') => dialogo(`<p>${esc(msg)}</p><p class="muted" style="margin:6px 0">Para confirmar, escriba <strong>${esc(palabra)}</strong>:</p><input id="dlgW" autocomplete="off" style="width:100%" oninput="document.getElementById('dlgOk').disabled = this.value.trim().toLowerCase() !== ${esc(JSON.stringify(palabra.toLowerCase()))}"><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(false)">Cancelar</button><button class="btn warn" id="dlgOk" type="button" disabled onclick="dlgFin(true)">${esc(si)}</button></div>`);
 const confirmar = (msg, si = 'Sí, continuar') => dialogo(`<p>${esc(msg)}</p><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(false)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(true)">${esc(si)}</button></div>`);
-const pedirTexto = (msg, ph = '') => dialogo(`<p>${esc(msg)}</p><textarea id="dlgT" rows="3" placeholder="${esc(ph)}" style="width:100%"></textarea><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(null)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(document.getElementById('dlgT').value.trim())">Aceptar</button></div>`);
+const pedirTexto = (msg, ph = '', val = '') => dialogo(`<p>${esc(msg)}</p><textarea id="dlgT" rows="3" placeholder="${esc(ph)}" style="width:100%">${esc(val)}</textarea><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(null)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(document.getElementById('dlgT').value.trim())">Aceptar</button></div>`);
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 4500); }
 function openModal(t, html) { $('#mt').textContent = t; $('#mb').innerHTML = html; $('#modal').hidden = false; const f = $('#mb input,#mb select,#mb textarea,#mb button'); if (f) f.focus(); }
 function closeModal() { $('#modal').hidden = true; }
@@ -64,11 +66,13 @@ function msg(e) {
   return m;
 }
 async function q(p) { const { data, error } = await p; if (error) throw error; return data; }
+// Para cambios: si la base no cambió ninguna fila (sin permiso o registro inexistente) se avisa en vez de decir "guardado"
+async function uno(p) { const d = await q(p); if (d == null || (Array.isArray(d) && !d.length)) { const e = new Error('No tiene permiso para cambiar este dato, o el registro ya no existe. Recargue la página e intente de nuevo'); e.code = '42501'; throw e; } return d; }
 async function all(make) { // lee todas las filas en bloques de 1000
   const out = []; for (let i = 0; ; i += 1000) { const d = await q(make().range(i, i + 999)); out.push(...d); if (d.length < 1000) return out; }
 }
 const chunks = (a, n) => { const r = []; for (let i = 0; i < a.length; i += n) r.push(a.slice(i, i + n)); return r; };
-async function guard(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e) { console.error(e); toast(msg(e)); return undefined; } }
+async function guard(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e) { console.error(e); if (demoVieja()) { renovarDemo(); return undefined; } toast(msg(e)); return undefined; } }
 
 /* =====================================================================
    Estado
@@ -104,7 +108,18 @@ const isDir = () => ctx && DIR.includes(ctx.rol);
 const isDoc = () => ctx && ctx.rol === 'docente';
 const isFam = () => ctx && (ctx.rol === 'acudiente' || ctx.rol === 'estudiante');
 const isTes = () => ctx && ctx.rol === 'tesoreria';
-const manejaPagos = () => ctx && PAGOS_ROLES.includes(ctx.rol);
+// Permisos por cargo (revisión 20 oct): cada colegio los ajusta en Parametrización › Permisos; la base los aplica igual
+const PERM_DEF = { pagos: ['rector', 'secretaria', 'tesoreria'], pagos_ver: ['rector', 'secretaria', 'tesoreria'], costos: ['rector', 'tesoreria'],
+  matricula: ['rector', 'coordinador', 'secretaria'], contactos: ['rector', 'coordinador', 'secretaria'], citas: ['rector', 'coordinador'], autorizaciones: ['rector', 'coordinador'] };
+const PERM_TXT = { pagos: ['Registrar pagos', 'Registrar y anular pagos, confirmar comprobantes, administrar la tienda'],
+  pagos_ver: ['Ver la cartera', 'Ver pagos, cartera y estados de cuenta sin poder cambiarlos'],
+  costos: ['Costos y medios de pago', 'Resolución de costos, conceptos de cobro, día límite y medios de pago'],
+  matricula: ['Matrícula', 'Matricular, editar fichas y registrar retiros'], contactos: ['Contactos y recogida', 'Registrar contactos de emergencia y personas autorizadas para recoger'],
+  citas: ['Citas de otros', 'Confirmar, cambiar o reasignar citas pedidas a otra persona'], autorizaciones: ['Cambios de autorizaciones', 'Aprobar o negar cuando una familia pide cambiar su respuesta'] };
+const permRoles = k => S?.k?.permisos?.[k] ?? PERM_DEF[k] ?? [];
+const puede = k => !!ctx && permRoles(k).includes(ctx.rol);
+const manejaPagos = () => puede('pagos');
+const vePagos = () => puede('pagos') || puede('pagos_ver');
 const isAcud = () => ctx && ctx.rol === 'acudiente';
 const est = id => S.ests.find(e => e.id === id);
 const grupo = id => S.grupos.find(g => g.id === id);
@@ -168,7 +183,18 @@ async function cargarColegio(intento = 0) {
     if (k.demo || +r?.activos > 0) { await new Promise(r2 => setTimeout(r2, 1500)); return cargarColegio(intento + 1); }
   }
   if (!k) throw new Error('No se pudo cargar el colegio. Intente de nuevo en unos segundos.');
-  Object.assign(S, { k, grupos, asigs, ests });
+  // Revisión 20 oct: a veces la lista de estudiantes llegaba vacía aunque el colegio sí tiene estudiantes
+  // (la pantalla quedaba "sin estudiantes" hasta recargar). Si el conteo del colegio dice que hay activos
+  // y este perfil debe verlos, se vuelve a pedir la lista antes de mostrar nada.
+  if (k && !ests.length && (isDir() || vePagos()) && intento < 4) {
+    const r = await q(db.rpc('estado_colegio', { p_colegio: c })).catch(() => null);
+    if (+r?.activos > 0) { console.warn('Estudiantes vacíos con', r.activos, 'activos: se reintenta', intento + 1); await new Promise(r2 => setTimeout(r2, 900 * (intento + 1))); return cargarColegio(intento + 1); }
+  }
+  if (k && !ests.length && (isDir() || vePagos()) && intento >= 4) {
+    const r = await q(db.rpc('estado_colegio', { p_colegio: c })).catch(() => null);
+    if (+r?.activos > 0) throw new Error('No se pudo cargar la lista de estudiantes. Recargue la página (tecla F5) o intente de nuevo en unos segundos.');
+  }
+  Object.assign(S, { k, grupos, asigs, ests, diaCarga: hoy() });
   if (isDoc()) {
     const dg = await q(db.from('docente_grupos').select('grupo_id,asignatura_id').eq('miembro_id', ctx.id));
     S.misGrupos = [...new Set(dg.map(x => x.grupo_id))];
@@ -202,8 +228,9 @@ async function cargarGrupo(gid, force) {
   }
   const acts = await all(() => db.from('actividades').select('*').eq('grupo_id', gid).eq('anio', S.k.anio).order('orden').order('creado_en')).catch(() => []);
   S.acts = S.acts.filter(x => x.grupo_id !== gid).concat(acts);
-  const lg = await all(() => db.from('logros').select('asignatura_id,periodo,texto').eq('grupo_id', gid).eq('anio', S.k.anio).order('asignatura_id').order('periodo'));
-  lg.forEach(x => S.logros[`${gid}|${x.asignatura_id}|${x.periodo}`] = x.texto);
+  const lg = await all(() => db.from('logros').select('asignatura_id,periodo,texto,actualizado_nombre,actualizado_en').eq('grupo_id', gid).eq('anio', S.k.anio).order('asignatura_id').order('periodo'));
+  S.logrosQ ||= {};
+  lg.forEach(x => { S.logros[`${gid}|${x.asignatura_id}|${x.periodo}`] = x.texto; S.logrosQ[`${gid}|${x.asignatura_id}|${x.periodo}`] = x; });
   S.loadedG.add(gid);
 }
 async function cargarMiembros() {
@@ -249,7 +276,7 @@ function authScreen(extra) {
     </form>
     <p class="muted" style="margin-top:14px">¿Ya tiene cuenta? <button class="linkbtn" type="button" onclick="setAuth('login')">Inicia sesión</button></p>`;
   const demoSel = `<div class="demo-box"><strong>Colegio de demostración</strong><br><span class="muted">Explore Colegio-IA con datos de ejemplo. Elija con qué perfil quiere entrar:</span>
-      <div class="toolbar" style="margin:8px 0 0;justify-content:center"><button class="btn sm" type="button" onclick="entrarDemo('rector')">Rector(a)</button><button class="btn sm" type="button" onclick="entrarDemo('coordinador')">Coordinador(a)</button><button class="btn sm" type="button" onclick="entrarDemo('docente')">Docente</button><button class="btn sm" type="button" onclick="entrarDemo('acudiente')">Acudiente</button><button class="btn sm" type="button" onclick="entrarDemo('estudiante')">Estudiante</button></div></div>`;
+      <div class="toolbar" style="margin:8px 0 0;justify-content:center"><button class="btn sm" type="button" onclick="entrarDemo('rector')">Rector(a)</button><button class="btn sm" type="button" onclick="entrarDemo('coordinador')">Coordinador(a)</button><button class="btn sm" type="button" onclick="entrarDemo('secretaria')">Secretaría</button><button class="btn sm" type="button" onclick="entrarDemo('tesoreria')">Tesorería</button><button class="btn sm" type="button" onclick="entrarDemo('docente')">Docente</button><button class="btn sm" type="button" onclick="entrarDemo('acudiente')">Acudiente</button><button class="btn sm" type="button" onclick="entrarDemo('estudiante')">Estudiante</button></div></div>`;
   if (authMode === 'activar' && store.get('demo') && !ctxs.length) body = `<h2>Bienvenido(a)${me?.name ? ', ' + esc(me.name.split(' ')[0]) : ''}</h2>${demoSel}
     <div class="demo-box reg-box"><strong>¿Prefiere empezar con su colegio?</strong><br><span class="muted">15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button></div>
     <p class="muted" style="margin-top:14px">¿El colegio le entregó un código? <button class="linkbtn" type="button" onclick="store.del('demo');setAuth('activar')">Escribir código de activación</button> · <button class="linkbtn" type="button" onclick="doLogout()">Cerrar sesión</button></p>`;
@@ -259,7 +286,7 @@ function authScreen(extra) {
     <form onsubmit="event.preventDefault();doActivar()">
       <label class="field"><span>Código de activación</span><input id="aCod" autocomplete="one-time-code" style="text-transform:uppercase;letter-spacing:.1em" required></label>
       <p class="err" id="aErr" role="alert"></p>
-      <button class="btn" type="submit">Activar</button>
+      <div class="toolbar" style="margin:0"><button class="btn" type="submit">Activar</button>${ctxs.length ? '<button class="btn ghost" type="button" onclick="volverApp()">Cancelar</button>' : ''}</div>
     </form>
     ${demoSel}
     <div class="demo-box reg-box"><strong>¿Es directivo de un colegio?</strong><br><span class="muted">Registre su colegio y úselo 15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button></div>
@@ -384,6 +411,8 @@ async function entrarContexto(id) {
     if (est?.cobro === 'cerrada') { S.estado = est; return pantallaCerrada(); }
   }
   try { await cargarColegio(); } catch (e) { if (n !== cargaN) return; $('#view').innerHTML = `<div class="panel empty">${esc(msg(e))}</div>`; return; }
+  db.rpc('marcar_acceso', { p_miembro: ctx.id }).then(() => {}, () => {});
+  aplicarTema(); // último acceso (lo ve el colegio en Usuarios y accesos)
   if (n !== cargaN) return;
   let ir = 'inicio';
   try { ir = sessionStorage.getItem('genesis:ir') || 'inicio'; } catch {}
@@ -424,7 +453,7 @@ const VIEWS = [
   { id: 'campus', label: 'Campus virtual', ok: verCampus, prep: prepCampus, fn: vCampus, badge: () => isFam() ? S.camPend || 0 : 0 },
   { id: 'gemas', label: 'Gemas y ranking', ok: () => gemasOn() && verCampus(), prep: prepGemas, fn: vGemas },
   { id: 'academico', label: 'Informes académicos', ok: () => isDir() || (isDoc() && S.dirGrupos.length > 0), prep: prepAcademico, fn: vAcademico },
-  { id: 'pagos', label: 'Pagos y cartera', ok: manejaPagos, prep: prepPagos, fn: vPagos },
+  { id: 'pagos', label: 'Pagos y cartera', ok: vePagos, prep: prepPagos, fn: vPagos },
   { id: 'cuenta', label: 'Estado de cuenta', ok: isAcud, prep: prepCuenta, fn: vCuenta },
   { id: 'pedidos', label: 'Tienda y pedidos', ok: manejaPagos, prep: prepPedidos, fn: vPedidos, badge: () => S.nov?.pedidosStaff || 0 },
   { id: 'usuarios', label: 'Usuarios y accesos', ok: isDir, prep: cargarMiembros, fn: vUsuarios },
@@ -441,7 +470,8 @@ const MENU = [
 ];
 const ICO = { campus: '💻', gemas: '💎', inicio: '🏠', notas: '✏️', asistencia: '✅', boletines: '📄', observador: '📝', piar: '🧩', academico: '📊', horario: '🕒', utiles: '🎒', comunicados: '📢', mensajes: '💬', citas: '📅', autorizaciones: '✍️', cronograma: '🗓️', galeria: '📷', estudiantes: '🎓', familia: '🪪', contactos: '📇', excusas: '📩', pagos: '💰', cuenta: '💳', tienda: '🛍️', pedidos: '📦', config: '⚙️', usuarios: '👥' };
 // Familias con pagos pendientes: solo inicio, comunicados y estado de cuenta (decisión del 18 oct 2026)
-const PERMITIDAS_MOROSO = ['inicio', 'comunicados', 'cuenta'];
+// Revisión 20 oct: con pagos pendientes la familia solo puede ver su estado de cuenta y pagar
+const PERMITIDAS_MOROSO = ['inicio', 'cuenta'];
 // El estudiante con pagos pendientes queda bloqueado por completo (solo ve el aviso del inicio)
 const restringida = id => modo === 'colegio' && isFam() && !alDia() && (isEst() ? id !== 'inicio' : !PERMITIDAS_MOROSO.includes(id));
 const visible = v => v.ok() && !restringida(v.id);
@@ -459,7 +489,7 @@ function menuHTML() {
 const VIEW_PLAT = { id: 'plataforma', label: 'Colegios', prep: prepPlataforma, fn: vPlataforma };
 
 function barraDemo() {
-  const roles = [['rector', 'Rector(a)'], ['coordinador', 'Coordinador(a)'], ['docente', 'Docente'], ['acudiente', 'Acudiente'], ['estudiante', 'Estudiante']];
+  const roles = [['rector', 'Rector(a)'], ['coordinador', 'Coordinador(a)'], ['secretaria', 'Secretaría'], ['tesoreria', 'Tesorería'], ['docente', 'Docente'], ['acudiente', 'Acudiente'], ['estudiante', 'Estudiante']];
   return `<div class="note demo-bar"><strong>Colegio de demostración.</strong> Los datos son de ejemplo y se restauran cada día. Usted está como <strong>${ROL_TXT[ctx.rol]}</strong>: ${ROL_DESC[ctx.rol] || ''}
     <div class="toolbar" style="margin:8px 0 0"><span class="muted">Cambiar de perfil:</span>${roles.filter(([r]) => r !== ctx.rol).map(([r, l]) => `<button class="btn ghost sm" type="button" onclick="cambiarPerfilDemo('${r}')">${l}</button>`).join('')}</div>
     <div class="toolbar" style="margin:8px 0 0"><button class="btn sm" type="button" onclick="quiereRegistro()">Registrar mi colegio · 15 días gratis</button><button class="btn ghost sm" type="button" onclick="verPlanes()">Ver planes y precios</button></div></div>`;
@@ -467,10 +497,20 @@ function barraDemo() {
 async function cambiarPerfilDemo(rol) {
   const m = ctxs.find(x => x.colegio_id === ctx.colegio_id && x.rol === rol);
   try { sessionStorage.setItem('genesis:ir', 'inicio'); } catch {}
-  if (m) return entrarContexto(m.id);
+  if (m && !demoVieja()) return entrarContexto(m.id);
   $('#view').innerHTML = '<div class="loading">Preparando el perfil…</div>';
   const id = await guard(() => q(db.rpc('entrar_demo', { p_rol: rol })));
   if (id) { store.set('ctx', id); await arrancar(); } else render();
+}
+// La demostración se restaura cada día a medianoche (colegio nuevo). Si la pantalla quedó abierta desde el día
+// anterior, los datos en memoria son del colegio viejo: se vuelve a entrar con el mismo perfil (revisión 20 oct).
+const demoVieja = () => !!(S.k?.demo && S.diaCarga && hoy() !== S.diaCarga);
+let renovando = false;
+async function renovarDemo() {
+  if (renovando || !ctx) return; renovando = true;
+  toast('La demostración se restauró con datos nuevos (ocurre cada día a medianoche). Entrando de nuevo…');
+  try { const id = await q(db.rpc('entrar_demo', { p_rol: ctx.rol })); store.set('ctx', id); try { sessionStorage.setItem('genesis:ir', view); } catch {} await arrancar(); }
+  catch (e) { toast(msg(e)); } finally { renovando = false; }
 }
 // Familias: hijos del mismo colegio y si están al día
 const hermanos = () => ctxs.filter(m => m.colegio_id === ctx.colegio_id && (m.rol === 'acudiente' || m.rol === 'estudiante') && m.estudiante_id);
@@ -483,9 +523,20 @@ function avisoRestringido() {
   if (isEst()) return `<div class="panel restringido"><h2>Su acceso está suspendido en este momento</h2>
     <p>Pídale a su acudiente que se comunique con la secretaría del colegio. Apenas se resuelva, podrá volver a entrar a su campus virtual.</p></div>`;
   return `<div class="panel restringido"><h2>El acceso de la familia está limitado en este momento</h2>
-    <p>Para más información, comuníquese con la secretaría del colegio.</p>
-    <p class="muted">Mientras tanto puede consultar el estado de cuenta y los comunicados del colegio.</p>
-    <div class="toolbar"><button class="btn" type="button" onclick="go('cuenta')">Ver estado de cuenta</button><button class="btn ghost" type="button" onclick="go('comunicados')">Ver comunicados</button></div></div>`;
+    <p>Hay cuotas pendientes por pagar. Apenas el pago quede registrado, se habilita todo de nuevo.</p>
+    <p class="muted">Para más información, comuníquese con la secretaría del colegio.</p>
+    <div class="toolbar"><button class="btn" type="button" onclick="go('cuenta')">Ver estado de cuenta y pagar</button></div></div>`;
+}
+// Del día 1 al día límite: aviso solo a quien todavía no ha pagado la cuota del mes (desaparece apenas paga)
+function avisoCuota() {
+  const f = (S.fam || []).find(x => x.estudiante_id === propio());
+  if (!f || f.debe || !(+f.por_vencer > 0)) return '';
+  const dl = +f.dia_limite || 5, d = new Date().getDate();
+  if (d > dl) return '';
+  const quedan = dl - d, mes = MESES[new Date().getMonth() + 1].toLowerCase();
+  return `<div class="note aviso-cuota"><strong>Recuerde: la cuota de ${mes} vence el día ${dl}${quedan === 0 ? ' (hoy)' : quedan === 1 ? ' (mañana)' : ` (faltan ${quedan} días)`}.</strong>
+    Pendiente: ${cop(f.por_vencer)}. Si no se paga, desde el día ${dl + 1} el acceso ${isEst() ? 'al campus' : 'de la familia'} queda cerrado hasta que se registre el pago.
+    ${isAcud() ? `<button class="btn sm" type="button" onclick="go('cuenta')">Pagar ahora</button>` : ''}</div>`;
 }
 function quien() { return `${ROL_TXT[ctx.rol]}: ${ctx.nombre}`; }
 function renderSide() {
@@ -517,7 +568,7 @@ function barraSup() {
     <button class="btn ghost sm tb-salir" type="button" onclick="salirApp()"><span class="tb-l">${S?.k?.demo ? 'Salir de la demostración' : 'Cerrar sesión'}</span><span class="tb-s">Salir</span></button></div>`;
 }
 function elegirPerfil() {
-  const demo = S?.k?.demo, rolesDemo = [['rector', 'Rector(a)'], ['coordinador', 'Coordinador(a)'], ['docente', 'Docente'], ['acudiente', 'Acudiente']];
+  const demo = S?.k?.demo, rolesDemo = [['rector', 'Rector(a)'], ['coordinador', 'Coordinador(a)'], ['secretaria', 'Secretaría'], ['tesoreria', 'Tesorería'], ['docente', 'Docente'], ['acudiente', 'Acudiente']];
   const ORD = Object.keys(ROL_TXT), propios = ctxs.slice().sort((a, b) => a.colegios.nombre.localeCompare(b.colegios.nombre) || ORD.indexOf(a.rol) - ORD.indexOf(b.rol) || (a.estudiantes?.nombres || '').localeCompare(b.estudiantes?.nombres || ''));
   const faltan = demo ? rolesDemo.filter(([r]) => !ctxs.some(m => m.colegio_id === ctx.colegio_id && m.rol === r)) : [];
   openModal('Cambiar de perfil', `<p class="muted">Elija con qué perfil quiere trabajar. Puede volver a cambiarlo cuando quiera desde la barra de arriba.</p>
@@ -551,18 +602,36 @@ function render() {
 /* ---------- Sesión: evita mostrar datos vacíos cuando la sesión venció ---------- */
 const VENCE_MS = 10 * 60 * 1000;
 let ultimaActividad = Date.now();
+// Cierre de sesión por inactividad (Parametrización › Institución; 0 = nunca). Cuenta solo el uso real (clics y teclas).
+let usoReal = Date.now(), avisoInact = false;
+['click', 'keydown', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { usoReal = Date.now(); }, { passive: true }));
+setInterval(async () => {
+  const min = +(S?.k?.cierre_inactividad || 0);
+  if (!ctx || !min || S.k.demo || modo !== 'colegio') return;
+  const ocioso = Date.now() - usoReal;
+  if (ocioso > min * 6e4) { avisoInact = false; dlgFin(false); await doLogout(); return toast(`Por seguridad se cerró la sesión después de ${min} minutos sin uso. Vuelva a entrar.`); }
+  if (ocioso > (min - 1) * 6e4 && !avisoInact) {
+    avisoInact = true;
+    const sigue = await dialogo(`<h3 style="margin-top:0">¿Sigue ahí?</h3><p>Por seguridad, la sesión se cerrará en un minuto si no la usa.</p><div class="modal-foot"><button class="btn" type="button" onclick="dlgFin(true)">Seguir conectado</button></div>`);
+    avisoInact = false; if (sigue) usoReal = Date.now();
+  }
+}, 20000);
 const sesionVieja = () => Date.now() - ultimaActividad > VENCE_MS;
 function recargarEn(v) { try { sessionStorage.setItem('genesis:ir', v || view); } catch {} location.reload(); }
 // Al volver después de un rato no se recarga la página (eso obligaba a iniciar sesión otra vez en algunos celulares):
 // se confirma la sesión y se actualizan los datos de la pantalla. Solo si la sesión ya no existe se vuelve a la entrada.
 async function sesionViva() { try { const r = await db.auth.getSession(); return !!r?.data?.user; } catch { return false; } }
 document.addEventListener('visibilitychange', async () => {
-  if (document.hidden || !ctx || !sesionVieja()) return;
+  if (document.hidden || !ctx) return;
+  if (demoVieja()) return renovarDemo();
+  if (!sesionVieja()) return;
   if (!(await sesionViva())) return recargarEn(view);
   ultimaActividad = Date.now(); if (modo === 'colegio') { navAtras = true; go(view); }
 });
 setInterval(async () => {
-  if (document.hidden || !ctx || sesionVieja()) return;
+  if (document.hidden || !ctx) return;
+  if (demoVieja()) return renovarDemo();
+  if (sesionVieja()) return;
   try { await db.auth.getSession(); ultimaActividad = Date.now(); } catch {}
 }, 4 * 60 * 1000);
 // Botón "atrás" del celular o del navegador: cierra la ventana abierta o vuelve a la pantalla anterior, sin salir de la app
@@ -584,14 +653,22 @@ window.addEventListener('popstate', e => {
     return;
   }
   if (modo !== 'colegio' || !ctx) return;
+  if (cerrarDetalle()) { history.pushState({ v: view }, ''); return; }
   const v = e.state?.v || 'inicio';
   if (v !== view) { navAtras = true; go(v); }
   if (!e.state) history.pushState({ v: 'inicio' }, '');
 });
 const pila = [];
-function volver() { pila.pop(); const v = pila.pop() || 'inicio'; navAtras = true; go(v); }
+// "← Volver" primero cierra el detalle abierto dentro de la pantalla (p. ej., la ficha del observador) y solo después cambia de pantalla
+function cerrarDetalle() {
+  if (view === 'observador' && sel.oe) { sel.oe = ''; render(); return true; }
+  if (view === 'piar' && sel.piarE) { sel.piarE = ''; render(); return true; }
+  return false;
+}
+function volver() { if (cerrarDetalle()) return; pila.pop(); const v = pila.pop() || 'inicio'; navAtras = true; go(v); }
 async function go(v) {
   if (ctx && sesionVieja() && !(await sesionViva())) return recargarEn(v);
+  if (modo === 'colegio' && demoVieja()) { view = v; return renovarDemo(); }
   if (modo === 'colegio' && pila[pila.length - 1] !== v) { pila.push(v); if (pila.length > 30) pila.shift(); }
   ultimaActividad = Date.now();
   if (modo === 'colegio') { if (!navAtras && history.state?.v !== v) history.pushState({ v }, ''); navAtras = false; }
@@ -665,7 +742,7 @@ function vInicio() {
   const g = grupo(e.grupo_id);
   if (!g) return head(`Hola`, '') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
   const pr = promedio(e.id), pe = perdidas(e.id);
-  return head(ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)}` : `Hola, ${esc(e.nombres)}`, `${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + hoyFamilia() + campusInicioHTML() +
+  return head(ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)}` : `Hola, ${esc(e.nombres)}`, `${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + avisoCuota() + hoyFamilia() + campusInicioHTML() +
     `<div class="stats">
       <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : N(pr)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado' + (pr == null ? '' : ', ' + desem(pr))}</div></div>
       <div class="stat"><div class="n">${pe.length}</div><div class="l">Asignaturas en bajo</div></div>
@@ -690,7 +767,7 @@ const acudDe = eid => (S.acud || []).filter(a => a.estudiante_id === eid).sort((
 function vEstudiantes() {
   const act = S.ests.filter(e => e.estado === 'Activo');
   return head('Estudiantes y matrícula', 'Matricula, consulta y retira estudiantes. Cada matrícula recibe folio automático.',
-    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarEstudiantes()" ${S.ests.length ? '' : 'disabled'}>Exportar a Excel</button><button class="btn ghost" type="button" onclick="libroMatricula()" ${S.ests.length ? '' : 'disabled'}>Libro de matrícula</button><button class="btn" type="button" onclick="formEst()" ${S.grupos.length ? '' : 'disabled title="Primero crea los grupos en Parametrización"'}>Matricular estudiante</button></div>`) +
+    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarEstudiantes()" ${S.ests.length ? '' : 'disabled'}>Exportar a Excel</button><button class="btn ghost" type="button" onclick="libroMatricula()" ${S.ests.length ? '' : 'disabled'}>Libro de matrícula</button><button class="btn" type="button" onclick="formEst()" ${!puede('matricula') ? 'disabled title="Sin permiso de matrícula (Parametrización › Permisos)"' : S.grupos.length ? '' : 'disabled title="Primero crea los grupos en Parametrización"'}>Matricular estudiante</button></div>`) +
     (S.grupos.length ? '' : '<div class="note">Antes de matricular, crea los grupos en <button class="linkbtn" type="button" onclick="go(\'config\')">Parametrización</button>.</div>') +
     `<div class="panel"><div class="toolbar">
       <label class="field"><span>Grupo</span><select onchange="sel.fg=this.value;drawEst()"><option value="">Todos</option>${S.grupos.map(g => opt(g.id, g.nombre, sel.fg)).join('')}</select></label>
@@ -706,13 +783,13 @@ function drawEst() {
   $('#estTbl').innerHTML = l.length ? `<table><thead><tr><th>Folio</th><th>Estudiante</th><th>Documento</th><th>Grupo</th><th>Acudiente</th><th>Accesos</th><th>Estado</th><th></th></tr></thead><tbody>
   ${l.map(e => {
     const fam = familiaDe(e.id), a1 = acudDe(e.id)[0];
-    return `<tr class="${e.estado === 'Activo' ? '' : 'dim'}"><td>${e.folio}</td><td><strong>${esc(e.apellidos)}</strong> ${esc(e.nombres)} ${e.piar ? '<span class="tag piar">PIAR</span>' : ''}${e.recomendaciones_medicas ? ' <span class="tag t2" title="' + esc(e.recomendaciones_medicas) + '">Salud</span>' : ''}${e.estado === 'Activo' && !e.autoriza_datos ? ' <span class="tag t3" title="Falta la autorización de tratamiento de datos (Ley 1581)">Sin autorización de datos</span>' : ''}</td><td>${e.tipo_doc} ${esc(e.doc)}</td><td>${esc(grupo(e.grupo_id)?.nombre || '—')}</td>
+    return `<tr class="${e.estado === 'Activo' ? '' : 'dim'}"><td>${e.folio}</td><td><strong>${esc(e.apellidos)}</strong> ${esc(e.nombres)} ${e.piar ? '<span class="tag piar">PIAR</span>' : ''}${e.recomendaciones_medicas ? ' <span class="tag t2" title="' + esc(e.recomendaciones_medicas) + '">Salud</span>' : ''}${e.estado === 'Activo' && !e.autoriza_datos ? ' <span class="tag t3" title="Falta la autorización de tratamiento de datos (Ley 1581)">Sin autorización de datos</span>' : ''}${e.estado === 'Activo' && fichaIncompleta(e) ? ' <span class="tag t3" title="Faltan datos que pide el SIMAT. Abra Editar ficha para completarlos">Ficha incompleta</span>' : ''}</td><td>${e.tipo_doc} ${esc(e.doc)}</td><td>${esc(grupo(e.grupo_id)?.nombre || '—')}</td>
     <td>${esc(a1?.nombres || e.acudiente_nombre || '')}<br><span class="muted">${esc(a1?.telefono || e.acudiente_tel || '')}</span></td>
     <td>${fam.map(m => `<span class="tag" title="${esc(m.email)}">${ROL_TXT[m.rol]}${m.user_id ? '' : ' pendiente'}</span>`).join(' ')} <button class="btn ghost sm" type="button" onclick="formFamilia('${e.id}')">Invitar</button></td>
     <td>${e.estado}${e.fecha_retiro ? `<br><span class="muted">${fmtF(e.fecha_retiro)}</span>` : ''}</td>
     <td><select class="acc" aria-label="Acciones" onchange="accionEst('${e.id}',this.value);this.value=''"><option value="">Acciones…</option>
-      <option value="editar">Editar ficha</option><option value="hoja">Hoja de matrícula</option><option value="constancia">Constancia de estudio</option>
-      <option value="certificado">Constancia con calificaciones</option><option value="anteriores">Certificados de años anteriores</option>${e.estado === 'Activo' ? '<option value="retirar">Registrar retiro</option>' : '<option value="reactivar">Reactivar</option>'}</select></td></tr>`;
+      <option value="editar">${puede('matricula') ? 'Editar ficha' : 'Ver ficha'}</option><option value="hoja">Hoja de matrícula</option><option value="constancia">Constancia de estudio</option>
+      <option value="certificado">Constancia con calificaciones</option><option value="anteriores">Certificados de años anteriores</option>${!puede('matricula') ? '' : e.estado === 'Activo' ? '<option value="retirar">Registrar retiro</option>' : '<option value="reactivar">Reactivar</option>'}</select></td></tr>`;
   }).join('')}</tbody></table>` : '<div class="empty">No hay estudiantes con ese filtro.</div>';
 }
 async function accionEst(id, a) {
@@ -774,7 +851,7 @@ function formEst(id) {
       <label class="field chk"><input id="fVict" type="checkbox" ${e.victima_conflicto ? 'checked' : ''}> Víctima del conflicto armado</label>
     </div>
     <h3 style="margin-top:14px">Salud e inclusión</h3><div class="formgrid">
-      ${fIn('fEps', 'EPS o entidad de salud', e.eps)}${fSel('fRh', 'Grupo sanguíneo y RH', LISTAS.rh, e.rh)}${fIn('fSis', 'SISBÉN (grupo)', e.sisben)}
+      ${fIn('fEps', 'EPS o entidad de salud', e.eps)}${fSel('fRh', 'Grupo sanguíneo y RH', LISTAS.rh, e.rh)}${fIn('fSis', 'SISBÉN (grupo)', e.sisben, 'placeholder="Ej.: B4, o No tiene"')}
       ${fSel('fDisc', 'Discapacidad', LISTAS.discapacidad, e.discapacidad || 'No aplica')}${fSel('fCap', 'Capacidades o talentos excepcionales', LISTAS.capacidades, e.capacidades_excepcionales || 'No aplica')}
       ${fTa('fCond', 'Condición especial', e.condicion_especial, 'Diagnóstico o condición que requiera apoyos. Solo lo ven directivos y docentes del grupo.')}
       <label class="field full chk"><input id="fPiar" type="checkbox" ${e.piar ? 'checked' : ''}> Requiere PIAR (Decreto 1421 de 2017)</label>
@@ -794,10 +871,45 @@ function formEst(id) {
       <label class="field full chk"><input id="fImg" type="checkbox" ${e.autoriza_imagen ? 'checked' : ''}> Autoriza el uso de la imagen del estudiante en fotos y videos institucionales.</label>
       ${fIn('fAutPor', 'Nombre de quien autoriza', e.autoriza_por || ac[0]?.nombres || '')}${fIn('fAutFec', 'Fecha de la autorización', e.autoriza_fecha || hoy(), 'type="date"')}
     </div>
-    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarEst('${id || ''}')">${id ? 'Guardar cambios' : 'Matricular'}</button></div>`);
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button>${puede('matricula') ? `<button class="btn" type="button" onclick="guardarEst('${id || ''}')">${id ? 'Guardar cambios' : 'Matricular'}</button>` : ''}</div>`);
 }
 function agregarAcud() { const b = $('#acudBox'); b.insertAdjacentHTML('beforeend', filaAcud({}, b.children.length)); }
 const vv = id => { const el = $('#' + id); return el ? (el.type === 'checkbox' ? el.checked : el.value.trim()) : null; };
+// Revisión 20 oct: la matrícula no se guarda incompleta (datos que pide el SIMAT y al menos un acudiente completo).
+// Las autorizaciones de datos e imagen NO son obligatorias: la familia puede no autorizar y es válido.
+const OBLIG_EST = [['fNom', 'nombres', 'Nombres'], ['fApe', 'apellidos', 'Apellidos'], ['fTd', 'tipo_doc', 'Tipo de documento'], ['fDoc', 'doc', 'Número de documento'],
+  ['fExp', 'lugar_expedicion', 'Lugar de expedición'], ['fNac', 'fnac', 'Fecha de nacimiento'], ['fLNac', 'lugar_nacimiento', 'Lugar de nacimiento'], ['fSexo', 'sexo', 'Sexo'],
+  ['fDir', 'direccion', 'Dirección de residencia'], ['fBar', 'barrio', 'Barrio'], ['fMun', 'municipio', 'Municipio'], ['fZona', 'zona', 'Zona'], ['fEstr', 'estrato', 'Estrato'],
+  ['fEps', 'eps', 'EPS o entidad de salud'], ['fRh', 'rh', 'Grupo sanguíneo y RH'], ['fSis', 'sisben', 'SISBÉN (escriba "No tiene" si no aplica)'],
+  ['fGr', 'grupo_id', 'Curso'], ['fJor', 'jornada', 'Jornada'], ['fSit', 'situacion', 'Situación'], ['fFMat', 'fecha_matricula', 'Fecha de matrícula']];
+const OBLIG_ACU = [['.aNom', 'nombres', 'nombres y apellidos'], ['.aDoc', 'doc', 'número de documento'], ['.aTel', 'telefono', 'teléfono'], ['.aEmail', 'email', 'correo'], ['.aDir', 'direccion', 'dirección'], ['.aOcu', 'ocupacion', 'ocupación']];
+function validarMatricula(d, acs) {
+  document.querySelectorAll('.modal .falta').forEach(x => x.classList.remove('falta'));
+  const f = [], marca = el => el?.closest('.field')?.classList.add('falta');
+  OBLIG_EST.forEach(([id, k, l]) => { if (!d[k]) { f.push(l); marca($('#' + id)); } });
+  if (d.doc && !/^[0-9A-Za-z]{5,15}$/.test(d.doc.replace(/[\s.]/g, ''))) { f.push('Número de documento del estudiante (solo números, sin puntos)'); marca($('#fDoc')); }
+  if (d.fnac && (d.fnac > hoy() || d.fnac < '1990-01-01')) { f.push('Fecha de nacimiento válida'); marca($('#fNac')); }
+  if (d.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) { f.push('Correo del estudiante válido (o déjelo vacío)'); marca($('#fEmail')); }
+  const filas = [...document.querySelectorAll('#acudBox .acud')];
+  const usados = acs.map((a, i) => ({ a, el: filas[i] })).filter(x => x.a.nombres || x.a.doc || x.a.telefono || x.a.email || x.a.direccion || x.a.ocupacion);
+  if (!usados.length) { f.push('Al menos un acudiente con todos sus datos'); marca(filas[0]?.querySelector('.aNom')); }
+  usados.forEach(({ a, el }) => {
+    const n = `Acudiente ${a.orden}`;
+    OBLIG_ACU.forEach(([c, k, l]) => { if (!a[k]) { f.push(`${n}: ${l}`); marca(el.querySelector(c)); } });
+    if (a.doc && !/^[0-9A-Za-z]{5,15}$/.test(a.doc.replace(/[\s.]/g, ''))) { f.push(`${n}: número de documento sin puntos`); marca(el.querySelector('.aDoc')); }
+    if (a.telefono && !/^[0-9+ ]{7,15}$/.test(a.telefono)) { f.push(`${n}: teléfono válido`); marca(el.querySelector('.aTel')); }
+    if (a.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a.email)) { f.push(`${n}: correo válido`); marca(el.querySelector('.aEmail')); }
+  });
+  acs.forEach((a, i) => { if (a.responsable_pago && !usados.some(u => u.a === a)) { f.push(`Acudiente ${i + 1} está marcado como responsable de pagos pero no tiene datos`); marca(filas[i].querySelector('.aResp')); } });
+  const resp = usados.filter(u => u.a.responsable_pago).length;
+  if (usados.length && resp !== 1) { f.push(resp ? 'Solo un acudiente puede ser el responsable de pagos' : 'Marque cuál acudiente es el responsable de pagos'); usados.forEach(u => marca(u.el.querySelector('.aResp'))); }
+  return f;
+}
+function avisoFaltan(f) {
+  const el = document.querySelector('.modal .falta'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  toast(`Falta completar: ${f.slice(0, 4).join(', ')}${f.length > 4 ? ` y ${f.length - 4} más (en rojo)` : ''}`);
+}
+const fichaIncompleta = e => OBLIG_EST.some(([, k]) => !e[k]);
 async function guardarEst(id) {
   const d = {
     nombres: vv('fNom'), apellidos: vv('fApe'), tipo_doc: vv('fTd'), doc: vv('fDoc'), lugar_expedicion: vv('fExp'), fnac: vv('fNac') || null,
@@ -808,22 +920,24 @@ async function guardarEst(id) {
     grupo_id: vv('fGr'), jornada: vv('fJor'), situacion: vv('fSit'), fecha_matricula: vv('fFMat') || null, institucion_procedencia: vv('fProc'),
     autoriza_datos: vv('fAut'), autoriza_imagen: vv('fImg'), autoriza_por: vv('fAutPor'), autoriza_fecha: vv('fAutFec') || null,
   };
-  if (!d.nombres || !d.apellidos || !d.doc) return toast('Escriba nombres, apellidos y documento del estudiante');
   const acs = [...document.querySelectorAll('#acudBox .acud')].map((f, i) => ({
     id: f.dataset.id || null, orden: i + 1, parentesco: f.querySelector('.aPar').value, nombres: f.querySelector('.aNom').value.trim(),
     tipo_doc: f.querySelector('.aTd').value, doc: f.querySelector('.aDoc').value.trim(), telefono: f.querySelector('.aTel').value.trim(),
     email: f.querySelector('.aEmail').value.trim(), direccion: f.querySelector('.aDir').value.trim(), ocupacion: f.querySelector('.aOcu').value.trim(),
     responsable_pago: f.querySelector('.aResp').checked }));
-  if (!acs.some(a => a.nombres)) return toast('Registre al menos un acudiente');
+  const faltan = validarMatricula(d, acs);
+  if (faltan.length) return avisoFaltan(faltan);
+  d.doc = d.doc.replace(/[\s.]/g, '');
+  acs.forEach(a => { a.doc = a.doc.replace(/[\s.]/g, ''); a.email = a.email.toLowerCase(); });
   const a1 = acs.find(a => a.nombres);
   d.acudiente_nombre = a1.nombres; d.acudiente_tel = a1.telefono;
   const r = await guard(async () => {
-    const e = id ? await q(db.from('estudiantes').update(d).eq('id', id).select().single())
+    const e = id ? await uno(db.from('estudiantes').update(d).eq('id', id).select().single())
                  : await q(db.from('estudiantes').insert({ ...d, colegio_id: ctx.colegio_id }).select().single());
     for (const a of acs) {
       const { id: aid, ...datos } = a;
       if (!a.nombres) { if (aid) await q(db.from('acudientes').delete().eq('id', aid)); continue; }
-      if (aid) await q(db.from('acudientes').update(datos).eq('id', aid));
+      if (aid) await uno(db.from('acudientes').update(datos).eq('id', aid).select('id'));
       else await q(db.from('acudientes').insert({ ...datos, estudiante_id: e.id, colegio_id: ctx.colegio_id }));
     }
     return e;
@@ -844,12 +958,12 @@ function formRetiro(id) {
 async function guardarRetiro(id) {
   const obs = vv('rObs');
   const d = { estado: 'Retirado', fecha_retiro: vv('rFec') || hoy(), motivo_retiro: vv('rMot') + (obs ? `. ${obs}` : '') };
-  const r = await guard(() => q(db.from('estudiantes').update(d).eq('id', id).select().single()), 'Retiro registrado');
+  const r = await guard(() => uno(db.from('estudiantes').update(d).eq('id', id).select().single()), 'Retiro registrado');
   if (r) { Object.assign(est(id), r); closeModal(); drawEst(); }
 }
 async function reactivar(id) {
   if (!await confirmar('¿Reactivar la matrícula de este estudiante? Se volverán a generar sus cobros.')) return;
-  const r = await guard(() => q(db.from('estudiantes').update({ estado: 'Activo', fecha_retiro: null, motivo_retiro: null }).eq('id', id).select().single()), 'Estudiante reactivado');
+  const r = await guard(() => uno(db.from('estudiantes').update({ estado: 'Activo', fecha_retiro: null, motivo_retiro: null }).eq('id', id).select().single()), 'Estudiante reactivado');
   if (r) { Object.assign(est(id), r); drawEst(); }
 }
 async function toggleRetiro(id) { const e = est(id); return e.estado === 'Activo' ? formRetiro(id) : reactivar(id); }
@@ -891,11 +1005,20 @@ async function copiar(s) { const t = $(s); try { await navigator.clipboard.write
 const ROLES_DIRECTIVOS = ['rector', 'coordinador', 'secretaria', 'tesoreria'];
 // Solo el rector(a) maneja usuarios directivos; coordinación y secretaría manejan docentes y familias
 const puedeManejar = m => esRector() || !ROLES_DIRECTIVOS.includes(m.rol);
+// Revisión 20 oct (como la lista de usuarios de Moodle): estado claro y último acceso de cada usuario
+const estadoAcceso = m => !m.activo ? '<span class="tag t3">Bloqueado</span>' : m.user_id ? '<span class="tag ok-tag">Activo</span>' : '<span class="tag t2">Invitación pendiente</span>';
+function haceCuanto(t) {
+  if (!t) return 'todavía no ha entrado';
+  const min = Math.round((Date.now() - new Date(t)) / 6e4);
+  if (min < 2) return 'hace un momento'; if (min < 60) return `hace ${min} minutos`;
+  const h = Math.round(min / 60); if (h < 24) return `hace ${h} ${h === 1 ? 'hora' : 'horas'}`;
+  const d = Math.round(h / 24); return d === 1 ? 'ayer' : d < 60 ? `hace ${d} días` : fechaLarga(String(t).slice(0, 10));
+}
 function filaAcceso(m, extra) {
   return `<li style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
-    <span><strong>${esc(m.nombre)}</strong> <span class="tag">${ROL_TXT[m.rol]}</span> ${m.activo ? '' : '<span class="tag t3">Inactivo</span>'}<br>
-    <span class="muted">${esc(m.email)} · ${m.user_id ? 'Cuenta activa' : `Pendiente, código <span class="code">${esc(m.codigo)}</span>`}</span>${extra || ''}</span>
-    <span style="white-space:nowrap">${!puedeManejar(m) ? '<span class="muted">Solo el rector(a) lo modifica</span>' : `${m.user_id ? '' : `<button class="btn ghost sm" type="button" onclick="verInvitacion('${m.id}')">Mensaje</button> `}<button class="btn ghost sm" type="button" onclick="nuevoCodigo('${m.id}')">Nuevo código</button> ${m.user_id === me?.id ? '' : `<button class="btn ghost sm" type="button" onclick="toggleMiembro('${m.id}')">${m.activo ? 'Desactivar' : 'Activar'}</button>`}`}</span></li>`;
+    <span><strong>${esc(m.nombre)}</strong> <span class="tag">${ROL_TXT[m.rol]}</span> ${estadoAcceso(m)}<br>
+    <span class="muted">${esc(m.email)} · ${m.user_id ? `Último acceso: ${haceCuanto(m.ultimo_acceso)}` : `Invitación pendiente, código <span class="code">${esc(m.codigo)}</span>`}</span>${extra || ''}</span>
+    <span style="white-space:nowrap">${!puedeManejar(m) ? '<span class="muted">Solo el rector(a) lo modifica</span>' : `${m.user_id ? '' : `<button class="btn ghost sm" type="button" onclick="verInvitacion('${m.id}')">Mensaje</button> `}<button class="btn ghost sm" type="button" onclick="nuevoCodigo('${m.id}')">Nuevo código</button> ${m.user_id === me?.id ? '' : `<button class="btn ghost sm" type="button" onclick="toggleMiembro('${m.id}')">${m.activo ? 'Bloquear' : 'Activar'}</button>`}`}</span></li>`;
 }
 function verInvitacion(id) {
   const m = S.miembros.find(x => x.id === id);
@@ -911,19 +1034,32 @@ async function nuevoCodigo(id) {
 async function toggleMiembro(id) {
   const m = S.miembros.find(x => x.id === id);
   if (m.user_id === me.id && m.activo) return toast('No puede desactivar su propio acceso');
-  const r = await guard(() => q(db.from('miembros').update({ activo: !m.activo }).eq('id', id).select().single()), m.activo ? 'Acceso desactivado' : 'Acceso activado');
+  const r = await guard(() => uno(db.from('miembros').update({ activo: !m.activo }).eq('id', id).select().single()), m.activo ? 'Acceso bloqueado' : 'Acceso activado');
   if (r) { Object.assign(m, r); closeModal(); render(); }
 }
 
 /* =====================================================================
    Usuarios y accesos (directivos)
    ===================================================================== */
+function famOrden(l) {
+  const o = sel.uord || 'ape', e = m => est(m.estudiante_id);
+  return [...l].sort((a, b) => o === 'nom' ? a.nombre.localeCompare(b.nombre, 'es') : o === 'acc' ? String(b.ultimo_acceso || '').localeCompare(String(a.ultimo_acceso || ''))
+    : (e(a)?.apellidos || '').localeCompare(e(b)?.apellidos || '', 'es'));
+}
 function vUsuarios() {
   const staff = S.miembros.filter(m => !m.estudiante_id);
   const fam = S.miembros.filter(m => m.estudiante_id);
   return head('Usuarios y accesos', 'Invita a directivos y docentes. Las familias se invitan desde Estudiantes y matrícula.', `<button class="btn" type="button" onclick="formUsuario()">Invitar usuario</button>`) +
     `<div class="panel"><h2>Directivos y docentes</h2>${staff.length ? `<ul class="list">${staff.map(m => filaAcceso(m, m.rol === 'docente' ? `<br><span class="muted">Grupos: ${[...new Set(S.dg.filter(d => d.miembro_id === m.id).map(d => d.grupo_id))].map(g => `${esc(grupo(g)?.nombre)} (${esc(asigsDocTxt(m.id, g))})`).join('; ') || 'ninguno'}</span> <button class="linkbtn" type="button" onclick="formGruposDoc('${m.id}')">Asignar grupos y asignaturas</button>` : '')).join('')}</ul>` : '<p class="muted">Sin usuarios.</p>'}</div>
-    <div class="panel"><h2>Familias y estudiantes</h2><p>${fam.filter(m => m.user_id).length} cuentas activas y ${fam.filter(m => !m.user_id).length} invitaciones pendientes.</p></div>`;
+    <div class="panel"><h2>Familias y estudiantes</h2><p>${fam.filter(m => m.user_id).length} cuentas activas y ${fam.filter(m => !m.user_id).length} invitaciones pendientes.</p>
+      <div class="toolbar"><label class="field"><span>Buscar</span><input type="search" placeholder="Nombre o correo" value="${esc(sel.uq || '')}" oninput="sel.uq=this.value;filtrarFilas(this.value)"></label>
+        <label class="field"><span>Ordenar por</span><select onchange="sel.uord=this.value;render()">${[['ape', 'Apellido del estudiante'], ['nom', 'Nombre del acudiente'], ['acc', 'Último acceso']].map(([v, l]) => opt(v, l, sel.uord || 'ape')).join('')}</select></label></div>
+      <div class="tbl"><table><thead><tr><th>Estudiante</th><th>Usuario</th><th>Correo</th><th>Estado</th><th>Último acceso</th><th></th></tr></thead><tbody>
+      ${famOrden(fam).map(m => { const e = est(m.estudiante_id); return `<tr class="fila-busca" data-n="${esc(`${e ? nom(e) : ''} ${m.nombre} ${m.email}`.toLowerCase())}"><td>${e ? `<strong>${esc(e.apellidos)}</strong> ${esc(e.nombres)}<br><span class="muted">${esc(grupo(e.grupo_id)?.nombre || '')}</span>` : '—'}</td>
+        <td>${esc(m.nombre)}<br><span class="muted">${m.rol === 'estudiante' ? 'Estudiante' : 'Acudiente'}</span></td><td>${esc(m.email)}</td><td>${estadoAcceso(m)}</td><td>${m.user_id ? haceCuanto(m.ultimo_acceso) : '—'}</td>
+        <td style="white-space:nowrap">${m.user_id ? '' : `<button class="btn ghost sm" type="button" onclick="verInvitacion('${m.id}')">Mensaje</button> `}<button class="btn ghost sm" type="button" onclick="toggleMiembro('${m.id}')">${m.activo ? 'Bloquear' : 'Activar'}</button></td></tr>`; }).join('')}
+      </tbody></table></div>
+      <p class="muted">"Nuevo código" sirve cuando alguien perdió su código o cambió de correo: el código anterior deja de funcionar y la persona vuelve a activar su cuenta con el nuevo. Un acudiente con varios hijos activa a todos con un solo código.</p></div>`;
 }
 function formUsuario() {
   openModal('Invitar usuario', `<div class="formgrid">
@@ -1015,16 +1151,17 @@ function vNotas() {
       return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)} ${e.piar ? '<span class="tag piar">PIAR</span>' : ''}</td>${ps.map(p => p.n === sel.p ? `<td class="num actual">${cell}</td>` : `<td class="num">${txt(nota(e.id, sel.a, p.n))}</td>`).join('')}<td class="num" id="ac-${e.id}">${pre ? '' : chip(defin(e.id, sel.a))}</td><td id="st-${e.id}">${estadoCal(e.id)}</td>${pre ? '' : `<td>${recBtn(e.id)}</td>`}</tr>`;
     }).join('')}</tbody></table></div>`;
   }
-  return head('Calificaciones', pre ? 'Preescolar se valora de forma cualitativa por dimensiones.' : 'Escala de 0 a 100, sin decimales. Cada calificación se guarda sola al salir de la casilla.') +
+  return head('Calificaciones', pre ? 'En preescolar no hay números: en cada dimensión (comunicativa, cognitiva, corporal…) se elige un desempeño, Superior, Alto, Básico o Bajo, y no se reprueba el grado (Decreto 2247 de 1997). En primaria y bachillerato, en cambio, la nota sale de las actividades calificadas.' : 'Escala de 0 a 100, sin decimales. Cada calificación se guarda sola al salir de la casilla.') +
     `<div class="panel"><div class="toolbar">${selGrupoHTML(gs)}
       <label class="field"><span>${pre ? 'Dimensión' : 'Asignatura'}</span><select onchange="sel.a=this.value;render()">${as.map(a => opt(a.id, a.nombre, sel.a)).join('')}</select></label>
-      <label class="field periodo-sel"><span>Periodo que está calificando</span><select onchange="sel.p=+this.value;render();toast('Mostrando las calificaciones del periodo '+sel.p)">${perOpts(sel.p)}</select></label>
+      <label class="field periodo-sel"><span>Periodo que está calificando</span><select onchange="sel.p=+this.value;render();toast('Mostrando las calificaciones del periodo '+sel.p)">${perOpts(sel.p)}</select><small class="muted">${isDir() ? `¿Falta un periodo? <button class="linkbtn" type="button" onclick="irPtab('periodos')">Defínalo en Periodos</button>` : 'Los periodos los define el rector(a) en Parametrización.'}</small></label>
       ${modoBtns}
       <span class="muted" style="margin-left:auto"><strong id="regN">${reg}</strong> de ${es.length} con calificación en el periodo ${sel.p}</span></div>
     ${aviso}${tabla}</div>
     <section class="panel logros-box"><h2>Logros del periodo ${sel.p}</h2>
       <p class="muted">Los logros describen lo que el estudiante debe alcanzar en ${pre ? 'la dimensión' : 'la asignatura'} durante el periodo. Escriba uno por línea: aparecen en el boletín de todos los estudiantes del curso.</p>
       <textarea id="logroTxt" rows="3" placeholder="Ejemplo: Resuelve problemas de suma y resta con números hasta 1.000." ${dis}>${esc(S.logros[`${sel.g}|${sel.a}|${sel.p}`] || '')}</textarea>
+      <p class="muted" id="logroQ" style="margin:6px 0 0">${logroQuien((S.logrosQ || {})[`${sel.g}|${sel.a}|${sel.p}`])}</p>
       ${dis ? '' : `<div class="toolbar" style="margin-top:8px"><button class="btn" type="button" id="logroBtn" onclick="setLogro()">Guardar logros</button><span class="ok" id="logroOk"></span></div>`}</section>`;
 }
 const horaAhora = () => new Date().toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' });
@@ -1080,7 +1217,7 @@ async function guardarActividad(id) {
   if (!d.nombre) return toast('Escriba el nombre de la actividad');
   if (!id && actsDe(sel.g, sel.a, sel.p).some(x => x.nombre.toLowerCase() === d.nombre.toLowerCase())) return toast('Ya existe una actividad con ese nombre en este periodo');
   const r = await busy('#aBtn', () => guard(async () => {
-    const x = id ? await q(db.from('actividades').update(d).eq('id', id).select().single())
+    const x = id ? await uno(db.from('actividades').update(d).eq('id', id).select().single())
       : await q(db.from('actividades').insert({ ...d, colegio_id: ctx.colegio_id, grupo_id: sel.g, asignatura_id: sel.a, anio: S.k.anio, periodo: sel.p, orden: actsDe(sel.g, sel.a, sel.p).length + 1 }).select().single());
     S.acts = S.acts.filter(a => a.id !== x.id).concat(x);
     await recalcularPeriodo(); return x;
@@ -1145,6 +1282,7 @@ async function setNota(eid, el) {
   el.value = N(v); marcarGuardada(eid);
   
 }
+const logroQuien = w => w?.actualizado_nombre ? `Guardados por última vez por <strong>${esc(w.actualizado_nombre)}</strong> el ${fechaHora(w.actualizado_en)}. Docentes y directivos trabajan sobre el mismo texto.` : '';
 async function setLogro() {
   const t = $('#logroTxt').value.trim(), k = `${sel.g}|${sel.a}|${sel.p}`;
   const ok = await busy('#logroBtn', () => guard(async () => {
@@ -1152,7 +1290,7 @@ async function setLogro() {
     else await q(db.from('logros').upsert({ colegio_id: ctx.colegio_id, grupo_id: sel.g, asignatura_id: sel.a, anio: S.k.anio, periodo: sel.p, texto: t }, { onConflict: 'grupo_id,asignatura_id,anio,periodo' }));
     return true;
   }, 'Logros guardados'));
-  if (ok) { if (t) S.logros[k] = t; else delete S.logros[k]; const o = $('#logroOk'); if (o) o.textContent = '✓ Guardados ' + horaAhora(); }
+  if (ok) { if (t) { S.logros[k] = t; (S.logrosQ ||= {})[k] = { actualizado_nombre: ctx.nombre, actualizado_en: new Date().toISOString() }; } else { delete S.logros[k]; delete (S.logrosQ || {})[k]; } const o = $('#logroOk'); if (o) o.textContent = '✓ Guardados ' + horaAhora(); const w = $('#logroQ'); if (w) w.innerHTML = logroQuien((S.logrosQ || {})[k]); }
 }
 async function setNotaPre(eid, el) { const d = el.value; const ok = await guard(async () => { await guardarNota(eid, d ? PRE_VAL[d] : null); return true; }, d ? `Guardada: ${est(eid).nombres} ${d} en el periodo ${sel.p}` : 'Valoración borrada'); if (!ok) render(); else marcarGuardada(eid); }
 
@@ -1338,16 +1476,37 @@ async function cargarCostos() {
   costos = (await q(db.from('costos_anio').select('*').eq('colegio_id', ctx.colegio_id).eq('anio', a)))[0] || { anio: a };
   conceptos = await q(db.from('conceptos').select('*').eq('colegio_id', ctx.colegio_id).eq('anio', a).order('orden').order('nombre'));
 }
-const PTABS = { inst: 'Institución', periodos: 'Periodos y escala', grupos: 'Cursos', plan: 'Plan de estudios', logros: 'Logros', campus: 'Campus y gemas', costos: 'Costos del año', cierre: 'Cierre de año' };
+const PTABS = { inst: 'Institución', periodos: 'Periodos y escala', grupos: 'Cursos', plan: 'Plan de estudios', logros: 'Logros', campus: 'Campus y gemas', costos: 'Costos del año', permisos: 'Permisos', cierre: 'Cierre de año' };
 async function irPtab(t) { sel.ptab = t; await go('config'); }
 function vConfig() {
   const tabs = isTes() ? ['costos'] : Object.keys(PTABS);
   const t = sel.ptab || tabs[0];
-  const cuerpo = { inst: paramInst, periodos: paramPeriodos, grupos: paramGrupos, plan: planTabs, logros: paramLogros, campus: paramCampus, costos: paramCostos, cierre: paramCierre }[t]();
+  const cuerpo = { inst: paramInst, periodos: paramPeriodos, grupos: paramGrupos, plan: planTabs, logros: paramLogros, campus: paramCampus, costos: paramCostos, permisos: paramPermisos, cierre: paramCierre }[t]();
   return head('Parametrización', 'Datos del colegio y reglas del año lectivo.') +
     `<div class="tabs" role="tablist">${tabs.map(k => `<button type="button" role="tab" aria-selected="${k === t}" onclick="irPtab('${k}')">${PTABS[k]}</button>`).join('')}</div>${cuerpo}`;
 }
 const esRector = () => ctx.rol === 'rector';
+/* ---------- Permisos por cargo (revisión 20 oct) ---------- */
+const CARGOS = [['rector', 'Rector(a)'], ['coordinador', 'Coordinación'], ['secretaria', 'Secretaría'], ['tesoreria', 'Tesorería'], ['docente', 'Docentes']];
+function paramPermisos() {
+  const r = esRector();
+  return `<div class="panel"><h2>Qué puede hacer cada cargo</h2>
+    <p class="muted">Cada colegio decide. En un colegio pequeño el rector(a) puede hacerlo todo (recibir pagos, matricular, dar clases); en uno grande las funciones se separan. La base de datos respeta estos permisos. Si una persona tiene dos cargos (por ejemplo, rector y docente), invítela con los dos en Usuarios y accesos y cambie de perfil arriba.</p>
+    ${r ? '' : '<div class="note">Solo el rector o la rectora cambian los permisos.</div>'}
+    <div class="tbl"><table class="permisos"><thead><tr><th>Permiso</th>${CARGOS.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead><tbody>
+    ${Object.entries(PERM_TXT).map(([k, [t, d]]) => `<tr><td><strong>${t}</strong><br><span class="muted">${d}</span></td>${CARGOS.map(([c]) =>
+      `<td class="num"><input type="checkbox" class="pmC" data-k="${k}" data-c="${c}" aria-label="${esc(t)}: ${c}" ${permRoles(k).includes(c) ? 'checked' : ''} ${r ? '' : 'disabled'}></td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    <p class="muted" style="margin-top:8px">Siempre: el rector(a) maneja Parametrización, Usuarios y el cierre del año; los docentes califican sus cursos; las familias solo ven lo suyo.</p>
+    ${r ? `<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarPermisos()">Guardar permisos</button><button class="btn ghost" type="button" onclick="permisosDefecto()">Volver a los permisos sugeridos</button></div>` : ''}</div>`;
+}
+function permisosDefecto() { document.querySelectorAll('.pmC').forEach(x => { x.checked = PERM_DEF[x.dataset.k].includes(x.dataset.c); }); toast('Se marcaron los permisos sugeridos. Pulse "Guardar permisos" para aplicarlos'); }
+async function guardarPermisos() {
+  const p = {}; Object.keys(PERM_TXT).forEach(k => { p[k] = [...document.querySelectorAll(`.pmC[data-k="${k}"]:checked`)].map(x => x.dataset.c); });
+  if (!p.pagos.length) return toast('Al menos un cargo debe poder registrar pagos');
+  const r = await guard(() => q(db.rpc('guardar_permisos', { p_colegio: S.k.id, p_permisos: p })), 'Permisos guardados');
+  if (r) { S.k.permisos = r; render(); }
+}
 /* ---------- Logros del colegio por curso, asignatura y periodo ---------- */
 function paramLogros() {
   if (!S.grupos.length) return '<div class="panel empty">Primero cree los cursos.</div>';
@@ -1363,6 +1522,7 @@ function paramLogros() {
 }
 async function guardarLogros() {
   const g = grupo(sel.lg) || S.grupos[0], p = sel.lp || S.k.periodo_actual;
+  if (cerrado(p)) return toast(`El periodo ${p} ya está cerrado (cierre: ${fechaLarga(cierreDe(p))}). Solo coordinación o rectoría pueden cambiar sus logros`);
   const destinos = [g, ...($('#lgOtros')?.checked ? S.grupos.filter(x => x.grado === g.grado && x.id !== g.id) : [])];
   const items = [...document.querySelectorAll('.lgTxt')].map(t => ({ a: t.dataset.a, txt: t.value.trim() }));
   const ok = await guard(async () => {
@@ -1391,11 +1551,15 @@ function paramInst() {
         ${r ? `<div><p class="muted" style="margin:0 0 8px">Imagen PNG o JPG. Aparece en boletines, constancias y hojas de matrícula.</p>
         <label class="btn ghost" style="display:inline-block">Subir logo<input type="file" accept="image/png,image/jpeg,image/webp" hidden onchange="subirLogo(this)"></label>
         ${k.logo ? '<button class="btn ghost" type="button" onclick="quitarLogo()">Quitar</button>' : ''}</div>` : ''}
+        ${r ? '' : '<p class="muted">Solo el rector(a) puede cambiar el logo.</p>'}
       </div></div>
     <div class="panel"><h2>Firma del rector(a)</h2><p class="muted">Foto o escaneo de la firma sobre papel blanco. Aparece en boletines, constancias y certificados.</p>
       <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap"><div style="width:200px;height:90px;border:1px dashed var(--line);border-radius:8px;display:grid;place-items:center;background:#fff">${k.firma_rector ? `<img src="${k.firma_rector}" alt="Firma" style="max-width:190px;max-height:80px">` : '<span class="muted" style="font-size:.85rem">Sin firma</span>'}</div>
-      ${r ? `<label class="btn ghost">Subir firma<input type="file" accept="image/*" hidden onchange="subirFirma(this)"></label>${k.firma_rector ? '<button class="btn ghost" type="button" onclick="guardarColegio({firma_rector:null},\'Firma quitada\')">Quitar</button>' : ''}` : ''}</div></div>
-    ${panelAtencion(r)}${panelRedes()}`;
+      ${r ? `<label class="btn ghost">Subir firma<input type="file" accept="image/*" hidden onchange="subirFirma(this)"></label>${k.firma_rector ? '<button class="btn ghost" type="button" onclick="guardarColegio({firma_rector:null},\'Firma quitada\')">Quitar</button>' : ''}` : '<p class="muted">Solo el rector(a) puede cambiar la firma.</p>'}</div></div>
+    ${panelAtencion(r)}${panelRedes()}
+    <div class="panel"><h2>Seguridad: cierre de sesión por inactividad</h2><p class="muted">Si una persona deja la sesión abierta y no la usa, se cierra sola (útil en computadores compartidos). Un minuto antes se pregunta "¿Sigue ahí?". No aplica en la demostración.</p>
+      <div class="toolbar"><label class="field"><span>Cerrar la sesión después de</span><select id="iInact" ${r ? '' : 'disabled'}>${[[0, 'Nunca'], [15, '15 minutos sin uso'], [30, '30 minutos sin uso'], [60, '1 hora sin uso'], [120, '2 horas sin uso']].map(([v, l]) => opt(v, l, k.cierre_inactividad || 0)).join('')}</select></label>
+      ${r ? `<button class="btn" type="button" onclick="guardarColegio({ cierre_inactividad: +document.getElementById('iInact').value }, 'Guardado')">Guardar</button>` : ''}</div></div>`;
 }
 async function subirFirma(input) { const f = input.files[0]; if (!f) return; const img = await guard(() => leerImagen(f, 500)); if (img) await guardarColegio({ firma_rector: img }, 'Firma guardada'); }
 function panelAtencion(r) {
@@ -1412,7 +1576,7 @@ async function guardarAtencion() {
   await guardarColegio({ atencion: d }, 'Horario de atención guardado');
 }
 async function guardarColegio(d, okMsg) {
-  const r = await guard(() => q(db.from('colegios').update(d).eq('id', S.k.id).select().single()), okMsg);
+  const r = await guard(() => uno(db.from('colegios').update(d).eq('id', S.k.id).select().single()), okMsg);
   if (r) { S.k = r; ctx.colegios.nombre = r.nombre; render(); }
   return r;
 }
@@ -1451,7 +1615,8 @@ function paramPeriodos() {
     `<div class="panel"><h2>Periodos y calendario académico</h2><p class="muted">El año lectivo va de enero a diciembre. Elija cuántos periodos tiene, el porcentaje de cada uno (deben sumar 100%) y sus fechas. Después de la fecha de <strong>cierre de calificaciones</strong> los docentes ya no pueden modificar las calificaciones de ese periodo; los directivos sí.</p>
       <div class="toolbar"><label class="field"><span>Número de periodos</span><select id="nPer" ${dis} onchange="cambiarNumPeriodos(+this.value)">${[1, 2, 3, 4, 5, 6].map(n => opt(n, n, ps.length)).join('')}</select></label>
       <label class="field"><span>Periodo en curso</span><select id="pAct" ${dis}>${perOpts(k.periodo_actual)}</select></label></div>
-      <div id="perBox">${ps.map(p => filaPer(p, dis)).join('')}</div></div>
+      <div id="perBox">${ps.map(p => filaPer(p, dis)).join('')}</div>
+      <p class="muted" id="perNota">${r ? 'Esta sección y la escala se guardan juntas con el botón <strong>Guardar periodos y escala</strong>, al final de la escala.' : ''}</p></div>
     <div class="panel"><h2>Escala de valoración</h2><div class="toolbar">${es.map((s, i) => `<label class="field"><span>${esc(s.d)} desde</span><input ${NOTA_ATTR} id="es${i}" value="${N(s.min)}" ${dis}></label>`).join('')}
       <label class="field"><span>Asignaturas en bajo para no promover</span><input type="number" min="1" max="10" id="mxP" value="${k.max_perdidas}" ${dis}></label></div>
       ${r ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarPeriodos()">Guardar periodos y escala</button></div>' : ''}</div>
@@ -1462,6 +1627,7 @@ function cambiarNumPeriodos(n) {
   const old = periodos();
   $('#perBox').innerHTML = Array.from({ length: n }, (_, i) => filaPer({ ...(old[i] || {}), n: i + 1, peso: base + (i === n - 1 ? resto : 0) }, '')).join('');
   $('#pAct').innerHTML = Array.from({ length: n }, (_, i) => opt(i + 1, 'Periodo ' + (i + 1), pa)).join('');
+  const nt = $('#perNota'); if (nt) nt.innerHTML = `Se repartió el 100% en ${n} periodo(s)${resto ? ` (${base}% cada uno y el último ${base + resto}%, para completar 100)` : ` de ${base}% cada uno`}. Puede cambiar los porcentajes y las fechas. <strong>Aún no se ha guardado:</strong> use el botón Guardar periodos y escala.`;
 }
 async function guardarPeriodos() {
   if (+$('#nPer').value !== periodos().length && !(await confirmar(`Va a cambiar el número de periodos de ${periodos().length} a ${$('#nPer').value}. Esto cambia el boletín y los promedios del año; las calificaciones ya registradas de periodos que desaparezcan dejarán de contar. ¿Continuar?`, 'Sí, cambiar periodos'))) return;
@@ -1474,7 +1640,7 @@ async function guardarPeriodos() {
   await guardarColegio({
     periodos: pw.map((peso, i) => ({ n: i + 1, peso, ...fechas[i] })), periodo_actual: Math.min(+$('#pAct').value || 1, n), max_perdidas: +$('#mxP').value || 1,
     escala: es.map((s, i) => ({ d: s.d, min: mins[i], max: i < es.length - 1 ? mins[i + 1] - 1 : 100 })),
-  }, 'Periodos y escala guardados');
+  }, `Periodos y escala guardados: ${n} periodo(s) (${pw.map((x, i) => `P${i + 1} ${x}%`).join(', ')}), periodo en curso ${Math.min(+$('#pAct').value || 1, n)}`);
 }
 function paramGrupos() {
   return `<div class="panel"><div class="head" style="margin-bottom:10px"><h2 style="margin:0">Cursos</h2><button class="btn sm" type="button" onclick="formGrupo()">Nuevo curso</button></div>
@@ -1485,7 +1651,7 @@ function paramGrupos() {
 const TIPOS_COSTO = { matricula: 'Matrícula', pension: 'Pensión', seguro: 'Seguro', carnet: 'Carnet', otro: 'Otro' };
 const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 function panelMediosPago() {
-  const k = S.k, ro = !esRector();
+  const k = S.k, ro = !puede('costos');
   const chk = (id, l, v) => `<label class="chk"><input type="checkbox" id="${id}" ${v ? 'checked' : ''} ${ro ? 'disabled' : ''}> ${l}</label>`;
   return `<div class="panel"><h2>Cómo pueden pagar las familias</h2><p class="muted">Marque los medios que recibe el colegio. Las familias solo ven los que estén marcados, en su estado de cuenta. En todos los casos el acceso de la familia se habilita solo cuando el pago queda registrado.</p>
     <div class="formgrid">
@@ -1497,7 +1663,7 @@ function panelMediosPago() {
       ${k.pago_bold_auto ? '' : fIn('mpBoU', 'Enlace de pago de Bold del colegio (opcional si conecta las llaves)', k.pago_bold_url || '', `placeholder="https://" ${ro ? 'disabled' : ''}`)}
       <div class="field full" style="margin-top:6px">${chk('mpRes', '<strong>Familias con pagos pendientes:</strong> mientras tengan cuotas sin pagar, solo ven comunicados, horario, excusas y estado de cuenta (no calificaciones, boletines, observador ni PIAR).', k.restringir_morosos)}</div>
     </div>
-    ${ro ? '<p class="muted">Solo el rector o la rectora pueden cambiar los medios de pago.</p>' : '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarMediosPago()">Guardar medios de pago</button></div>'}</div>${panelBoldColegio()}`;
+    ${ro ? '<p class="muted">Los cambia quien tenga el permiso "Costos y medios de pago".</p>' : '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarMediosPago()">Guardar medios de pago</button></div>'}</div>${panelBoldColegio()}`;
 }
 async function guardarMediosPago() {
   const d = { pago_efectivo: $('#mpEf').checked, pago_efectivo_texto: vv('mpEfTxt') || null, pago_llave: $('#mpLl').checked, pago_llave_valor: vv('mpLlV') || null, pago_llave_titular: vv('mpLlT') || null,
@@ -1506,26 +1672,33 @@ async function guardarMediosPago() {
   if (d.pago_bold_url) { const u = normUrl(d.pago_bold_url); if (!u) return toast('Ese enlace de Bold no parece válido. Cópielo tal como se lo da Bold, por ejemplo checkout.bold.co/payment/...'); d.pago_bold_url = u; }
   if (d.pago_bold && !d.pago_bold_url && !S.k.pago_bold_auto) return toast('Pegue el enlace de pago que le da Bold o conecte el Bold del colegio');
   if (!d.pago_efectivo && !d.pago_llave && !d.pago_bold) return toast('Marque al menos un medio de pago');
-  await guardarColegio(d, 'Medios de pago guardados');
+  await guardarCobros(d, 'Medios de pago guardados');
 }
 function paramCostos() {
   const c = costos || {};
   const gradosUsados = [...new Set(S.grupos.map(g => g.grado))].sort((a, b) => a - b);
-  return `<div class="panel"><h2>Resolución de costos ${S.k.anio}</h2><p class="muted">Tarifas autorizadas por la Secretaría de Educación para el año lectivo.</p>
+  const ed = puede('costos'), rr = ed;
+  return (ed ? '' : '<div class="note">Puede consultar los costos. Los cambia quien tenga el permiso "Costos y medios de pago" (Parametrización › Permisos).</div>') + `<div class="panel"><h2>Resolución de costos ${S.k.anio}</h2><p class="muted">Tarifas autorizadas por la Secretaría de Educación para el año lectivo.</p>
     <div class="formgrid">${fIn('cRes', 'Número de resolución', c.resolucion)}${fIn('cFec', 'Fecha de la resolución', c.fecha_resolucion, 'type="date"')}${fIn('cEnt', 'Entidad que la expide', c.entidad || 'Secretaría de Educación')}${fTa('cObs', 'Observaciones', c.observaciones)}</div>
-    <div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarResolucion()">Guardar resolución</button></div></div>
+    ${ed ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarResolucion()">Guardar resolución</button></div>' : ''}</div>
   ${panelMediosPago()}
   <div class="panel"><h2>Día límite de pago</h2><p class="muted">Cada cuota mensual se considera vencida después de este día de su mes.</p>
-    <div class="toolbar"><label class="field"><span>Pagar hasta el día</span><select id="cDia">${Array.from({ length: 28 }, (_, i) => opt(i + 1, i + 1, S.k.dia_limite_pago || 5)).join('')}</select></label>
-    <button class="btn" type="button" onclick="guardarDiaLimite()">Guardar</button></div></div>
-  <div class="panel"><div class="head" style="margin-bottom:10px"><div><h2 style="margin:0">Conceptos de cobro ${S.k.anio}</h2><p class="muted" style="margin:4px 0 0">Los cobros mensuales se generan solo en los meses marcados. Si un grado tiene tarifa distinta, escríbala en "Valor por grado".</p></div><button class="btn sm" type="button" onclick="formConcepto()">Nuevo concepto</button></div>
+    <div class="toolbar"><label class="field"><span>Pagar hasta el día</span><select id="cDia" ${rr ? '' : 'disabled'}>${Array.from({ length: 28 }, (_, i) => opt(i + 1, i + 1, S.k.dia_limite_pago || 5)).join('')}</select></label>
+    ${rr ? '<button class="btn" type="button" onclick="guardarDiaLimite()">Guardar</button>' : '<span class="muted">Sin permiso para cambiarlo.</span>'}</div></div>
+  <div class="panel"><div class="head" style="margin-bottom:10px"><div><h2 style="margin:0">Conceptos de cobro ${S.k.anio}</h2><p class="muted" style="margin:4px 0 0">Los cobros mensuales se generan solo en los meses marcados. Si un grado tiene tarifa distinta, escríbala en "Valor por grado".</p></div>${ed ? '<button class="btn sm" type="button" onclick="formConcepto()">Nuevo concepto</button>' : ''}</div>
     ${conceptos.length ? `<div class="tbl"><table><thead><tr><th>Concepto</th><th>Tipo</th><th>Cobro</th><th>Valor</th><th>Por grado</th><th>Estado</th><th></th></tr></thead><tbody>
     ${conceptos.map(x => `<tr class="${x.activo ? '' : 'dim'}"><td><strong>${esc(x.nombre)}</strong></td><td>${TIPOS_COSTO[x.tipo]}</td><td>${x.periodicidad === 'mensual' ? `Mensual: ${x.meses.map(m => MESES[m].slice(0, 3)).join(', ')} (${x.meses.length} cuotas)` : `Único en ${MESES[x.mes_cobro]}`}</td><td>${cop(x.valor)}</td>
       <td>${Object.keys(x.valores_grado || {}).length ? Object.entries(x.valores_grado).map(([g, v]) => `${gradoTxt(+g)}: ${cop(v)}`).join('<br>') : '<span class="muted">Igual para todos</span>'}</td><td>${x.activo ? 'Activo' : 'Inactivo'}</td>
-      <td style="white-space:nowrap"><button class="btn ghost sm" type="button" onclick="formConcepto('${x.id}')">Editar</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no hay conceptos para este año.</p>'}
+      <td style="white-space:nowrap">${ed ? `<button class="btn ghost sm" type="button" onclick="formConcepto('${x.id}')">Editar</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no hay conceptos para este año.</p>'}
     ${gradosUsados.length ? '' : '<p class="muted">Cree primero los cursos para poder fijar valores por grado.</p>'}</div>`;
 }
-async function guardarDiaLimite() { await guardarColegio({ dia_limite_pago: +$('#cDia').value }, 'Día límite guardado'); }
+// Día límite y medios de pago: los cambia quien tenga el permiso "costos" (función colegio_cobros en la base)
+async function guardarCobros(d, okMsg) {
+  const r = await guard(() => q(db.rpc('colegio_cobros', { p_colegio: S.k.id, p_datos: d })), okMsg);
+  if (r) { S.k = { ...S.k, ...r }; render(); }
+  return r;
+}
+async function guardarDiaLimite() { await guardarCobros({ dia_limite_pago: +$('#cDia').value }, 'Día límite guardado'); }
 async function guardarResolucion() {
   const d = { colegio_id: ctx.colegio_id, anio: S.k.anio, resolucion: vv('cRes'), fecha_resolucion: vv('cFec') || null, entidad: vv('cEnt'), observaciones: vv('cObs') };
   const r = await guard(() => q(db.from('costos_anio').upsert(d, { onConflict: 'colegio_id,anio' }).select().single()), 'Resolución guardada');
@@ -1533,16 +1706,16 @@ async function guardarResolucion() {
 }
 function formConcepto(id) {
   const x = id ? conceptos.find(c => c.id === id) : { nombre: '', tipo: 'otro', periodicidad: 'unico', valor: 0, valores_grado: {}, mes_cobro: 2, meses: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11], activo: true };
-  const grados = [...new Set(S.grupos.map(g => g.grado))].sort((a, b) => a - b);
+  const grados = GRADOS_TODOS;
   openModal(id ? 'Editar concepto' : 'Nuevo concepto', `<div class="formgrid">
     ${fIn('kNom', 'Nombre', x.nombre)}
     <label class="field"><span>Tipo</span><select id="kTipo">${Object.entries(TIPOS_COSTO).map(([v, l]) => opt(v, l, x.tipo)).join('')}</select></label>
     <label class="field"><span>Se cobra</span><select id="kPer" onchange="document.getElementById('kMeses').hidden=this.value!=='mensual';document.getElementById('kMesU').hidden=this.value==='mensual'">${opt('unico', 'Una sola vez', x.periodicidad)}${opt('mensual', 'Cada mes (cuotas)', x.periodicidad)}</select></label>
     ${fIn('kVal', 'Valor general', x.valor, 'type="number" min="0" step="1000"')}
-    <label class="field" id="kMesU" ${x.periodicidad === 'mensual' ? 'hidden' : ''}><span>Mes de cobro</span><select id="kMes">${MESES.slice(1).map((m, i) => opt(i + 1, m, x.mes_cobro)).join('')}</select></label>
-    <label class="field chk"><input id="kAct" type="checkbox" ${x.activo ? 'checked' : ''}> Activo</label></div>
+    <label class="field" id="kMesU" ${x.periodicidad === 'mensual' ? 'hidden' : ''}><span>Mes en que se cobra (este cobro único vence ese mes)</span><select id="kMes">${MESES.slice(1).map((m, i) => opt(i + 1, m, x.mes_cobro)).join('')}</select></label>
+    <label class="field chk"><input id="kAct" type="checkbox" ${x.activo ? 'checked' : ''}> Activo <span class="muted">(desmárquelo para dejar de cobrarlo este año sin borrar lo ya pagado)</span></label></div>
     <div id="kMeses" ${x.periodicidad === 'mensual' ? '' : 'hidden'}><h3 style="margin-top:12px">Meses en que se cobra</h3><div class="toolbar">${MESES.slice(1).map((m, i) => `<label class="chk"><input type="checkbox" class="kMesChk" value="${i + 1}" ${x.meses.includes(i + 1) ? 'checked' : ''}> ${m.slice(0, 3)}</label>`).join('')}</div></div>
-    ${grados.length ? `<h3 style="margin-top:12px">Valor por grado (opcional)</h3><p class="muted">Déjelo vacío para usar el valor general.</p><div class="formgrid">${grados.map(g => `<label class="field"><span>${gradoTxt(g)}</span><input type="number" min="0" step="1000" class="kGr" data-g="${g}" value="${x.valores_grado?.[g] ?? ''}"></label>`).join('')}</div>` : ''}
+    ${grados.length ? `<h3 style="margin-top:12px">Valor por grado (opcional)</h3><p class="muted">Déjelo vacío para usar el valor general.</p><div class="formgrid">${grados.map(g => `<label class="field"><span>${gradoEtq(g)}</span><input type="number" min="0" step="1000" class="kGr" data-g="${g}" value="${x.valores_grado?.[g] ?? ''}"></label>`).join('')}</div>` : ''}
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarConcepto('${id || ''}')">Guardar</button></div>`);
 }
 async function guardarConcepto(id) {
@@ -1551,7 +1724,7 @@ async function guardarConcepto(id) {
     meses: [...document.querySelectorAll('.kMesChk:checked')].map(i => +i.value), activo: vv('kAct') };
   if (!d.nombre) return toast('Escriba el nombre del concepto');
   if (d.periodicidad === 'mensual' && !d.meses.length) return toast('Marque al menos un mes de cobro');
-  const r = await guard(() => id ? q(db.from('conceptos').update(d).eq('id', id).select().single())
+  const r = await guard(() => id ? uno(db.from('conceptos').update(d).eq('id', id).select().single())
     : q(db.from('conceptos').insert({ ...d, colegio_id: ctx.colegio_id, anio: S.k.anio, orden: conceptos.length + 1 }).select().single()), 'Concepto guardado');
   if (r) { await cargarCostos(); closeModal(); render(); }
 }
@@ -1595,6 +1768,10 @@ async function confirmarCierre() {
 
 const GRADOS = { '-2': 'Prejardín', '-1': 'Jardín', '0': 'Transición', 1: 'Primero', 2: 'Segundo', 3: 'Tercero', 4: 'Cuarto', 5: 'Quinto', 6: 'Sexto', 7: 'Séptimo', 8: 'Octavo', 9: 'Noveno', 10: 'Décimo', 11: 'Undécimo' };
 const gradoTxt = g => GRADOS[g] ?? g;
+// Revisión 20 oct: en las listas de grados aparecen todos (de prejardín a undécimo); los que aún no tienen curso se marcan
+const GRADOS_TODOS = [-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+const conCurso = g => S.grupos.some(x => x.grado === g);
+const gradoEtq = g => `${esc(gradoTxt(g))}${conCurso(g) ? '' : ' <span class="muted">(sin curso)</span>'}`;
 const nivelDe = g => g <= 0 ? 'preescolar' : g <= 5 ? 'primaria' : g <= 9 ? 'secundaria' : 'media';
 // Listas preestablecidas: dimensiones de preescolar y áreas obligatorias de la Ley 115 de 1994 (art. 23 y 31)
 const PRESET_ASIG = {
@@ -1608,10 +1785,11 @@ const gradosTxt = a => a.grados?.length ? a.grados.slice().sort((x, y) => x - y)
 function planHTML(n) {
   const as = S.asigs.filter(a => a.nivel === n).sort((a, b) => a.orden - b.orden), tipo = n === 'preescolar' ? 'dimensión' : 'asignatura';
   const ya = new Set(as.map(a => a.nombre.toLowerCase()));
-  return `<div class="tbl"><table><thead><tr><th>Nombre</th><th>Horas por semana</th><th>Grados</th><th>Orden</th><th></th></tr></thead><tbody>
-    ${as.map(a => `<tr><td><input value="${esc(a.nombre)}" maxlength="80" onchange="editAsig('${a.id}',{nombre:this.value.trim()})"></td><td><input type="number" min="0" max="40" value="${a.ih}" style="width:70px" onchange="editAsig('${a.id}',{ih:+this.value},this)"></td>
-      <td><button class="linkbtn" type="button" onclick="formGradosAsig('${a.id}')">${esc(gradosTxt(a))}</button></td><td><input type="number" value="${a.orden}" style="width:60px" onchange="editAsig('${a.id}',{orden:+this.value})"></td><td><button class="btn ghost sm" type="button" onclick="borrarAsig('${a.id}')">Eliminar</button></td></tr>`).join('') || `<tr><td colspan="5" class="muted">Aún no hay ${tipo === 'dimensión' ? 'dimensiones' : 'asignaturas'} en este nivel.</td></tr>`}
+  return `<div class="tbl"><table><thead><tr><th>Nombre</th><th>Horas por semana</th><th>Grados</th><th title="Orden en que aparece en boletines, planillas y certificados">Posición en el boletín</th><th></th></tr></thead><tbody>
+    ${as.map((a, i) => `<tr><td><input value="${esc(a.nombre)}" maxlength="80" onchange="editAsig('${a.id}',{nombre:this.value.trim()})"></td><td><input type="number" min="0" max="40" value="${a.ih}" style="width:70px" onchange="editAsig('${a.id}',{ih:+this.value},this)"></td>
+      <td><button class="linkbtn" type="button" onclick="formGradosAsig('${a.id}')">${esc(gradosTxt(a))}</button></td><td style="white-space:nowrap"><button class="btn ghost sm" type="button" title="Subir" aria-label="Subir ${esc(a.nombre)}" ${i ? '' : 'disabled'} onclick="moverAsig('${a.id}',-1)">▲</button> <button class="btn ghost sm" type="button" title="Bajar" aria-label="Bajar ${esc(a.nombre)}" ${i < as.length - 1 ? '' : 'disabled'} onclick="moverAsig('${a.id}',1)">▼</button></td><td><button class="btn ghost sm" type="button" onclick="borrarAsig('${a.id}')">Eliminar</button></td></tr>`).join('') || `<tr><td colspan="5" class="muted">Aún no hay ${tipo === 'dimensión' ? 'dimensiones' : 'asignaturas'} en este nivel.</td></tr>`}
   </tbody></table></div>
+  <p class="muted">Los cambios de la tabla se guardan solos al salir de cada casilla. Con las flechas ▲ ▼ ordena cómo aparecen en boletines, planillas y certificados.</p>
   <div class="panel sub"><h3>Agregar ${tipo}</h3><div class="formgrid">
     <label class="field"><span>Elija de la lista${n === 'preescolar' ? ' (dimensiones del preescolar)' : ' (áreas obligatorias, Ley 115)'}</span><select id="naSel" onchange="document.getElementById('naNom').value=this.value"><option value="">Otra (escríbala abajo)…</option>${PRESET_ASIG[n].filter(x => !ya.has(x.toLowerCase())).map(x => opt(x, x)).join('')}</select></label>
     ${fIn('naNom', 'Nombre', '', 'maxlength="80"')}${fIn('naIh', 'Horas por semana (0 a 40)', 1, 'type="number" min="0" max="40"')}
@@ -1639,7 +1817,7 @@ async function formGradosAsig(id) {
 }
 async function guardarGradosAsig(id) {
   const grados = [...document.querySelectorAll('.gaG:checked')].map(x => +x.value);
-  const r = await guard(() => q(db.from('asignaturas').update({ grados }).eq('id', id).select().single()), 'Grados guardados');
+  const r = await guard(() => uno(db.from('asignaturas').update({ grados }).eq('id', id).select().single()), 'Grados guardados');
   if (r) { Object.assign(S.asigs.find(a => a.id === id), r); closeModal(); render(); }
 }
 function docentesSel(g) {
@@ -1660,23 +1838,33 @@ async function guardarGrupo(id) {
   const dm = $('#gDirM')?.value || null, doc = (S.miembros || []).find(m => m.id === dm);
   const d = { grado, nivel: nivelDe(grado), nombre: $('#gNom').value.trim() || gradoTxt(grado), director_nombre: doc ? doc.nombre : (id ? grupo(id)?.director_nombre || '' : ''), director_miembro_id: doc ? doc.id : null };
   if (!/[a-záéíóúñ]/i.test(d.nombre)) return toast('Escriba el nombre del curso, por ejemplo Séptimo A');
-  const r = await guard(() => id ? q(db.from('grupos').update(d).eq('id', id).select().single()) : q(db.from('grupos').insert({ ...d, colegio_id: ctx.colegio_id }).select().single()), 'Grupo guardado');
+  const r = await guard(() => id ? uno(db.from('grupos').update(d).eq('id', id).select().single()) : q(db.from('grupos').insert({ ...d, colegio_id: ctx.colegio_id }).select().single()), 'Grupo guardado');
   if (!r) return;
   if (id) Object.assign(grupo(id), r); else S.grupos.push(r);
   S.grupos.sort((a, b) => a.grado - b.grado || a.nombre.localeCompare(b.nombre, 'es'));
   closeModal(); render();
 }
 async function borrarGrupo(id) {
-  if (S.ests.some(e => e.grupo_id === id)) return toast('El grupo tiene estudiantes. Muévelos a otro grupo antes de eliminarlo');
-  if (!await confirmar('¿Eliminar este grupo?')) return;
+  const g = grupo(id), n = S.ests.filter(e => e.grupo_id === id).length;
+  if (n) return toast(`El curso ${g.nombre} tiene ${n} estudiante(s). Trasládelos a otro curso o regístreles el retiro antes de eliminarlo`);
+  if (!await confirmarEscribiendo(`Se eliminará el curso ${g.nombre} con su horario, logros, actividades, comunicados y contenidos del campus. Esto no se puede deshacer.`, g.nombre, 'Eliminar curso')) return;
   const ok = await guard(async () => { await q(db.from('grupos').delete().eq('id', id)); return true; }, 'Grupo eliminado');
   if (ok) { S.grupos = S.grupos.filter(g => g.id !== id); render(); }
 }
 async function editAsig(id, d, el) {
   if ('ih' in d && !(d.ih >= 0 && d.ih <= 40)) { toast('Las horas por semana van de 0 a 40'); if (el) el.value = S.asigs.find(a => a.id === id)?.ih ?? 1; return; }
   if ('nombre' in d && d.nombre.length < 3) return toast('Escriba el nombre completo');
-  const r = await guard(() => q(db.from('asignaturas').update(d).eq('id', id).select().single()), 'Guardado');
+  const r = await guard(() => uno(db.from('asignaturas').update(d).eq('id', id).select().single()), 'Guardado');
   if (r) Object.assign(S.asigs.find(a => a.id === id), r);
+}
+// Revisión 20 oct (30): flechas para ordenar en lugar del número "Orden"
+async function moverAsig(id, dir) {
+  const a0 = S.asigs.find(a => a.id === id), as = S.asigs.filter(a => a.nivel === a0.nivel).sort((a, b) => a.orden - b.orden);
+  const i = as.indexOf(a0), j = i + dir; if (j < 0 || j >= as.length) return;
+  [as[i], as[j]] = [as[j], as[i]];
+  const cambios = as.map((a, k) => ({ a, orden: (k + 1) * 10 })).filter(x => x.a.orden !== x.orden);
+  const ok = await guard(async () => { for (const x of cambios) { await uno(db.from('asignaturas').update({ orden: x.orden }).eq('id', x.a.id).select('id')); x.a.orden = x.orden; } return true; });
+  if (ok) render();
 }
 async function nuevaAsig(n) {
   const nombre = $('#naNom').value.trim(); if (nombre.length < 3) return toast('Elija de la lista o escriba el nombre');
@@ -1690,7 +1878,8 @@ async function nuevaAsig(n) {
   if (r) { S.asigs.push(r); render(); }
 }
 async function borrarAsig(id) {
-  if (!await confirmar('Se eliminarán también las calificaciones registradas en esta asignatura. ¿Continuar?')) return;
+  const a = S.asigs.find(x => x.id === id);
+  if (!await confirmarEscribiendo(`Se eliminará la asignatura ${a?.nombre || ''} del plan de estudios. Si ya tiene calificaciones registradas, el sistema no la dejará eliminar: en ese caso desmarque sus grados para que deje de aparecer.`, a?.nombre || 'eliminar', 'Eliminar asignatura')) return;
   const ok = await guard(async () => { await q(db.from('asignaturas').delete().eq('id', id)); return true; }, 'Eliminada');
   if (ok) { S.asigs = S.asigs.filter(a => a.id !== id); render(); }
 }
@@ -1734,7 +1923,7 @@ function vPagos() {
     ${l.length ? `<div class="tbl"><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Cobrado</th><th>Pagado</th><th>Vencido</th><th>Saldo del año</th><th></th></tr></thead><tbody>
       ${l.map(x => `<tr class="${x.estado === 'Activo' ? '' : 'dim'}"><td><strong>${esc(x.nombre)}</strong>${x.estado !== 'Activo' ? ` <span class="tag">${x.estado}</span>` : ''}</td><td>${esc(x.grupo || '—')}</td><td>${cop(x.cobrado)}</td><td>${cop(x.pagado)}</td>
         <td>${+x.saldo_vencido > 0 ? `<strong style="color:var(--red)">${cop(x.saldo_vencido)}</strong>` : cop(0)}</td><td>${cop(x.saldo_total)}</td>
-        <td style="white-space:nowrap"><button class="btn sm" type="button" onclick="abrirCuenta('${x.estudiante_id}', ${anioCartera()})">Ver y registrar pago</button> ${+x.saldo_vencido > 0 ? avisoMora(x) : ''}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty">${conceptosVacios()}</div>`}</div>`;
+        <td style="white-space:nowrap"><button class="btn sm" type="button" onclick="abrirCuenta('${x.estudiante_id}', ${anioCartera()})">${manejaPagos() ? 'Ver y registrar pago' : 'Ver estado de cuenta'}</button> ${+x.saldo_vencido > 0 ? avisoMora(x) : ''}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty">${conceptosVacios()}</div>`}</div>`;
 }
 const conceptosVacios = () => cartera.length ? 'No hay estudiantes con ese filtro.' : 'Aún no hay estudiantes o costos. Configure los costos del año en Parametrización.';
 let cuenta = { eid: null, anio: 0, filas: [], pagos: [], prevFilas: [] };
@@ -1788,16 +1977,16 @@ function modalCuenta() {
   const previo = saldoPrevio(), otro = cuenta.anio !== S.k.anio;
   openModal(`Estado de cuenta ${cuenta.anio}: ${nom(e)}`, `${previo > 0 ? `<div class="note bloqueo">Tiene saldos pendientes de años anteriores por <strong>${cop(previo)}</strong>: ${aniosConDeuda().map(a => `${a}: ${cop(cuenta.prevFilas.filter(x => x.anioCobro === a).reduce((s, x) => s + +x.saldo, 0))} <button class="linkbtn" type="button" onclick="abrirCuenta('${cuenta.eid}', ${a})">ver y registrar pago</button>`).join(' · ')}</div>` : ''}
     ${otro ? `<div class="note">Está viendo el año <strong>${cuenta.anio}</strong>. Los pagos que registre aquí se aplican a ese año. <button class="linkbtn" type="button" onclick="abrirCuenta('${cuenta.eid}')">Volver a ${S.k.anio}</button></div>` : ''}<p class="muted">${esc(grupo(e.grupo_id)?.nombre || '')} · Debe a la fecha: <strong style="color:${venc ? 'var(--red)' : 'inherit'}">${cop(venc)}</strong> · Saldo del año: <strong>${cop(saldo)}</strong>${e.estado !== 'Activo' ? ` · ${e.estado}${e.fecha_retiro ? ' el ' + fmtF(e.fecha_retiro) : ''}` : ''}</p>
-    <h3>Registrar pago</h3>
+    ${manejaPagos() ? `<h3>Registrar pago</h3>
     <p class="muted">Escriba el valor que le entregan. Colegio-IA lo aplica solo, empezando por las cuotas más antiguas.</p>
     <div class="formgrid">${fIn('pVal', 'Valor recibido', '', 'type="number" min="1" oninput="previewPago()"')}${fIn('pFec', 'Fecha', hoy(), 'type="date"')}
       <label class="field"><span>Medio de pago</span><select id="pMed">${['Efectivo', 'Transferencia', 'Consignación', 'Tarjeta', 'Nequi', 'Daviplata', 'PSE', 'Otro'].map(x => opt(x, x)).join('')}</select></label>
       ${fIn('pRef', 'Referencia o comprobante (opcional)', '')}</div>
     <div id="pPrev" class="muted" style="margin-top:8px"></div>
     <div class="toolbar" style="margin-top:10px"><button class="btn" type="button" id="pBtn" onclick="registrarPago()">Registrar pago</button>
-      <button class="btn ghost" type="button" onclick="pazYSalvo('${cuenta.eid}')">${venc ? 'Constancia de deuda' : 'Paz y salvo'}</button></div>
+      <button class="btn ghost" type="button" onclick="pazYSalvo('${cuenta.eid}')">${venc ? 'Constancia de deuda' : 'Paz y salvo'}</button></div>` : '<div class="note">Usted puede consultar la cartera. Registrar pagos lo hace quien tenga ese permiso (Parametrización › Permisos).</div>'}
     <h3 style="margin-top:14px">Cobros del año</h3>${tablaCuenta(false)}
-    <h3 style="margin-top:14px">Pagos del año</h3>${tablaPagos(true)}`);
+    <h3 style="margin-top:14px">Pagos del año</h3>${tablaPagos(manejaPagos())}`);
 }
 // Reparte un valor entre las cuotas pendientes, de la más antigua a la más reciente
 function repartirPago(valor) {
@@ -1826,7 +2015,7 @@ async function registrarPago() {
 async function anularPago(n) {
   const motivo = await pedirTexto(`Motivo de la anulación del recibo No. ${n} (queda registrado):`);
   if (!motivo) return;
-  const ok = await guard(() => q(db.from('pagos').update({ anulado: true, anulado_motivo: motivo }).eq('colegio_id', S.k.id).eq('recibo', n).eq('anulado', false)), `Recibo No. ${n} anulado`);
+  const ok = await guard(() => uno(db.from('pagos').update({ anulado: true, anulado_motivo: motivo }).eq('colegio_id', S.k.id).eq('recibo', n).eq('anulado', false).select('id')), `Recibo No. ${n} anulado`);
   if (ok !== undefined) { await cargarCuenta(cuenta.eid, cuenta.anio); await prepPagos(); render(); modalCuenta(); }
 }
 function reciboPago(n) {
@@ -1924,7 +2113,7 @@ async function guardarObs(eid) {
   if (r) { obsv.unshift(r); obsv.sort((a, b) => b.fecha.localeCompare(a.fecha)); render(); }
 }
 async function setSegObs(id, el) {
-  const r = await guard(() => q(db.from('observador').update({ seguimiento: el.value.trim() || null }).eq('id', id).select().single()), 'Seguimiento guardado');
+  const r = await guard(() => uno(db.from('observador').update({ seguimiento: el.value.trim() || null }).eq('id', id).select().single()), 'Seguimiento guardado');
   if (r) Object.assign(obsv.find(o => o.id === id), r);
 }
 async function borrarObs(id) {
@@ -1967,8 +2156,26 @@ function vPiar() {
   }
   if (sel.piarE && est(sel.piarE)) return piarEditor(sel.piarE);
   const l = S.ests.filter(e => e.piar && e.estado === 'Activo' && (isDir() || S.misGrupos.includes(e.grupo_id)));
-  return head('PIAR e inclusión', 'Estudiantes marcados con "Requiere PIAR" en su ficha de matrícula.') +
+  return head('PIAR e inclusión', 'Plan Individual de Ajustes Razonables (Decreto 1421 de 2017) de los estudiantes que lo requieren.', puede('matricula') ? '<button class="btn" type="button" onclick="marcarPiar()">Marcar estudiantes que requieren PIAR</button>' : '') +
+    `<div class="note pasos-piar"><strong>¿Cómo se hace el PIAR en Colegio-IA?</strong><ol style="margin:6px 0 0">
+      <li><strong>Marcar al estudiante:</strong> ${puede('matricula') ? 'con el botón de arriba' : 'coordinación o secretaría'} (o en su ficha de matrícula, casilla "Requiere PIAR").</li>
+      <li><strong>Construirlo:</strong> aparece en la lista de abajo; pulse "Iniciar PIAR" y llene la valoración, las barreras y los ajustes por asignatura. Lo hacen el docente de apoyo, el director de grupo y coordinación.</li>
+      <li><strong>Acordar con la familia:</strong> se firma el acta de acuerdo; la familia lo ve en su cuenta.</li>
+      <li><strong>Seguir cada periodo:</strong> los docentes registran avances; el boletín indica que el estudiante es valorado con ajustes razonables.</li></ol></div>` +
     `<div class="cols"><section class="panel"><h2>Estudiantes con PIAR</h2>${l.length ? `<ul class="list">${l.map(e => `<li style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap"><span><strong>${esc(nom(e))}</strong><br><span class="muted">${esc(grupo(e.grupo_id)?.nombre || '')}${e.condicion_especial ? ' · ' + esc(e.condicion_especial) : ''} · ${piars[e.id] ? (piars[e.id].acta ? 'con acta de acuerdo firmada' : 'en construcción') : 'sin iniciar'}</span></span><button class="btn sm" type="button" onclick="abrirPiar('${e.id}')">${piars[e.id] ? 'Abrir PIAR' : 'Iniciar PIAR'}</button></li>`).join('')}</ul>` : '<p class="muted">No hay estudiantes marcados. Márquelos desde la ficha de matrícula.</p>'}</section>${GUIA_PIAR}</div>`;
+}
+function marcarPiar() {
+  const es = S.ests.filter(e => e.estado === 'Activo').sort((a, b) => (grupo(a.grupo_id)?.grado ?? 0) - (grupo(b.grupo_id)?.grado ?? 0) || nom(a).localeCompare(nom(b), 'es'));
+  openModal('Estudiantes que requieren PIAR', `<p class="muted">Marque a quienes tienen un diagnóstico o barreras para el aprendizaje que requieren ajustes razonables. Al guardar aparecen en PIAR e inclusión.</p>
+    <input type="search" placeholder="Buscar estudiante" oninput="filtrarFilas(this.value)" style="width:100%;margin-bottom:8px">
+    <div style="max-height:55vh;overflow:auto">${es.map(e => `<label class="chk fila-busca" style="display:flex" data-n="${esc(nom(e).toLowerCase())}"><input type="checkbox" class="pmP" value="${e.id}" ${e.piar ? 'checked' : ''}> ${esc(nom(e))} <span class="muted">· ${esc(grupo(e.grupo_id)?.nombre || '')}</span></label>`).join('')}</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="pmBtn" onclick="guardarMarcaPiar()">Guardar</button></div>`);
+}
+async function guardarMarcaPiar() {
+  const cambios = [...document.querySelectorAll('.pmP')].filter(x => !!est(x.value)?.piar !== x.checked);
+  if (!cambios.length) return closeModal();
+  const ok = await busy('#pmBtn', () => guard(async () => { for (const x of cambios) { const r = await uno(db.from('estudiantes').update({ piar: x.checked }).eq('id', x.value).select('id,piar').single()); Object.assign(est(x.value), r); } return true; }, `${cambios.length} estudiante(s) actualizados`));
+  if (ok) { closeModal(); await go('piar'); }
 }
 async function abrirPiar(eid) { sel.piarE = eid; const e = est(eid); await guard(() => cargarGrupo(e.grupo_id)); render(); }
 function piarEditor(eid) {
@@ -2141,7 +2348,7 @@ function panelCfgPlat() {
 }
 async function guardarCfgPlat() {
   const d = { llave: null, titular: null, whatsapp: vv('cfWa') || SOPORTE_TEL, actualizado_en: new Date().toISOString() };
-  const ok = await guard(async () => { await q(db.from('plataforma_config').update(d).eq('id', 1)); return true; }, 'Datos de pago guardados');
+  const ok = await guard(async () => { await uno(db.from('plataforma_config').update(d).eq('id', 1).select('id')); return true; }, 'Datos de pago guardados');
   if (ok) { await guard(prepPlataforma); render(); }
 }
 function formColegio() {
@@ -2376,16 +2583,20 @@ async function copiarCom(id) {
   const t = textoCom(S.coms.find(c => c.id === id));
   try { await navigator.clipboard.writeText(t); toast('Texto copiado. Péguelo en el grupo de WhatsApp'); } catch { openModal('Copiar texto', `<textarea id="cpT" style="width:100%;min-height:200px">${esc(t)}</textarea><div class="modal-foot"><button class="btn" type="button" onclick="copiar('#cpT')">Copiar</button></div>`); }
 }
-function formComunicado(tipo0 = 'Circular') {
+// Revisión 20 oct: desde el Cronograma todo evento lleva fecha (si no, no aparece en el calendario); citaciones también.
+let comCrono = false;
+const conFecha = t => comCrono || ['Citación', 'Evento'].includes(t);
+function formComunicado(tipo0 = 'Circular', desdeCrono = false) {
+  comCrono = !!desdeCrono;
   const gs = isDir() ? S.grupos : gruposVis();
   if (!gs.length && !isDir()) return toast('No tiene grupos asignados');
   openModal('Nuevo comunicado', `<div class="formgrid">
-    <label class="field"><span>Tipo</span><select id="cTipo" onchange="document.getElementById('cFevBox').hidden=!['Citación','Evento'].includes(this.value)">${TIPOS_COM.map(t => opt(t, t, tipo0)).join('')}</select></label>
+    <label class="field"><span>Tipo</span><select id="cTipo" onchange="document.getElementById('cFevBox').hidden=!conFecha(this.value)">${TIPOS_COM.map(t => opt(t, t, tipo0)).join('')}</select></label>
     <label class="field"><span>Para</span><select id="cDest" onchange="destCom()">${isDir() ? opt('todos', 'Toda la comunidad', 'todos') : ''}${opt('grupo', 'Un curso')}${opt('estudiante', 'La familia de un estudiante')}</select></label>
     <label class="field" id="cGBox" ${isDir() ? 'hidden' : ''}><span>Curso</span><select id="cGrupo" onchange="destCom()">${gs.map(g => opt(g.id, g.nombre, sel.g)).join('')}</select></label>
     <label class="field" id="cEBox" hidden><span>Estudiante</span><select id="cEst"></select></label>
     ${fIn('cTit', 'Título', '', 'maxlength="120"')}
-    <label class="field" id="cFevBox" ${['Citación', 'Evento'].includes(tipo0) ? '' : 'hidden'}><span>Fecha y hora</span><input id="cFev" type="datetime-local"></label>
+    <div id="cFevBox" ${conFecha(tipo0) ? '' : 'hidden'}>${fFH('cFev', `Fecha y hora${comCrono ? ' (aparece en el cronograma)' : ''}`)}</div>
     ${fTa('cCue', 'Mensaje', '', 'Escriba el comunicado…')}
     <label class="field full"><span>Foto (opcional): afiche, invitación o imagen del evento. Se borra sola a los 15 días</span><input type="file" id="cImg" accept="image/*"></label>
     <label class="chk full"><input type="checkbox" id="cConf" checked> Pedir confirmación de lectura a las familias</label></div>
@@ -2404,7 +2615,7 @@ async function guardarComunicado() {
   if (!c.titulo || !c.cuerpo) return toast('Escriba el título y el mensaje');
   if (d === 'estudiante' && !c.estudiante_id) return toast('Elija el estudiante');
   if (d === 'estudiante') c.grupo_id = null;
-  if (c.tipo === 'Evento' && !c.fecha_evento) return toast('Escriba la fecha y hora del evento');
+  if (conFecha(c.tipo) && !c.fecha_evento) return toast(`Escriba la fecha y hora ${c.tipo === 'Citación' ? 'de la citación' : 'del evento'}${comCrono ? ': sin fecha no aparece en el cronograma' : ''}`);
   const r = await busy('#cEnv', () => guard(async () => { c.imagen = await leerImagen($('#cImg')?.files[0]); return q(db.from('comunicados').insert(c).select(COM_COLS).single()); }, 'Comunicado enviado'));
   if (r) { if (c.imagen) imgCache[r.id] = c.imagen; S.coms.unshift(r); closeModal(); render(); }
 }
@@ -2472,9 +2683,9 @@ function vGaleria() {
     `<div class="panel">${gs.length > 1 ? `<div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.gal=this.value;go('galeria')">${gs.map(x => opt(x.id, x.nombre, sel.gal)).join('')}</select></label></div>` : ''}
       <div class="tabs" role="tablist">${[1, 2, 3, 4, 5, 6, 7].map(n => { const f = sumarDias(lun, n - 1), c = fotos.filter(x => x.fecha === f).length; if (f > h && !c) return ''; return `<button type="button" role="tab" aria-selected="${f === sel.gdia}" onclick="sel.gdia='${f}';render()">${DIAS_SEM[n]}${c ? ` <span class="badge">${c}</span>` : ''}</button>`; }).join('')}</div>
       <p class="muted">${fechaLarga(sel.gdia)} · ${esc(g?.nombre || '')}. Las fotos se borran automáticamente al terminar la semana (domingo a medianoche).</p>
-      ${puede && sel.gdia <= h ? `<div class="toolbar"><label class="btn" id="galBtn">Subir fotos del ${sel.gdia === h ? 'día de hoy' : DIAS_SEM[isoDow(sel.gdia)].toLowerCase()}<input type="file" accept="image/*" multiple hidden onchange="subirFotosClase(this)"></label><span class="muted">Hasta 8 fotos por curso cada día. Sirven para que las familias vean las actividades y para que quien faltó vea el tablero y los cuadernos.</span></div>` : ''}
+      ${puede && sel.gdia <= h ? `<div class="toolbar"><label class="btn" id="galBtn">Subir fotos del ${sel.gdia === h ? 'día de hoy' : DIAS_SEM[isoDow(sel.gdia)].toLowerCase()}<input type="file" accept="image/*" multiple hidden onchange="subirFotosClase(this)"></label><span class="muted">Para subir fotos de otro día de esta semana, toque ese día arriba. Hasta 8 fotos por curso cada día. Las ven solo las familias y estudiantes de ${esc(g?.nombre || 'este curso')}. Sirven para que las familias vean las actividades y para que quien faltó vea el tablero y los cuadernos.</span></div>` : ''}
       ${delDia.length ? `<div class="galeria">${delDia.map(f => `<figure class="foto-box"><img class="foto-cl" data-id="${f.id}" alt="${esc(f.pie || 'Foto de clase')}" onclick="verFotoEl(this)">
-        <figcaption>${f.pie ? esc(f.pie) + '<br>' : ''}<span class="muted">${esc(f.autor_nombre || '')}</span>${f.creado_por === me.id || isDir() ? ` <button class="linkbtn" type="button" onclick="borrarFotoClase('${f.id}')">Borrar</button>` : ''}</figcaption></figure>`).join('')}</div>`
+        <figcaption>${f.pie ? esc(f.pie) + '<br>' : ''}<span class="muted">${esc(f.autor_nombre || '')}</span>${f.creado_por === me.id || isDir() ? ` <button class="linkbtn" type="button" onclick="editarPieFoto('${f.id}')">${f.pie ? 'Editar texto' : 'Agregar texto'}</button> · <button class="linkbtn" type="button" onclick="borrarFotoClase('${f.id}')">Borrar</button>` : ''}</figcaption></figure>`).join('')}</div>`
         : `<p class="empty">${sel.gdia === h ? 'Aún no hay fotos de hoy.' : 'No hubo fotos este día.'}</p>`}</div>`;
 }
 async function subirFotosClase(input) {
@@ -2488,6 +2699,13 @@ async function subirFotosClase(input) {
     }
   });
   if (n) { toast(n === 1 ? 'Foto publicada' : `${n} fotos publicadas`); await go('galeria'); }
+}
+async function editarPieFoto(id) {
+  const f = fotos.find(x => x.id === id); if (!f) return;
+  const t = await pedirTexto('Texto de la foto (deje vacío para quitarlo):', 'Ej.: Así quedó el experimento de hoy', f.pie || ''); if (t === null || t === undefined) return;
+  const pie = t.trim().slice(0, 200) || null;
+  const ok = await guard(() => uno(db.from('fotos_clase').update({ pie }).eq('id', id).select('id')), 'Texto guardado');
+  if (ok !== undefined) { f.pie = pie; render(); }
 }
 async function borrarFotoClase(id) {
   if (!await confirmar('¿Borrar esta foto?')) return;
@@ -2548,24 +2766,24 @@ async function subirFotoEst(eid, input) {
 function imprimirCarnet(eid) {
   showDocs(`<section class="doc"><div style="display:flex;justify-content:center;padding:20px 0">${carnetHTML(eid)}</div></section>`, 'Carnet estudiantil', nomArchivo('Carnet', est(eid)));
 }
-function formContacto(tipo) {
+function formContacto(tipo, eid = '') {
   openModal(tipo === 'emergencia' ? 'Contacto de emergencia' : 'Persona autorizada para recoger', `<div class="formgrid">
     ${fIn('ctN', 'Nombre completo', '', 'maxlength="120"')}${fIn('ctP', 'Parentesco', '', 'maxlength="60" placeholder="Ejemplo: abuela, tío, vecino"')}
     ${fIn('ctT', 'Teléfono celular', '', 'type="tel" maxlength="30"')}${tipo === 'recoger' ? fIn('ctD', 'Número de documento', '', 'maxlength="30"') : ''}</div>
-    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarContacto('${tipo}')">Guardar</button></div>`);
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarContacto('${tipo}','${eid}')">Guardar</button></div>`);
 }
-async function guardarContacto(tipo) {
-  const d = { estudiante_id: propio(), tipo, nombre: vv('ctN'), parentesco: vv('ctP') || null, telefono: vv('ctT') || null, doc: tipo === 'recoger' ? vv('ctD') || null : null };
+async function guardarContacto(tipo, eid = '') {
+  const d = { estudiante_id: eid || propio(), tipo, nombre: vv('ctN'), parentesco: vv('ctP') || null, telefono: vv('ctT') || null, doc: tipo === 'recoger' ? vv('ctD') || null : null };
   if (d.nombre.length < 3) return toast('Escriba el nombre completo');
   if (!d.telefono) return toast('Escriba el teléfono');
   if (tipo === 'recoger' && !d.doc) return toast('Escriba el número de documento');
   const r = await guard(() => q(db.from('contactos_est').insert(d).select().single()), 'Guardado');
-  if (r) { contactos.push(r); closeModal(); render(); }
+  if (r) { if (eid) contactosG.push(r); else contactos.push(r); closeModal(); render(); }
 }
 async function borrarContacto(id) {
   if (!await confirmar('¿Retirar a esta persona? Desde ahora no aparecerá como autorizada, pero queda en el historial con la fecha de hoy.', 'Sí, retirar')) return;
   const ok = await guard(async () => { await q(db.rpc('retirar_contacto', { p_id: id })); return true; }, 'Persona retirada. Queda en el historial');
-  if (ok) { const c = contactos.find(x => x.id === id); if (c) Object.assign(c, { activo: false, retirado_en: new Date().toISOString(), retirado_nombre: ctx.nombre }); render(); }
+  if (ok) { const c = (isFam() ? contactos : contactosG).find(x => x.id === id); if (c) Object.assign(c, { activo: false, retirado_en: new Date().toISOString(), retirado_nombre: ctx.nombre }); render(); }
 }
 
 /* ---------- Contactos y recogida (personal del colegio) ---------- */
@@ -2583,7 +2801,8 @@ function vContactos() {
   const gs = isDir() ? S.grupos : gruposVis();
   if (!gs.length) return head('Contactos y recogida') + '<div class="panel empty">No tiene cursos asignados.</div>';
   const es = estsDe(sel.cg);
-  return head('Contactos y recogida', 'Contactos de emergencia y personas autorizadas para recoger a cada estudiante. Los registra la familia desde su cuenta.') +
+  const pc = puede('contactos');
+  return head('Contactos y recogida', `Contactos de emergencia y personas autorizadas para recoger a cada estudiante. Los registra la familia desde su cuenta (Carnet y contactos)${pc ? ' o usted desde aquí' : ''}.`) +
     `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.cg=this.value;go('contactos')">${gs.map(g => opt(g.id, g.nombre, sel.cg)).join('')}</select></label>
       <label class="field"><span>Buscar</span><input type="search" placeholder="Nombre del estudiante" oninput="filtrarFilas(this.value)"></label></div>
       <div class="tbl"><table><thead><tr><th>Estudiante</th><th>Emergencia</th><th>Autorizados para recoger</th><th></th></tr></thead><tbody>
@@ -2591,7 +2810,7 @@ function vContactos() {
         return `<tr class="fila-busca" data-n="${esc(nom(e).toLowerCase())}"><td><strong>${esc(e.apellidos)}</strong> ${esc(e.nombres)}</td>
           <td>${em.length ? em.map(c => `${esc(c.nombre)}${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br>${c.telefono ? `<a href="tel:${esc(c.telefono)}">${esc(c.telefono)}</a>` : ''}`).join('<hr>') : '<span class="muted">Sin registrar</span>'}</td>
           <td>${rc.length ? rc.map(c => `${esc(c.nombre)}${c.parentesco ? ` <span class="muted">(${esc(c.parentesco)})</span>` : ''}<br><span class="muted">Doc. ${esc(c.doc || '—')}</span>`).join('<hr>') : '<span class="muted">Sin registrar</span>'}${nr.length ? `<details class="hist"><summary>${nr.length} retirado(s)</summary>${nr.map(c => `<div class="dim">${esc(c.nombre)} · ${fmtF(c.creado_en)} al ${fmtF(c.retirado_en)}</div>`).join('')}</details>` : ''}</td>
-          <td><button class="btn ghost sm" type="button" onclick="verCarnet('${e.id}')">Carnet</button></td></tr>`; }).join('')}</tbody></table></div></div>`;
+          <td style="white-space:nowrap"><button class="btn ghost sm" type="button" onclick="verCarnet('${e.id}')">Carnet</button>${pc ? `<br><button class="linkbtn" type="button" onclick="formContacto('emergencia','${e.id}')">+ Emergencia</button><br><button class="linkbtn" type="button" onclick="formContacto('recoger','${e.id}')">+ Quién recoge</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div></div>`;
 }
 function filtrarFilas(t) { const x = t.toLowerCase().trim(); document.querySelectorAll('.fila-busca').forEach(r => r.hidden = !!x && !r.dataset.n.includes(x)); }
 async function verCarnet(eid) {
@@ -2610,7 +2829,7 @@ async function subirFotoEstModal(eid, input) {
 async function prepCronograma() { await cargarComs(); }
 function eventosCrono() {
   const items = [], vis = isFam() ? comsMios() : (S.coms || []).filter(c => isDir() || isTes() || c.destino === 'todos' || gruposVis().some(g => g.id === c.grupo_id || g.id === est(c.estudiante_id)?.grupo_id));
-  vis.forEach(c => { if (c.fecha_evento) items.push({ f: new Date(c.fecha_evento).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }), hora: new Date(c.fecha_evento).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }), t: c.titulo, tipo: c.tipo, d: c.destino === 'todos' ? '' : destinoTxt(c) }); });
+  vis.forEach(c => { if (c.fecha_evento) items.push({ id: c.id, mio: isDir() || c.creado_por === me.id, f: new Date(c.fecha_evento).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }), hora: new Date(c.fecha_evento).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }), t: c.titulo, tipo: c.tipo, d: c.destino === 'todos' ? '' : destinoTxt(c) }); });
   periodos().forEach(p => {
     if (p.inicio) items.push({ f: p.inicio, t: `Inicia el periodo ${p.n}`, tipo: 'Académico' });
     if (p.fin) items.push({ f: p.fin, t: `Termina el periodo ${p.n}`, tipo: 'Académico' });
@@ -2621,11 +2840,29 @@ function eventosCrono() {
 function vCronograma() {
   const h = hoy(), todos = eventosCrono(), l = sel.cpas ? todos : todos.filter(x => x.f >= h);
   const meses = {}; l.forEach(x => (meses[x.f.slice(0, 7)] ||= []).push(x));
-  return head('Cronograma', 'Fechas importantes del año: eventos, citaciones, reuniones y periodos académicos.', puedeComunicar() ? `<button class="btn" type="button" onclick="formComunicado('Evento')">Nuevo evento</button>` : '') +
+  return head('Cronograma', 'Fechas importantes del año: eventos, citaciones, reuniones y periodos académicos.', puedeComunicar() ? `<button class="btn" type="button" onclick="formComunicado('Evento', true)">Nuevo evento</button>` : '') +
     `<div class="panel"><label class="chk"><input type="checkbox" ${sel.cpas ? 'checked' : ''} onchange="sel.cpas=this.checked;render()"> Mostrar también las fechas pasadas</label>
     ${Object.keys(meses).length ? Object.entries(meses).map(([m, xs]) => `<h2 style="margin-top:16px">${(t => t[0].toUpperCase() + t.slice(1))(new Date(m + '-15T12:00:00').toLocaleDateString('es-CO', { month: 'long', year: 'numeric' }))}</h2>
-      <ul class="list crono">${xs.map(x => `<li class="${x.f < h ? 'dim' : ''}"><span class="crono-f"><strong>${new Date(x.f + 'T12:00:00').getDate()}</strong>${DIAS_SEM[isoDow(x.f)].slice(0, 3)}</span><div><strong>${esc(x.t)}</strong> <span class="tag ${x.tipo === 'Citación' ? 't3' : x.tipo === 'Evento' ? 't2' : ''}">${esc(x.tipo)}</span><br><span class="muted">${x.hora ? x.hora : ''}${x.d ? (x.hora ? ' · ' : '') + esc(x.d) : ''}</span></div></li>`).join('')}</ul>`).join('')
+      <ul class="list crono">${xs.map(x => `<li class="${x.f < h ? 'dim' : ''}"><span class="crono-f"><strong>${new Date(x.f + 'T12:00:00').getDate()}</strong>${DIAS_SEM[isoDow(x.f)].slice(0, 3)}</span><div><strong>${esc(x.t)}</strong> <span class="tag ${x.tipo === 'Citación' ? 't3' : x.tipo === 'Evento' ? 't2' : ''}">${esc(x.tipo)}</span><br><span class="muted">${x.hora ? x.hora : ''}${x.d ? (x.hora ? ' · ' : '') + esc(x.d) : ''}</span>${x.id && x.mio && !isFam() ? `<br><button class="linkbtn" type="button" onclick="formEditarEvento('${x.id}')">Editar</button> · <button class="linkbtn" type="button" onclick="borrarComunicado('${x.id}')">Eliminar</button>` : ''}</div></li>`).join('')}</ul>`).join('')
       : '<p class="empty">No hay fechas próximas. Los eventos y citaciones con fecha aparecen aquí automáticamente.</p>'}</div>`;
+}
+
+// Revisión 20 oct (44a): los eventos del cronograma se pueden corregir (título, detalle, fecha y hora) o eliminar.
+function formEditarEvento(id) {
+  const c = (S.coms || []).find(x => x.id === id); if (!c) return;
+  openModal(`Editar: ${c.titulo}`, `<p class="muted">Los cambios los ven de inmediato las familias que reciben este ${c.tipo === 'Citación' ? 'aviso' : 'evento'}.</p><div class="formgrid">
+    ${fIn('eeTit', 'Título', c.titulo, 'maxlength="150"')}
+    ${fFH('eeF', 'Fecha y hora', aLocal(c.fecha_evento))}
+    <label class="field full"><span>Mensaje</span><textarea id="eeCue" rows="4">${esc(c.cuerpo || '')}</textarea></label></div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" id="eeBtn" type="button" onclick="guardarEvento('${id}')">Guardar cambios</button></div>`);
+}
+async function guardarEvento(id) {
+  const titulo = vv('eeTit'), cuerpo = vv('eeCue'), f = $('#eeF').value;
+  if (!titulo || !cuerpo) return toast('Escriba el título y el mensaje');
+  if (!f) return toast('Escriba la fecha y la hora: sin fecha no aparece en el cronograma');
+  const d = { titulo, cuerpo, fecha_evento: new Date(f).toISOString() };
+  const r = await busy('#eeBtn', () => guard(() => uno(db.from('comunicados').update(d).eq('id', id).select(COM_COLS).single()), 'Evento actualizado'));
+  if (r) { S.coms = S.coms.map(x => x.id === id ? r : x); closeModal(); render(); }
 }
 
 /* ---------- Redes sociales del colegio ---------- */
@@ -2661,6 +2898,21 @@ async function guardarRedes() {
 function llenarEsts(id, gid) { const el = document.getElementById(id); if (el) el.innerHTML = estsDe(gid).map(e => opt(e.id, `${e.apellidos} ${e.nombres}`)).join(''); }
 const atiende = () => ctx && ['rector', 'coordinador', 'docente'].includes(ctx.rol);
 const fechaHoraCorta = t => new Date(t).toLocaleString('es-CO', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+// Revisión 20 oct: fecha y hora en dos casillas claras (día en calendario + hora en lista) con el resultado escrito debajo.
+// El valor combinado queda en un campo oculto con el mismo id, así el resto del código lo lee igual (AAAA-MM-DDTHH:MM).
+const HORAS_FH = (() => { const l = []; for (let h = 6; h <= 21; h++) for (const m of ['00', '15', '30', '45']) l.push(`${String(h).padStart(2, '0')}:${m}`); return l; })();
+function fFH(id, l, v = '') {
+  const [d, t0] = (v || '').split('T'), t = (t0 || '').slice(0, 5), hs = t && !HORAS_FH.includes(t) ? [...HORAS_FH, t].sort() : HORAS_FH;
+  return `<div class="field fh"><span>${l}</span><div class="fh-row"><input type="date" id="${id}D" value="${d || ''}" onchange="fhTxt('${id}')" aria-label="Día">
+    <select id="${id}H" onchange="fhTxt('${id}')" aria-label="Hora"><option value="">Hora…</option>${hs.map(h => opt(h, hora12(h), t)).join('')}</select></div>
+    <small class="muted fh-txt" id="${id}T">${d && t ? '✓ ' + fechaHoraCorta(`${d}T${t}`) : 'Elija el día y la hora'}</small><input type="hidden" id="${id}" value="${d && t ? `${d}T${t}` : ''}"></div>`;
+}
+function fhTxt(id) {
+  const d = $('#' + id + 'D').value, h = $('#' + id + 'H').value;
+  $('#' + id).value = d && h ? `${d}T${h}` : '';
+  $('#' + id + 'T').textContent = d && h ? '✓ ' + fechaHoraCorta(`${d}T${h}`) : d ? 'Ahora elija la hora' : 'Elija el día y la hora';
+}
+
 const aplicaAut = (a, eid) => a.destino === 'todos' || a.grupo_id === est(eid)?.grupo_id;
 const autAbierta = a => !a.fecha_limite || a.fecha_limite >= hoy();
 
@@ -2835,7 +3087,9 @@ function vAutorizaciones() {
         return `<article class="item ${!r && ab ? 'unread' : ''}"><h3>${esc(a.titulo)}</h3><div class="meta">${esc(a.autor_nombre || '')} · ${fechaHora(a.creado_en)}${a.fecha_evento ? ` · Fecha: ${fechaLarga(a.fecha_evento)}` : ''}${a.fecha_limite ? ` · Responder hasta: ${fechaLarga(a.fecha_limite)}` : ''}</div>
           <p style="white-space:pre-wrap">${esc(a.detalle)}</p>
           ${r ? `<p><span class="tag ${r.autoriza ? '' : 't3'}">${r.autoriza ? 'Usted autorizó' : 'Usted no autorizó'}</span> <span class="muted">${fechaHora(r.respondido_en)}</span></p>` : ''}
-          ${isAcud() && ab ? `<div class="toolbar" style="margin:6px 0 0"><button class="btn sm" type="button" onclick="responderAut('${a.id}', true)">${r ? 'Cambiar a: Sí autorizo' : 'Sí autorizo'}</button><button class="btn ghost sm" type="button" onclick="responderAut('${a.id}', false)">${r ? 'Cambiar a: No autorizo' : 'No autorizo'}</button></div>` : (!ab && !r ? '<p class="muted">El plazo para responder venció.</p>' : '')}</article>`; }).join('')}</div>`
+          ${isAcud() && ab && !r ? `<div class="toolbar" style="margin:6px 0 0"><button class="btn sm" type="button" onclick="responderAut('${a.id}', true)">Sí autorizo</button><button class="btn ghost sm" type="button" onclick="responderAut('${a.id}', false)">No autorizo</button></div>` : ''}
+          ${isAcud() && r ? (r.cambio_pedido_en ? `<p class="note">Usted pidió cambiar esta respuesta el ${fechaHora(r.cambio_pedido_en)}. Coordinación la revisará.</p>` : `<div class="toolbar" style="margin:6px 0 0"><button class="btn ghost sm" type="button" onclick="pedirCambioAut('${a.id}')">Pedir cambio de respuesta</button></div>`) : ''}
+          ${!ab && !r ? '<p class="muted">El plazo para responder venció.</p>' : ''}</article>`; }).join('')}</div>`
       : '<div class="panel empty">No hay autorizaciones por ahora.</div>');
   }
   const puede = isDir() || isDoc();
@@ -2846,6 +3100,8 @@ function vAutorizaciones() {
       return `<article class="item"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><h3>${esc(a.titulo)}</h3><span class="tag">${a.destino === 'todos' ? 'Todo el colegio' : esc(grupo(a.grupo_id)?.nombre || '')}</span></div>
         <div class="meta">${esc(a.autor_nombre || '')} · ${fechaHora(a.creado_en)}${a.fecha_evento ? ` · Fecha: ${fechaLarga(a.fecha_evento)}` : ''}${a.fecha_limite ? ` · Responder hasta: ${fechaLarga(a.fecha_limite)}` : ''}</div>
         <p><span class="ok">${si} autorizaron</span> · <span class="malo">${no} no autorizaron</span> · <span class="muted">${Math.max(0, es.length - si - no)} sin responder</span></p>
+        ${rs.filter(r => r.cambio_pedido_en).map(r => { const e = est(r.estudiante_id); return `<div class="note">Solicitud de cambio · ${esc(e ? nom(e) : '')}: hoy dice <strong>${r.autoriza ? 'Sí autoriza' : 'No autoriza'}</strong> y pide cambiarla. Motivo: ${esc(r.cambio_motivo || '')} <span class="muted">(${esc(r.cambio_por || '')}, ${fechaHora(r.cambio_pedido_en)})</span>
+          ${puede('autorizaciones') ? `<div class="toolbar" style="margin:6px 0 0"><button class="btn sm" type="button" onclick="resolverCambioAut('${a.id}','${r.estudiante_id}',true)">Aprobar cambio</button><button class="btn ghost sm" type="button" onclick="resolverCambioAut('${a.id}','${r.estudiante_id}',false)">Negar</button></div>` : '<p class="muted">La aprueba coordinación o rectoría.</p>'}</div>`; }).join('')}
         <div class="toolbar" style="margin:6px 0 0"><button class="btn ghost sm" type="button" onclick="detalleAut('${a.id}')">Ver respuestas</button>${isDir() || a.creado_por === me.id ? `<button class="btn ghost sm" type="button" onclick="borrarAut('${a.id}')">Eliminar</button>` : ''}</div></article>`; }).join('')}</div>`
     : '<div class="panel empty">Aún no hay autorizaciones.</div>');
 }
@@ -2866,9 +3122,23 @@ async function guardarAut() {
   const r = await busy('#auBtn', () => guard(() => q(db.from('autorizaciones').insert(a).select().single()), 'Autorización enviada'));
   if (r) { auts.unshift(r); closeModal(); render(); }
 }
+// Revisión 20 oct: la familia responde una sola vez; si necesita cambiar, lo pide y coordinación lo aprueba (queda el historial)
 async function responderAut(id, si) {
+  if (!await confirmar(`¿Confirmar "${si ? 'Sí autorizo' : 'No autorizo'}"? Después no podrá cambiarla usted mismo: tendrá que pedir el cambio a coordinación.`, si ? 'Sí, autorizo' : 'Sí, no autorizo')) return;
   const r = await guard(() => q(db.from('respuestas_aut').upsert({ autorizacion_id: id, estudiante_id: propio(), autoriza: si }, { onConflict: 'autorizacion_id,estudiante_id' }).select().single()), si ? 'Gracias, quedó autorizado' : 'Gracias, quedó registrada su respuesta');
   if (r) { resps = resps.filter(x => x.autorizacion_id !== id).concat(r); if (S.nov) S.nov.aut = (S.nov.aut || []).filter(a => a.id !== id); render(); }
+}
+async function pedirCambioAut(id) {
+  const m = await pedirTexto('¿Por qué necesita cambiar su respuesta? Coordinación revisará su solicitud.', 'Ejemplo: el niño tiene cita médica ese día');
+  if (!m) return;
+  const ok = await guard(async () => { await q(db.rpc('pedir_cambio_aut', { p_aut: id, p_est: propio(), p_motivo: m })); return true; }, 'Solicitud enviada a coordinación');
+  if (ok) { const r = resps.find(x => x.autorizacion_id === id); if (r) Object.assign(r, { cambio_pedido_en: new Date().toISOString(), cambio_motivo: m }); render(); }
+}
+async function resolverCambioAut(aid, eid, si) {
+  const nota = si ? '' : await pedirTexto('Motivo para negar el cambio (la familia lo verá):', 'Opcional');
+  if (nota === null) return;
+  const ok = await guard(async () => { await q(db.rpc('resolver_cambio_aut', { p_aut: aid, p_est: eid, p_aprobar: si, p_nota: nota || null })); return true; }, si ? 'Cambio aprobado: la respuesta quedó cambiada' : 'Cambio negado');
+  if (ok) { await prepAutorizaciones(); render(); }
 }
 function detalleAut(id) {
   const a = auts.find(x => x.id === id), es = S.ests.filter(e => e.estado === 'Activo' && (a.destino === 'todos' || e.grupo_id === a.grupo_id)).sort((x, y) => (grupo(x.grupo_id)?.nombre || '').localeCompare(grupo(y.grupo_id)?.nombre || '') || nom(x).localeCompare(nom(y)));
@@ -2903,10 +3173,11 @@ function vCitas() {
   const fam = isFam();
   if (fam && !isAcud()) return head('Citas') + '<div class="panel empty">Las citas con el colegio las maneja el acudiente.</div>';
   const act = citas.filter(c => ['Solicitada', 'Confirmada'].includes(c.estado)), pas = citas.filter(c => !['Solicitada', 'Confirmada'].includes(c.estado));
-  const card = c => { const e = est(c.estudiante_id), mia = !fam && c.personal_id === ctx.id;
+  // Revisión 20 oct: quien tenga el permiso "Citas de otros" (por defecto rectoría y coordinación) también confirma o cambia
+  const card = c => { const e = est(c.estudiante_id), mia = !fam && (c.personal_id === ctx.id || puede('citas'));
     return `<article class="item ${c.estado === 'Solicitada' && mia ? 'unread' : ''}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><h3>${fam ? esc(nomPersonal(c.personal_id) || 'Colegio') : 'Familia de ' + esc(e ? nom(e) : '')}</h3><span class="tag ${ESTADO_CITA[c.estado]}">${c.estado}</span></div>
-      <div class="meta">${c.fecha ? fechaHoraCorta(c.fecha) + ' · ' : ''}${esc(c.modalidad)}${!fam ? ` · ${esc(grupo(e?.grupo_id)?.nombre || '')}` : ''}${!fam && !mia ? ` · Con ${esc(nomPersonal(c.personal_id))}` : ''} · ${c.pedida_por === 'familia' ? 'Pedida por la familia' : 'Programada por el colegio'}</div>
-      <p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.fecha_propuesta && c.estado === 'Solicitada' ? `<p class="muted">Fecha propuesta por la familia: ${fechaHoraCorta(c.fecha_propuesta)}</p>` : c.preferencia ? `<p class="muted">Horario que prefiere la familia: ${esc(c.preferencia)}</p>` : ''}${c.respuesta ? `<p><strong>Nota del colegio:</strong> ${esc(c.respuesta)}</p>` : ''}
+      <div class="meta">${c.fecha ? fechaHoraCorta(c.fecha) + ' · ' : ''}${esc(c.modalidad)}${!fam ? ` · ${esc(grupo(e?.grupo_id)?.nombre || '')}` : ''}${!fam && c.personal_id !== ctx.id ? ` · Con ${esc(nomPersonal(c.personal_id))}` : ''} · ${c.pedida_por === 'familia' ? 'Pedida por la familia' : 'Programada por el colegio'}</div>
+      <p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${!fam && c.estado === 'Solicitada' && c.personal_id !== ctx.id ? `<p class="muted">La confirma ${esc(nomPersonal(c.personal_id) || 'la persona a quien la pidieron')}${mia ? ', o usted desde aquí' : ''}.</p>` : ''}${c.fecha_propuesta && c.estado === 'Solicitada' ? `<p class="muted">Fecha propuesta por la familia: ${fechaHoraCorta(c.fecha_propuesta)}</p>` : c.preferencia ? `<p class="muted">Horario que prefiere la familia: ${esc(c.preferencia)}</p>` : ''}${c.respuesta ? `<p><strong>Nota del colegio:</strong> ${esc(c.respuesta)}</p>` : ''}
       ${['Solicitada', 'Confirmada'].includes(c.estado) ? `<div class="toolbar" style="margin:6px 0 0">${mia ? `<button class="btn sm" type="button" onclick="formConfirmarCita('${c.id}')">${c.estado === 'Solicitada' ? 'Confirmar fecha' : 'Cambiar fecha'}</button>${c.estado === 'Confirmada' && c.fecha && c.fecha.slice(0, 10) <= hoy() ? `<button class="btn ghost sm" type="button" onclick="estadoCita('${c.id}','Realizada')">Marcar realizada</button>` : ''}` : ''}${mia || (fam && isAcud()) ? `<button class="btn ghost sm" type="button" onclick="estadoCita('${c.id}','Cancelada')">Cancelar cita</button>` : ''}</div>` : ''}</article>`; };
   return head('Citas', fam ? 'Pida una cita con el director de grupo, un docente o coordinación. El colegio le confirma la fecha y la hora.' : 'Solicitudes de cita de las familias y citas que usted programa.',
     fam ? '<button class="btn" type="button" onclick="formCita()">Pedir una cita</button>' : (atiende() ? '<button class="btn" type="button" onclick="formCita()">Programar una cita</button>' : '')) +
@@ -2929,7 +3200,7 @@ function formCita() {
     ${fam ? `<label class="field"><span>Con quién</span><select id="ciP">${contactos2.map(c => opt(c.id, `${c.nombre} · ${ROL_CONT(c)}`)).join('')}</select></label>`
       : `<label class="field"><span>Curso</span><select id="ciG" onchange="llenarEsts('ciE',this.value)">${gs.map(g => opt(g.id, g.nombre)).join('')}</select></label>
          <label class="field"><span>Estudiante</span><select id="ciE">${estsDe(gs[0].id).map(e => opt(e.id, `${e.apellidos} ${e.nombres}`)).join('')}</select></label>
-         <label class="field"><span>Fecha y hora</span><input id="ciF" type="datetime-local"></label>`}
+         ${fFH('ciF', 'Fecha y hora')}`}
     <label class="field"><span>Modalidad</span><select id="ciM">${['Presencial', 'Virtual', 'Llamada'].map(m => opt(m, m, 'Presencial')).join('')}</select></label>
     ${fTa('ciX', 'Motivo', '', fam ? 'Cuéntele al colegio de qué quiere hablar' : 'Motivo de la cita')}
     ${fam ? `<div class="field full"><span>¿Cuándo le queda bien? El colegio atiende a padres los ${atnTxt()}.</span></div>
@@ -2958,7 +3229,7 @@ function formConfirmarCita(id) {
   const c = citas.find(x => x.id === id), e = est(c.estudiante_id);
   const fx = c.fecha || c.fecha_propuesta, loc = fx ? new Date(new Date(fx).getTime() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : '';
   openModal(`Cita con la familia de ${e ? nom(e) : ''}`, `<p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.fecha_propuesta ? `<p class="muted">La familia propuso: <strong>${fechaHoraCorta(c.fecha_propuesta)}</strong>. Puede confirmarla o cambiarla.</p>` : c.preferencia ? `<p class="muted">Prefiere: ${esc(c.preferencia)}</p>` : ''}
-    <div class="formgrid"><label class="field"><span>Fecha y hora</span><input id="ccF" type="datetime-local" value="${loc}"></label>
+    <div class="formgrid">${fFH('ccF', 'Fecha y hora', loc)}
     <label class="field"><span>Modalidad</span><select id="ccM">${['Presencial', 'Virtual', 'Llamada'].map(m => opt(m, m, c.modalidad)).join('')}</select></label>
     ${fIn('ccR', 'Indicaciones para la familia (opcional)', c.respuesta || '', 'maxlength="500"')}</div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="ccBtn" onclick="confirmarCita('${id}')">Confirmar cita</button></div>`);
@@ -2966,12 +3237,12 @@ function formConfirmarCita(id) {
 async function confirmarCita(id) {
   const f = $('#ccF').value; if (!f) return toast('Escriba la fecha y hora');
   if (new Date(f) < new Date()) return toast('La fecha ya pasó');
-  const r = await busy('#ccBtn', () => guard(() => q(db.from('citas').update({ estado: 'Confirmada', fecha: new Date(f).toISOString(), modalidad: $('#ccM').value, respuesta: vv('ccR') || null }).eq('id', id).select().single()), 'Cita confirmada. La familia la verá en su cuenta.'));
+  const r = await busy('#ccBtn', () => guard(() => uno(db.from('citas').update({ estado: 'Confirmada', fecha: new Date(f).toISOString(), modalidad: $('#ccM').value, respuesta: vv('ccR') || null }).eq('id', id).select().single()), 'Cita confirmada. La familia la verá en su cuenta.'));
   if (r) { citas = citas.map(c => c.id === id ? r : c); closeModal(); await cargarNovedades(); render(); }
 }
 async function estadoCita(id, estado) {
   if (estado === 'Cancelada' && !await confirmar('¿Cancelar esta cita?')) return;
-  const r = await guard(() => q(db.from('citas').update({ estado }).eq('id', id).select().single()), estado === 'Cancelada' ? 'Cita cancelada' : 'Cita marcada como realizada');
+  const r = await guard(() => uno(db.from('citas').update({ estado }).eq('id', id).select().single()), estado === 'Cancelada' ? 'Cita cancelada' : 'Cita marcada como realizada');
   if (r) { citas = citas.map(c => c.id === id ? r : c); await cargarNovedades(); render(); }
 }
 
@@ -2992,7 +3263,7 @@ function gridHorario(l, celda) {
   if (!nb) return '<div class="empty">Aún no hay horario registrado.</div>';
   const dias = [1, 2, 3, 4, 5].concat(sab ? [6] : []);
   return `<div class="tbl"><table class="planilla"><thead><tr><th>Hora</th>${dias.map(d => `<th>${DIAS[d]}</th>`).join('')}</tr></thead><tbody>
-    ${Array.from({ length: nb }, (_, i) => i + 1).map(b => { const fila = l.filter(x => x.bloque === b); return `<tr><td><strong>${b}</strong>${fila.find(x => x.hora)?.hora ? `<br><span class="muted">${esc(fila.find(x => x.hora).hora)}</span>` : ''}</td>${dias.map(d => `<td>${fila.filter(x => x.dia === d).map(celda).join('<br>') || ''}</td>`).join('')}</tr>`; }).join('')}
+    ${Array.from({ length: nb }, (_, i) => i + 1).map(b => { const fila = l.filter(x => x.bloque === b); return `<tr><td><strong>${b}</strong>${fila.find(x => x.hora)?.hora ? `<br><span class="muted">${esc(fila.find(x => x.hora).hora)}</span>` : ''}</td>${dias.map(d => `<td>${fila.filter(x => x.dia === d).map(celda).join('<br>') || ''}</td>`).join('')}</tr>${S.k?.horario_cfg?.desc_despues === b && b < nb ? `<tr class="h-desc"><td colspan="${dias.length + 1}">☕ Descanso · ${S.k.horario_cfg.desc_min} minutos</td></tr>` : ''}`; }).join('')}
   </tbody></table></div>`;
 }
 function vHorario() {
@@ -3001,19 +3272,31 @@ function vHorario() {
   if (sel.hEdit && isDir()) return editorHorario();
   const mio = sel.hg === 'mio', mn = (ctx.nombre || '').toLowerCase().trim();
   const l = mio ? horario.filter(x => (x.docente || '').toLowerCase().trim() === mn) : horario;
-  const celda = x => `<strong>${esc(nomAsig(x.asignatura_id) || '—')}</strong>${mio ? `<br><span class="muted">${esc(grupo(x.grupo_id)?.nombre || '')}</span>` : x.docente ? `<br><span class="muted">${esc(x.docente)}</span>` : ''}`;
-  return head('Horario de clases', isFam() ? esc(grupo(sel.hg)?.nombre || '') : 'Horario semanal por curso.', isDir() && sel.hg ? '<button class="btn" type="button" onclick="sel.hEdit=true;render()">Editar horario</button>' : '') +
+  const celda = x => `<div class="h-cel" style="--c:${colorCurso(x.asignatura_id)}"><strong>${esc(nomAsig(x.asignatura_id) || '—')}</strong>${mio ? `<br><span>${esc(grupo(x.grupo_id)?.nombre || '')}</span>` : x.docente ? `<br><span>${esc(x.docente)}</span>` : ''}</div>`;
+  return head('Horario de clases', isFam() ? esc(grupo(sel.hg)?.nombre || '') : 'Horario semanal por curso.', (l.length ? '<button class="btn ghost" type="button" onclick="imprimirHorario()">Imprimir</button>' : '') + (isDir() && sel.hg ? '<button class="btn" type="button" onclick="sel.hEdit=true;render()">Editar horario</button>' : '')) +
     (isFam() ? '' : `<div class="panel"><div class="toolbar"><label class="field"><span>Ver</span><select onchange="sel.hg=this.value;go('horario')">${isDoc() ? opt('mio', 'Mi horario', sel.hg) : ''}${gs.map(g => opt(g.id, g.nombre, sel.hg)).join('')}</select></label></div></div>`) +
     `<div class="panel">${gridHorario(l, celda)}${mio && !l.length && horario.length ? '<p class="muted">Su nombre no aparece en el horario de ningún curso. Pida a coordinación que lo asigne.</p>' : ''}</div>`;
+}
+function imprimirHorario() {
+  const mio = sel.hg === 'mio', mn = (ctx.nombre || '').toLowerCase().trim(), l = mio ? horario.filter(x => (x.docente || '').toLowerCase().trim() === mn) : horario;
+  const celda = x => `<div class="h-cel" style="--c:${colorCurso(x.asignatura_id)}"><strong>${esc(nomAsig(x.asignatura_id) || '—')}</strong>${x.docente && !mio ? `<br><span>${esc(x.docente)}</span>` : mio ? `<br><span>${esc(grupo(x.grupo_id)?.nombre || '')}</span>` : ''}</div>`;
+  showDocs(`<section class="doc">${docHead('Horario de clases', mio ? esc(ctx.nombre) : esc(grupo(sel.hg)?.nombre || ''))}${gridHorario(l, celda)}</section>`, 'Horario', `Horario ${mio ? ctx.nombre : grupo(sel.hg)?.nombre || ''}`);
 }
 function editorHorario() {
   const g = grupo(sel.hg), as = asigsDe(g), docs = (S.miembros || []).filter(m => m.rol === 'docente' && m.activo).map(m => m.nombre);
   const nb = sel.hNb || Math.max(6, ...horario.map(x => x.bloque)), sab = sel.hSab ?? horario.some(x => x.dia === 6);
-  const dias = [1, 2, 3, 4, 5].concat(sab ? [6] : []);
+  const dias = [1, 2, 3, 4, 5].concat(sab ? [6] : []), hc = { inicio: '07:00', min: 45, desc_despues: 3, desc_min: 30, ...(S.k.horario_cfg || {}) };
   const c = (d, b) => horario.find(x => x.dia === d && x.bloque === b) || {};
   return head(`Editar horario: ${esc(g.nombre)}`, 'Elija la asignatura y el docente de cada hora. Deje en blanco los descansos o las horas libres.') +
     `<div class="panel"><div class="toolbar"><label class="field"><span>Horas de clase por día</span><select onchange="sel.hNb=+this.value;render()">${[4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => opt(n, n, nb)).join('')}</select></label>
       <label class="chk"><input type="checkbox" ${sab ? 'checked' : ''} onchange="sel.hSab=this.checked;render()"> Incluir sábado</label></div>
+      <fieldset class="revision"><legend>Jornada del colegio (para calcular las horas)</legend>
+        <p class="muted" style="margin:0 0 8px">Cada colegio define cuánto dura cada clase y cuándo es el descanso. Pulse "Calcular horas" y se escriben solas en la columna Hora.</p>
+        <div class="formgrid">${fIn('hjIni', 'Hora de entrada', hc.inicio, 'type="time"')}
+        <label class="field"><span>Duración de cada clase</span><select id="hjMin">${[40, 45, 50, 55, 60, 90].map(n => opt(n, n === 60 ? '1 hora' : n === 90 ? '1 hora y media' : n + ' minutos', hc.min)).join('')}</select></label>
+        <label class="field"><span>Descanso después de la hora</span><select id="hjDes">${opt(0, 'Sin descanso', hc.desc_despues)}${Array.from({ length: nb - 1 }, (_, i) => opt(i + 1, `${i + 1}.ª hora`, hc.desc_despues)).join('')}</select></label>
+        <label class="field"><span>Duración del descanso</span><select id="hjDm">${[15, 20, 25, 30, 40, 45].map(n => opt(n, n + ' minutos', hc.desc_min)).join('')}</select></label></div>
+        <div class="toolbar" style="margin-top:8px"><button class="btn ghost" type="button" onclick="calcularHoras()">Calcular horas</button></div></fieldset>
     <div class="tbl"><table class="planilla"><thead><tr><th>Hora</th>${dias.map(d => `<th>${DIAS[d]}</th>`).join('')}</tr></thead><tbody>
     ${Array.from({ length: nb }, (_, i) => i + 1).map(b => `<tr><td><strong>${b}</strong><br><input class="hHora" data-b="${b}" style="width:110px" placeholder="7:00 a 7:50" value="${esc(horario.find(x => x.bloque === b && x.hora)?.hora || '')}"></td>
       ${dias.map(d => { const x = c(d, b); return `<td><select class="hAs" data-d="${d}" data-b="${b}"><option value="">—</option>${as.map(a => opt(a.id, a.nombre, x.asignatura_id || '')).join('')}</select><br>
@@ -3021,11 +3304,25 @@ function editorHorario() {
     </tbody></table></div>
     <div class="toolbar" style="margin-top:12px"><button class="btn ghost" type="button" onclick="sel.hEdit=false;render()">Cancelar</button><button class="btn" type="button" onclick="guardarHorario()">Guardar horario</button></div></div>`;
 }
+// Revisión 20 oct: horas calculadas según la duración de las clases y el descanso que defina el colegio
+const h12c = m => { const H = Math.floor(m / 60), M = m % 60; return `${(H % 12) || 12}:${String(M).padStart(2, '0')}`; };
+async function calcularHoras() {
+  const cfg = { inicio: vv('hjIni') || '07:00', min: +vv('hjMin'), desc_despues: +vv('hjDes'), desc_min: +vv('hjDm') };
+  let [h, m] = cfg.inicio.split(':').map(Number), t = h * 60 + m;
+  document.querySelectorAll('.hHora').forEach(i => { const b = +i.dataset.b; i.value = `${h12c(t)} a ${h12c(t + cfg.min)}`; t += cfg.min; if (b === cfg.desc_despues) t += cfg.desc_min; });
+  if (esRector() || isDir()) await guard(async () => { await q(db.rpc('colegio_horario_cfg', { p_colegio: S.k.id, p_cfg: cfg })); return true; }).then(r => { if (r) S.k.horario_cfg = cfg; });
+  toast('Horas calculadas. Revise y pulse "Guardar horario"');
+}
 async function guardarHorario() {
   const horas = {}; document.querySelectorAll('.hHora').forEach(i => horas[i.dataset.b] = i.value.trim());
   const filas = [...document.querySelectorAll('.hAs')].map(s => { const doc = document.querySelector(`.hDoc[data-d="${s.dataset.d}"][data-b="${s.dataset.b}"]`).value;
     return { colegio_id: ctx.colegio_id, grupo_id: sel.hg, dia: +s.dataset.d, bloque: +s.dataset.b, hora: horas[s.dataset.b] || null, asignatura_id: s.value || null, docente: doc || null }; })
     .filter(x => x.asignatura_id || x.docente);
+  // Revisión 20 oct: un docente no puede quedar en dos cursos a la misma hora
+  const otros = (await guard(() => all(() => db.from('horario').select('grupo_id,dia,bloque,docente').eq('colegio_id', ctx.colegio_id).neq('grupo_id', sel.hg).not('docente', 'is', null).order('id')))) || [];
+  const cruces = filas.filter(f => f.docente && otros.some(o => o.docente === f.docente && o.dia === f.dia && o.bloque === f.bloque))
+    .map(f => `${f.docente}: ${DIAS[f.dia]} hora ${f.bloque} (ya está en ${grupo(otros.find(o => o.docente === f.docente && o.dia === f.dia && o.bloque === f.bloque).grupo_id)?.nombre || 'otro curso'})`);
+  if (cruces.length) return dialogo(`<h3 style="margin-top:0">Hay cruces de horario</h3><p>Estos docentes ya tienen clase a esa hora en otro curso:</p><ul>${cruces.map(c => `<li>${esc(c)}</li>`).join('')}</ul><p class="muted">Cambie el docente o la hora y vuelva a guardar.</p><div class="modal-foot"><button class="btn" type="button" onclick="dlgFin(true)">Entendido</button></div>`);
   const ok = await guard(async () => { await q(db.from('horario').delete().eq('grupo_id', sel.hg)); if (filas.length) await q(db.from('horario').insert(filas)); return true; }, 'Horario guardado');
   if (ok) { sel.hEdit = false; sel.hNb = 0; sel.hSab = undefined; await go('horario'); }
 }
@@ -3110,7 +3407,7 @@ async function revisarExcusa(id, estado) {
   const respuesta = estado === 'Rechazada' ? await pedirTexto('Motivo del rechazo (la familia lo verá):') : '';
   if (estado === 'Rechazada' && !respuesta) return;
   const r = await guard(async () => {
-    const u = await q(db.from('excusas').update({ estado, respuesta: respuesta || null }).eq('id', id).select(COLS_EXC).single());
+    const u = await uno(db.from('excusas').update({ estado, respuesta: respuesta || null }).eq('id', id).select(COLS_EXC).single());
     if (estado === 'Aprobada') {
       const dias = diasHabiles(x.desde, x.hasta);
       if (porClase()) await q(db.from('asistencia_clase').update({ estado: 'E' }).eq('estudiante_id', x.estudiante_id).gte('fecha', x.desde).lte('fecha', x.hasta).eq('estado', 'A'));
@@ -3144,7 +3441,7 @@ async function verComprobante(id) {
 }
 async function confirmarComp(id) {
   const c = comps.find(x => x.id === id);
-  const ok = await guard(async () => { await q(db.from('comprobantes').update({ estado: 'Confirmado' }).eq('id', id)); return true; });
+  const ok = await guard(async () => { await uno(db.from('comprobantes').update({ estado: 'Confirmado' }).eq('id', id).select('id')); return true; });
   if (!ok) return;
   comps = comps.filter(x => x.id !== id);
   await abrirCuenta(c.estudiante_id);
@@ -3155,7 +3452,7 @@ async function confirmarComp(id) {
 }
 async function rechazarComp(id) {
   const m = await pedirTexto('Motivo del rechazo (la familia lo verá):'); if (!m) return;
-  const ok = await guard(async () => { await q(db.from('comprobantes').update({ estado: 'Rechazado', respuesta: m }).eq('id', id)); return true; }, 'Comprobante rechazado');
+  const ok = await guard(async () => { await uno(db.from('comprobantes').update({ estado: 'Rechazado', respuesta: m }).eq('id', id).select('id')); return true; }, 'Comprobante rechazado');
   if (ok) { comps = comps.filter(x => x.id !== id); render(); }
 }
 const MEDIOS = ['Transferencia', 'Consignación', 'Nequi', 'Daviplata', 'PSE', 'Efectivo', 'Otro'];
@@ -3281,8 +3578,11 @@ function acPlanilla() {
   const g = grupo(sel.ag);
   return `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.ag=this.value;go('academico')">${gs.map(x => opt(x.id, x.nombre, sel.ag)).join('')}</select></label>${selPerAc()}
     ${isDoc() ? '' : `<button class="btn ghost" type="button" style="margin-left:auto" onclick="exportarPlanilla()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="showDocs(planillaDoc(),'Planilla')">Imprimir</button>`}</div>
-    ${planillaHTML(g, sel.app)}<p class="muted" style="margin-top:8px">Las calificaciones en rojo están en desempeño bajo. Pase el cursor sobre la abreviatura para ver el nombre completo de la asignatura.</p></div>`;
+    ${isDoc() ? '<div class="note">Esta es la planilla de su curso como director(a) de grupo: muestra cómo va cada estudiante en todas las asignaturas, para hacer seguimiento y hablar con las familias a tiempo. Las impresiones y documentos los hace coordinación o rectoría.</div>' : ''}
+    ${sinNotasPlanilla(g) ? `<div class="panel empty">Todavía no hay calificaciones registradas ${sel.app === 'acum' ? 'en el año' : `en el periodo ${sel.app}`} para ${esc(g.nombre)}. Aparecerán aquí a medida que los docentes califiquen.</div>` : planillaHTML(g, sel.app)}
+    <p class="muted" style="margin-top:8px">Las calificaciones en rojo están en desempeño bajo. Pase el cursor sobre la abreviatura para ver el nombre completo de la asignatura.</p></div>`;
 }
+function sinNotasPlanilla(g) { const es = estsDe(g.id), as = asigsDe(g); return es.length > 0 && !es.some(e => as.some(a => (sel.app === 'acum' ? defin(e.id, a.id) : nota(e.id, a.id, sel.app)) != null)); }
 function planillaDoc() { const g = grupo(sel.ag); return `<section class="doc">${docHead(`Planilla consolidada: ${esc(g.nombre)}`, sel.app === 'acum' ? `Acumulado ${S.k.anio}` : `Periodo ${sel.app}, año ${S.k.anio}`)}${planillaHTML(g, sel.app)}</section>`; }
 function statsDe(lista) { const v = lista.map(n => +n.valor), b = v.filter(x => desem(x) === 'Bajo').length; return { n: v.length, bajo: b, pct: v.length ? Math.round(b / v.length * 100) : 0, prom: v.length ? v.reduce((a, c) => a + c, 0) / v.length : null }; }
 function acEstadisticas() {
@@ -3584,19 +3884,26 @@ function tabProductos() {
       <td><div class="toolbar"><button class="btn ghost sm" type="button" onclick="formProducto('${p.id}')">Editar</button><button class="linkbtn" type="button" onclick="borrarProducto('${p.id}')">Borrar</button></div></td></tr>`).join('')}</tbody></table></div>`
       : '<p class="empty">Aún no hay artículos. Agregue el primero: uniforme, agenda, libro, ruta, alimentación, refuerzo, derechos de grado o una salida.</p>'}</div>`;
 }
+// Muestra la foto elegida antes de guardar
+function previaImg(input, id) {
+  const f = input.files[0]; if (!f) return; let im = document.getElementById(id);
+  if (!im) { im = document.createElement('img'); im.id = id; im.className = 'prod-prev'; input.before(im); }
+  im.src = URL.createObjectURL(f);
+}
 function formProducto(id) {
   const p = productos.find(x => x.id === id) || { categoria: 'Uniformes', activo: true, grados: [], orden: productos.length + 1 };
-  const grados = [...new Set(S.grupos.map(g => g.grado))].sort((a, b) => a - b);
+  const grados = GRADOS_TODOS;
   openModal(id ? 'Editar artículo' : 'Agregar artículo', `<div class="formgrid">
     <label class="field"><span>Categoría</span><select id="prCat">${CATS.map(c => opt(c, c, p.categoria)).join('')}</select></label>
     ${fIn('prNom', 'Nombre', p.nombre, 'maxlength="120"')}${fIn('prPre', 'Precio (pesos)', p.precio || '', 'type="number" min="1"')}
-    ${fIn('prOp', 'Tallas u opciones, separadas por coma (opcional)', p.opciones || '', 'maxlength="300" placeholder="Ejemplo: 6, 8, 10, 12, S, M"')}
+    ${fIn('prOp', 'Tallas u opciones (opcional): la familia elige una al pedir', p.opciones || '', 'maxlength="300" placeholder="Ej.: tallas 6, 8, 10, 12 · o colores Azul, Blanco · sepárelas con coma"')}
     ${fTa('prDes', 'Descripción (opcional)', p.descripcion || '', 'Qué incluye, fechas, horarios…')}
-    <div class="field full"><span>Para qué grados (si no marca ninguno, lo ven todos)</span><div class="cuotas">${grados.map(g => `<label class="chk"><input type="checkbox" class="prG" value="${g}" ${p.grados?.includes(g) ? 'checked' : ''}> ${gradoTxt(g)}</label>`).join('')}</div></div>
-    <label class="field"><span>Foto (opcional, se guarda liviana)</span><input type="file" id="prImg" accept="image/*"></label>
+    <div class="field full"><span>Para qué grados (si no marca ninguno, lo ven todos)</span><div class="cuotas">${grados.map(g => `<label class="chk"><input type="checkbox" class="prG" value="${g}" ${p.grados?.includes(g) ? 'checked' : ''}> ${gradoEtq(g)}</label>`).join('')}</div></div>
+    <label class="field"><span>Foto (opcional, se guarda liviana)</span>${p.con_imagen ? `<img class="prod-prev" id="prPrev" alt="Foto actual">` : ''}<input type="file" id="prImg" accept="image/*" onchange="previaImg(this,'prPrev')"></label>
     ${fIn('prOrd', 'Orden en la tienda', p.orden ?? 0, 'type="number"')}
     <div class="field full"><label class="chk"><input type="checkbox" id="prAct" ${p.activo ? 'checked' : ''}> Activo (visible para las familias)</label>${p.con_imagen ? `<label class="chk"><input type="checkbox" id="prSinImg"> Quitar la foto actual</label>` : ''}</div></div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="prBtn" onclick="guardarProducto('${id || ''}')">Guardar</button></div>`);
+  if (p.con_imagen) { const im = $('#prPrev'); im.dataset.id = p.id; im.classList.add('prod-ed'); cargarImgs('productos', 'imagen', 'img.prod-ed'); }
 }
 async function guardarProducto(id) {
   const d = { categoria: vv('prCat'), nombre: vv('prNom'), precio: Math.round(+vv('prPre') || 0), opciones: vv('prOp') || null, descripcion: vv('prDes') || null,
@@ -3607,7 +3914,7 @@ async function guardarProducto(id) {
     const ok = await guard(async () => {
       const f = $('#prImg').files[0];
       if (f) d.imagen = await leerImagen(f, 600); else if ($('#prSinImg')?.checked) d.imagen = null;
-      if (id) await q(db.from('productos').update(d).eq('id', id)); else await q(db.from('productos').insert({ ...d, colegio_id: ctx.colegio_id }));
+      if (id) await uno(db.from('productos').update(d).eq('id', id).select('id')); else await q(db.from('productos').insert({ ...d, colegio_id: ctx.colegio_id }));
       return true;
     }, 'Artículo guardado');
     if (ok) { if (id) delete imgCache[id]; closeModal(); await go('pedidos'); }
@@ -3642,9 +3949,39 @@ async function prepUtiles() {
   else if (!grados.includes(sel.ugr)) sel.ugr = grados[0];
 }
 const gradosUtiles = () => [...new Set((isDoc() ? gruposVis() : S.grupos).map(g => g.grado))].sort((a, b) => a - b);
+// Revisión 20 oct: la lista de útiles se ve organizada por categorías, con íconos, cantidades y casillas para ir marcando.
+// El colegio puede escribir sus propias categorías con una línea que termine en dos puntos (ejemplo: "Cuadernos:");
+// si no las escribe, cada útil se ubica solo según sus palabras.
+const CAT_UTILES = [
+  ['Cuadernos', '📒', /cuaderno|libreta|block|bloc|carpeta|folder|hojas?\b|resma/i],
+  ['Escritura', '✏️', /l[aá]piz|lapicero|bol[ií]grafo|borrador|sacapunta|tajalapiz|corrector|resaltador|marcador|regla|escuadra|transportador|comp[aá]s|cartuchera|estuche/i],
+  ['Arte', '🎨', /color|crayola|cray[oó]n|vinilo|pintura|pincel|plastilina|pegante|pega|colb[oó]n|tijera|cartulina|papel(?! higi)|silicona|escarcha|foami|lana|plumon|plumón|acuarela/i],
+  ['Libros', '📚', /libro|texto|diccionario|cartilla|plan lector/i],
+  ['Aseo y cuidado', '🧴', /jab[oó]n|toalla|gel|antibacterial|pañuelo|papel higi|cepillo|crema|bloqueador|termo|botella|lonchera/i],
+  ['Uniforme', '👕', /uniforme|camis|pantal[oó]n|sudadera|zapat|tenis|media|delantal|bata|gorra/i],
+  ['Tecnología', '💻', /computador|tablet|aud[ií]fono|usb|memoria|calculadora/i]];
+function utilesGrupos(lista) {
+  const out = []; let actual = null;
+  (lista || '').split('\n').map(x => x.trim()).filter(Boolean).forEach(l => {
+    if (/:$/.test(l) && l.length < 60) { actual = { cat: l.replace(/:$/, ''), ico: (CAT_UTILES.find(c => c[2].test(l)) || [])[1] || '📌', items: [] }; out.push(actual); return; }
+    const m = l.match(/^(\d+)\s*(?:x\s*)?(.*)$/i), it = { cant: m ? +m[1] : null, txt: m ? m[2] : l };
+    if (actual) return actual.items.push(it);
+    const c = CAT_UTILES.find(x => x[2].test(l)) || ['Otros', '📦'];
+    let gr = out.find(x => x.cat === c[0] && x.auto); if (!gr) { gr = { cat: c[0], ico: c[1], items: [], auto: true }; out.push(gr); }
+    gr.items.push(it);
+  });
+  // Primero los títulos que escribió el colegio (en su orden); después las categorías automáticas en orden fijo y "Otros" al final
+  const rk = (x, i) => x.auto ? 1000 + (x.cat === 'Otros' ? 99 : CAT_UTILES.findIndex(c => c[0] === x.cat)) : i;
+  return out.map((x, i) => [rk(x, i), x]).sort((a, b) => a[0] - b[0]).map(y => y[1]);
+}
+function utilesHTML(lista) {
+  return `<div class="utiles-grid">${utilesGrupos(lista).map(gr => `<section class="util-cat"><h3><span aria-hidden="true">${gr.ico}</span> ${esc(gr.cat)} <span class="muted">(${gr.items.length})</span></h3>
+    <ul>${gr.items.map(it => `<li><label><input type="checkbox"> ${it.cant ? `<span class="cant">${it.cant}</span>` : ''}${esc(it.txt)}</label></li>`).join('')}</ul></section>`).join('')}</div>`;
+}
 function utilesDoc(u, g) {
   return `<section class="doc">${docHead(`Lista de útiles escolares`, `${esc(gradoTxt(g))} · Año ${S.k.anio}`)}
-    <ol class="utiles-l">${(u?.lista || '').split('\n').map(x => x.trim()).filter(Boolean).map(x => `<li>${esc(x)}</li>`).join('')}</ol>${u?.nota ? `<p class="dnote">${esc(u.nota)}</p>` : ''}</section>`;
+    ${utilesGrupos(u?.lista).map(gr => `<h3 class="util-doc-h">${gr.ico} ${esc(gr.cat)}</h3><table class="util-doc"><tbody>${gr.items.map(it => `<tr><td class="cb">☐</td><td class="cn">${it.cant || ''}</td><td>${esc(it.txt)}</td></tr>`).join('')}</tbody></table>`).join('')}
+    ${u?.nota ? `<p class="dnote"><strong>Nota:</strong> ${esc(u.nota)}</p>` : ''}</section>`;
 }
 function vUtiles() {
   const g = sel.ugr, u = utiles.find(x => x.grado === g), grados = gradosUtiles();
@@ -3653,11 +3990,12 @@ function vUtiles() {
   const puede = isDir();
   return head('Lista de útiles', isFam() ? `Útiles de ${esc(gradoTxt(g))} para el año ${S.k.anio}.` : `Lista de útiles por grado para el año ${S.k.anio}. Las familias ven la del grado de su hijo(a).`) +
     `<div class="panel">${!isFam() && grados.length > 1 ? `<div class="toolbar"><label class="field"><span>Grado</span><select onchange="sel.ugr=+this.value;render()">${grados.map(x => opt(x, `${gradoTxt(x)}${utiles.some(y => y.grado === x && y.lista.trim()) ? '' : ' (sin lista)'}`, g)).join('')}</select></label></div>` : ''}
-      ${puede ? `<div class="formgrid">${fTa('utL', 'Útiles: escriba uno por línea', u?.lista || '', '1 cuaderno cuadriculado de 100 hojas')}${fTa('utN', 'Nota para las familias (opcional)', u?.nota || '', 'Ejemplo: marque todo con el nombre; se recibe la primera semana.')}</div>
+      ${puede ? `<div class="formgrid">${fTa('utL', 'Útiles: uno por línea, con la cantidad al comienzo (se organizan solos por categorías; si quiere sus propias categorías escriba una línea que termine en dos puntos, por ejemplo "Cuadernos:")', u?.lista || '', '2 cuadernos cuadriculados de 100 hojas')}${fTa('utN', 'Nota para las familias (opcional)', u?.nota || '', 'Ejemplo: marque todo con el nombre; se recibe la primera semana.')}</div>
         <div class="toolbar" style="margin-top:12px"><button class="btn" type="button" id="utBtn" onclick="guardarUtiles()">Guardar lista</button>${items.length ? `<button class="btn ghost" type="button" onclick="verUtiles()">Imprimir</button>` : ''}
         ${utiles.some(x => x.grado !== g && x.lista.trim()) ? `<label class="field"><span>Copiar la lista de</span><select onchange="copiarUtiles(this.value)"><option value="">Elija un grado…</option>${utiles.filter(x => x.grado !== g && x.lista.trim()).map(x => opt(x.grado, gradoTxt(x.grado))).join('')}</select></label>` : ''}</div>
-        ${u?.actualizado_nombre ? `<p class="muted">Actualizada por ${esc(u.actualizado_nombre)} el ${fmtF(u.actualizado_en)}.</p>` : ''}`
-      : items.length ? `<ol class="utiles-l">${items.map(x => `<li>${esc(x)}</li>`).join('')}</ol>${u.nota ? `<p class="note">${esc(u.nota)}</p>` : ''}
+        ${u?.actualizado_nombre ? `<p class="muted">Actualizada por ${esc(u.actualizado_nombre)} el ${fmtF(u.actualizado_en)}.</p>` : ''}
+        ${items.length ? `<h3 style="margin-top:14px">Así la ven las familias</h3>${utilesHTML(u.lista)}` : ''}`
+      : items.length ? `${u.nota ? `<p class="note">${esc(u.nota)}</p>` : ''}<p class="muted">Puede ir marcando lo que ya compró (se marca solo en esta pantalla).</p>${utilesHTML(u.lista)}
         <div class="toolbar">${isDoc() ? '' : `<button class="btn ghost" type="button" onclick="verUtiles()">Imprimir o guardar en PDF</button>`}${isAcud() && S.k.tienda_activa ? `<button class="btn" type="button" onclick="go('tienda')">Ver la tienda del colegio</button>` : ''}</div>`
       : '<p class="empty">El colegio aún no ha publicado la lista de útiles de este grado.</p>'}</div>`;
 }
@@ -3802,8 +4140,9 @@ async function cargarCampusFam() {
   CAM.uns = await q(db.from('campus_unidades').select('*').eq('grupo_id', e.grupo_id).eq('anio', S.k.anio).order('periodo').order('orden').order('creado_en'));
   CAM.its = CAM.uns.length ? await q(db.from('campus_items').select('*').in('unidad_id', CAM.uns.map(u => u.id)).order('orden').order('creado_en')) : [];
   const ids = CAM.its.map(i => i.id);
+  CAM.cursos = await q(db.from('campus_cursos').select('*').eq('grupo_id', e.grupo_id)).catch(() => []);
   const [en, vi] = ids.length ? await Promise.all([
-    q(db.from('campus_entregas').select('*').eq('estudiante_id', e.id).in('item_id', ids)),
+    q(db.rpc('campus_mis_entregas', { p_est: e.id, p_items: ids })),
     q(db.from('campus_vistos').select('item_id').eq('estudiante_id', e.id).in('item_id', ids))]) : [[], []];
   CAM.ent = {}; en.forEach(x => CAM.ent[x.item_id] = x); CAM.vis = new Set(vi.map(x => x.item_id));
   CAM.pend = CAM.its.filter(i => ['tarea', 'cuestionario'].includes(i.tipo) && pendienteFam(i)).sort((a, b) => String(a.fecha || '9').localeCompare(String(b.fecha || '9')));
@@ -3817,6 +4156,9 @@ function pendienteFam(i) {
 }
 async function cargarCampusStaff() {
   const g = grupo(sel.cg); if (!g) return;
+  CAM.curso = (await q(db.from('campus_cursos').select('*').eq('grupo_id', g.id).eq('asignatura_id', sel.ca)).catch(() => []))[0] || null;
+  if (sel.ctab === 'part') CAM.part = await q(db.rpc('campus_participantes', { p_grupo: g.id, p_asig: sel.ca })).catch(() => []);
+
   CAM.uns = await q(db.from('campus_unidades').select('*').eq('grupo_id', g.id).eq('asignatura_id', sel.ca).eq('anio', S.k.anio).order('orden').order('creado_en'));
   CAM.its = CAM.uns.length ? await q(db.from('campus_items').select('*').in('unidad_id', CAM.uns.map(u => u.id)).order('orden').order('creado_en')) : [];
   const ids = CAM.its.map(i => i.id); CAM.cnt = {};
@@ -3825,6 +4167,7 @@ async function cargarCampusStaff() {
     en.forEach(x => { const c = CAM.cnt[x.item_id] ||= { ent: 0, cal: 0, vis: 0 }; c.ent++; if (x.estado === 'Calificada') c.cal++; });
     vi.forEach(x => { (CAM.cnt[x.item_id] ||= { ent: 0, cal: 0, vis: 0 }).vis++; });
   }
+  if (sel.ctab === 'calif') CAM.notas = ids.length ? await all(() => db.from('campus_entregas').select('item_id,estudiante_id,nota,estado').in('item_id', ids).order('id')) : [];
 }
 async function prepCampus() {
   if (isFam()) { await cargarCampusFam(); if (!sel.cp) sel.cp = S.k.periodo_actual; return; }
@@ -3844,13 +4187,14 @@ function vCampus() {
 function estadoItemFam(i) {
   const x = CAM.ent[i.id];
   if (i.tipo === 'tarea') return x?.estado === 'Calificada' ? `<span class="tag ok-t">Calificada: ${N(x.nota)}</span>` : x ? '<span class="tag ent-t">Entregada</span>' : vencido(i) ? '<span class="tag t3">Fecha vencida</span>' : '<span class="tag t2">Por entregar</span>';
-  if (i.tipo === 'cuestionario') return x ? `<span class="tag ok-t">Calificación: ${N(x.nota)}</span>` : vencido(i) ? '<span class="tag t3">Cerrado</span>' : i.n_preg ? '<span class="tag t2">Por responder</span>' : '<span class="tag">En preparación</span>';
+  if (i.tipo === 'cuestionario') return x ? (x.oculto ? '<span class="tag ent-t">Enviado · nota al cierre</span>' : `<span class="tag ok-t">Calificación: ${N(x.nota)}</span>`) : vencido(i) ? '<span class="tag t3">Cerrado</span>' : i.n_preg ? '<span class="tag t2">Por responder</span>' : '<span class="tag">En preparación</span>';
+  if (i.tipo === 'clase' && !i.url) return '<span class="tag t2">Enlace pendiente</span>';
   return CAM.vis.has(i.id) ? '<span class="tag ok-t">✓ Visto</span>' : '<span class="tag nuevo-t">Nuevo</span>';
 }
 function itemFamHTML(i, conAsig) {
   const [ico, tl] = TIPO_IT[i.tipo], u = CAM.uns.find(x => x.id === i.unidad_id), a = S.asigs.find(x => x.id === u?.asignatura_id);
   const meta = [conAsig && a ? esc(a.nombre) : '', tl, i.fecha ? (i.tipo === 'clase' ? 'Clase: ' : 'Hasta: ') + fechaHoraTxt(i.fecha) : ''].filter(Boolean).join(' · ');
-  const btn = i.tipo === 'tarea' ? 'Ver tarea' : i.tipo === 'cuestionario' ? (CAM.ent[i.id] ? 'Ver resultado' : 'Responder') : i.tipo === 'clase' ? 'Entrar a la clase' : 'Abrir';
+  const btn = isAcud() && ['tarea', 'cuestionario'].includes(i.tipo) ? 'Ver estado' : i.tipo === 'tarea' ? 'Ver tarea' : i.tipo === 'cuestionario' ? (CAM.ent[i.id] ? 'Ver resultado' : 'Responder') : i.tipo === 'clase' ? 'Entrar a la clase' : 'Abrir';
   return `<li class="cam-it"><span class="cam-ico" aria-hidden="true">${ico}</span><div class="cam-tx"><strong>${esc(i.titulo)}</strong><br><span class="muted">${meta}</span></div>
     <div class="cam-ac">${estadoItemFam(i)}<button class="btn sm" type="button" onclick="abrirItem('${i.id}')">${btn}</button></div></li>`;
 }
@@ -3863,27 +4207,46 @@ function vCampusFam() {
   const pend = CAM.pend.filter(i => !vencido(i)), clases = CAM.its.filter(i => i.tipo === 'clase' && i.fecha && new Date(i.fecha) > new Date(Date.now() - 2 * 3600e3)).sort((a, b) => a.fecha.localeCompare(b.fecha)).slice(0, 3);
   const uns = CAM.uns.filter(u => u.periodo === +sel.cp && (sel.cfa === 'todas' || u.asignatura_id === sel.cfa));
   const quien = isEst() ? 'usted' : esc(e.nombres);
-  return head(isEst() ? `Mi campus virtual` : `Campus virtual de ${esc(e.nombres)}`, `${esc(g.nombre)} · Clases, recursos, tareas y evaluaciones de cada asignatura.`) +
+  return head(isEst() ? `Mi campus virtual` : `Campus virtual de ${esc(e.nombres)}`, `${esc(g.nombre)} · Clases, recursos, tareas y evaluaciones de cada asignatura.`) + avisoCuota() +
     (gemasOn() ? `<div class="note gem-note">💎 Cada vez que ${quien} entra, abre un recurso, entrega una tarea o responde un cuestionario gana gemas. <button class="linkbtn" type="button" onclick="go('gemas')">Ver gemas y top del curso</button></div>` : '') +
     `<div class="cols"><section class="panel"><h2>Pendientes${pend.length ? ` (${pend.length})` : ''}</h2>${pend.length ? `<ul class="list cam-list">${pend.slice(0, 6).map(i => itemFamHTML(i, true)).join('')}</ul>` : '<p class="muted">¡Al día! No hay tareas ni cuestionarios por hacer.</p>'}</section>
       <section class="panel"><h2>Próximas clases en vivo</h2>${clases.length ? `<ul class="list cam-list">${clases.map(i => itemFamHTML(i, true)).join('')}</ul>` : '<p class="muted">No hay clases en vivo programadas.</p>'}</section></div>
+    <h2 style="margin:14px 0 6px">${isEst() ? 'Mis cursos' : 'Cursos'}</h2>
+    <div class="cursos-grid">${as.map(a => { const c = (CAM.cursos || []).find(x => x.asignatura_id === a.id), np = CAM.pend.filter(i => !vencido(i) && CAM.uns.find(u => u.id === i.unidad_id)?.asignatura_id === a.id).length;
+      return `<button type="button" class="curso-card" aria-pressed="${sel.cfa === a.id}" onclick="sel.cfa=sel.cfa==='${a.id}'?'todas':'${a.id}';render()">${portadaCurso(a, c)}<span class="cc-t"><strong>${esc(a.nombre)}</strong><br><span class="muted">${esc(g.nombre)}${np ? ` · ${np} pendiente${np > 1 ? 's' : ''}` : ''}</span></span></button>`; }).join('')}</div>
     <div class="panel"><div class="toolbar"><label class="field"><span>Asignatura</span><select onchange="sel.cfa=this.value;render()">${opt('todas', 'Todas las asignaturas', sel.cfa)}${as.map(a => opt(a.id, a.nombre, sel.cfa)).join('')}</select></label>
-      <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp)}</select></label></div>
+      <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp)}</select></label>${temaSelector()}</div>
+      ${sel.cfa !== 'todas' && (CAM.cursos || []).find(x => x.asignatura_id === sel.cfa)?.descripcion ? `<p class="muted">${esc(CAM.cursos.find(x => x.asignatura_id === sel.cfa).descripcion)}</p>` : ''}
       ${uns.length ? uns.map(u => { const its = CAM.its.filter(i => i.unidad_id === u.id), a = S.asigs.find(x => x.id === u.asignatura_id);
-        return `<section class="cam-unidad"><h3><span class="tag">${esc(a?.nombre || '')}</span> ${esc(u.titulo)}</h3>${u.descripcion ? `<p class="muted">${esc(u.descripcion)}</p>` : ''}
+        return `<section class="cam-unidad">${u.banner ? `<img class="banner-u" src="${u.banner}" alt="">` : ''}<h3><span class="tag">${esc(a?.nombre || '')}</span> ${esc(u.titulo)}</h3>${u.descripcion ? `<p class="muted">${esc(u.descripcion)}</p>` : ''}
           ${its.length ? `<ul class="list cam-list">${its.map(i => itemFamHTML(i)).join('')}</ul>` : '<p class="muted">Esta unidad aún no tiene contenidos.</p>'}</section>`; }).join('')
       : `<p class="empty">No hay unidades publicadas en el periodo ${sel.cp}${sel.cfa !== 'todas' ? ' para esta asignatura' : ''}.</p>`}</div>`;
 }
+// Temas de color del campus: cada estudiante escoge el suyo (se recuerda en este dispositivo)
+const TEMAS = [['', 'Colegio'], ['rosa', 'Rosado'], ['morado', 'Morado'], ['verde', 'Verde'], ['naranja', 'Naranja'], ['noche', 'Oscuro']];
+function temaSelector() { const t = store.get('tema') || ''; return isEst() ? `<label class="field"><span>Color de mi campus</span><select onchange="ponerTema(this.value)">${TEMAS.map(([v, l]) => opt(v, l, t)).join('')}</select></label>` : ''; }
+function ponerTema(t) { if (t) store.set('tema', t); else store.del('tema'); aplicarTema(); }
+function aplicarTema() { document.body.dataset.tema = isEst() ? (store.get('tema') || '') : ''; }
 async function gemasToast(n, por) { if (n > 0 && gemasOn()) toast(`+${n} gemas 💎 ${por || ''}`.trim()); }
 async function abrirItem(id) {
   const i = CAM.its.find(x => x.id === id); if (!i) return;
+  if (isAcud() && ['tarea', 'cuestionario'].includes(i.tipo)) return estadoItemAcud(i);
   if (i.tipo === 'tarea') return formTareaFam(i);
   if (i.tipo === 'cuestionario') return abrirCuestionario(i);
   const w = i.url ? window.open(i.url, '_blank', 'noopener') : null;
   if (!i.url || !w) openModal(i.titulo, `${i.fecha ? `<p><strong>${i.tipo === 'clase' ? 'Fecha de la clase' : 'Fecha'}:</strong> ${fechaHoraTxt(i.fecha)}</p>` : ''}${i.texto ? `<p style="white-space:pre-wrap">${esc(i.texto)}</p>` : ''}
     ${i.url ? `<p><a class="btn" href="${esc(i.url)}" target="_blank" rel="noopener">Abrir enlace</a></p>` : ''}<div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button></div>`);
+  if (isAcud()) return; // solo cuenta (y da gemas) cuando lo abre el estudiante
   const n = await guard(() => q(db.rpc('campus_abrir', { p_item: id, p_est: propio() })));
   if (n !== undefined) { CAM.vis.add(id); gemasToast(n, 'por abrir el recurso'); if (view === 'campus') render(); }
+}
+// Revisión 20 oct: el acudiente ve si la tarea o evaluación está pendiente, entregada o calificada, pero no la responde
+function estadoItemAcud(i) {
+  const x = CAM.ent[i.id], e = est(propio());
+  const est_ = !x ? (vencido(i) ? '<span class="tag t3">Vencida sin entregar</span>' : '<span class="tag t2">Pendiente</span>') : x.oculto ? '<span class="tag ok-tag">Enviada · la nota se verá al cierre</span>' : x.estado === 'Calificada' || x.nota != null ? `Calificada: ${chip(x.nota)}` : '<span class="tag ok-tag">Entregada</span>';
+  openModal(i.titulo, `${i.fecha ? `<p><strong>Fecha límite:</strong> ${fechaHoraTxt(i.fecha)}</p>` : ''}<p><strong>Estado:</strong> ${est_}</p>
+    <div class="note">${i.tipo === 'cuestionario' ? 'Las evaluaciones' : 'Las tareas'} las responde ${esc(e?.nombres || 'el estudiante')} desde su propia cuenta de estudiante. Usted puede acompañarlo y ver aquí cómo va.</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button></div>`);
 }
 function formTareaFam(i) {
   const x = CAM.ent[i.id], cal = x?.estado === 'Calificada';
@@ -3910,10 +4273,10 @@ async function abrirCuestionario(i) {
   quiz = { i, d };
   const quedan = d.intentos - d.usados, cerrado = vencido(i);
   const info = `${i.texto ? `<div class="note" style="white-space:pre-wrap">${esc(i.texto)}</div>` : ''}<p class="muted">${d.preguntas.length} preguntas · ${d.intentos === 1 ? 'un intento' : d.intentos + ' intentos (queda la mejor calificación)'}${i.fecha ? ' · hasta ' + fechaHoraTxt(i.fecha) : ''}</p>`;
-  if (d.usados && (quedan <= 0 || cerrado)) return openModal(i.titulo, `${info}<div class="panel"><h3>Su calificación: ${chip(d.nota)}</h3><p class="muted">${quedan <= 0 ? 'Ya usó todos los intentos.' : 'El cuestionario ya cerró.'}</p></div><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Cerrar</button></div>`);
+  if (d.usados && (quedan <= 0 || cerrado)) return openModal(i.titulo, `${info}<div class="panel"><h3>${d.oculto ? `Respuestas enviadas. La calificación se verá ${d.ver_desde ? 'desde el ' + fechaHoraTxt(d.ver_desde) : 'cuando el docente la publique'}` : `Su calificación: ${chip(d.nota)}`}</h3><p class="muted">${quedan <= 0 ? 'Ya usó todos los intentos.' : 'El cuestionario ya cerró.'}</p></div><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Cerrar</button></div>`);
   if (cerrado) return openModal(i.titulo, `${info}<p class="empty">El cuestionario cerró el ${fechaHoraTxt(i.fecha)}.</p><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Cerrar</button></div>`);
   if (!d.preguntas.length) return openModal(i.titulo, `${info}<p class="empty">El docente aún está preparando las preguntas.</p><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Cerrar</button></div>`);
-  openModal(i.titulo, `${info}${d.usados ? `<p>Su mejor calificación hasta ahora: ${chip(d.nota)}. Le ${quedan === 1 ? 'queda 1 intento' : 'quedan ' + quedan + ' intentos'}.</p>` : ''}
+  openModal(i.titulo, `${info}${d.usados ? `<p>${d.oculto ? 'Ya envió un intento (la calificación se verá después del cierre).' : `Su mejor calificación hasta ahora: ${chip(d.nota)}.`} Le ${quedan === 1 ? 'queda 1 intento' : 'quedan ' + quedan + ' intentos'}.</p>` : ''}
     <ol class="quiz">${d.preguntas.map((p, k) => `<li class="qz"><p><strong>${esc(p.q)}</strong> <span class="muted">(${p.pts} ${p.pts === 1 ? 'punto' : 'puntos'})</span></p>${preguntaHTML(p, k)}</li>`).join('')}</ol>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="qBtn" onclick="enviarCuestionario()">Enviar respuestas</button></div>`);
 }
@@ -3934,9 +4297,17 @@ async function enviarCuestionario() {
   if (vacias && !(await confirmar(`Tiene ${vacias === 1 ? 'una pregunta' : vacias + ' preguntas'} sin responder. ¿Enviar de todas formas?`, 'Enviar'))) return;
   const r = await busy('#qBtn', () => guard(() => q(db.rpc('campus_responder', { p_item: quiz.i.id, p_est: propio(), p_resp: resp }))));
   if (!r) return;
-  openModal(quiz.i.titulo, `<div class="cam-res"><div class="cam-nota">${N(r.nota)}</div><p><strong>${r.correctas} de ${r.total}</strong> preguntas correctas · ${desem(r.nota)}</p>
+  // Revisión 20 oct: si el docente eligió mostrar el resultado después del cierre, no se ve la nota ni las respuestas todavía
+  if (r.oculto) {
+    openModal(quiz.i.titulo, `<div class="cam-res"><p class="cam-nota" style="font-size:2rem">✓</p><p><strong>Sus respuestas quedaron enviadas.</strong></p>
+      <p class="muted">${r.ver_desde ? `Podrá ver su calificación${r.detalle ? '' : ' y las respuestas correctas'} después del cierre: ${fechaHoraTxt(r.ver_desde)}` : 'El docente publicará los resultados.'}</p>
+      ${r.gemas && gemasOn() ? `<p class="gem-win">+${r.gemas} gemas 💎 por responder</p>` : ''}${r.quedan ? `<p class="muted">Le ${r.quedan === 1 ? 'queda 1 intento' : 'quedan ' + r.quedan + ' intentos'}.</p>` : ''}</div>
+      <div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Listo</button></div>`);
+    await guard(cargarCampusFam); render(); return;
+  }
+  openModal(quiz.i.titulo, `<div class="cam-res"><div class="cam-nota">${N(r.nota)}</div><p>${r.correctas != null ? `<strong>${r.correctas} de ${r.total}</strong> preguntas correctas · ` : ''}${desem(r.nota)}</p>${r.detalle ? '' : `<p class="muted">Las respuestas correctas se verán ${quiz.i.ver_respuestas === 'nunca' ? 'cuando el docente las comente en clase' : 'después del cierre'}.</p>`}
     ${r.mejor > r.nota ? `<p class="muted">Se conserva su mejor calificación: ${N(r.mejor)}.</p>` : ''}${r.gemas && gemasOn() ? `<p class="gem-win">+${r.gemas} gemas 💎</p>` : ''}
-    <ol class="qz-det">${r.detalle.map((ok, k) => `<li class="${ok ? 'ok' : 'err'}">${ok ? '✓' : '✗'} ${esc(ps[k].q)}</li>`).join('')}</ol>
+    <ol class="qz-det">${(r.detalle || []).map((ok, k) => `<li class="${ok ? 'ok' : 'err'}">${ok ? '✓' : '✗'} ${esc(ps[k].q)}</li>`).join('')}</ol>
     ${r.quedan ? `<p class="muted">Le ${r.quedan === 1 ? 'queda 1 intento' : 'quedan ' + r.quedan + ' intentos'} para mejorar.</p>` : ''}</div>
     <div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Listo</button></div>`);
   await guard(cargarCampusFam); render();
@@ -3953,19 +4324,87 @@ function vCampusStaff() {
     `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="campusSel('cg',this.value)">${gs.map(x => opt(x.id, x.nombre, sel.cg)).join('')}</select></label>
       <label class="field"><span>${g.nivel === 'preescolar' ? 'Dimensión' : 'Asignatura'}</span><select onchange="campusSel('ca',this.value)">${as.map(x => opt(x.id, x.nombre, sel.ca)).join('')}</select></label>
       <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp)}</select></label>
-      ${edita ? `<button class="btn" type="button" style="margin-left:auto" onclick="formUnidad()">+ Nueva unidad</button>` : ''}</div>
-      ${!a ? '<p class="empty">No hay asignaturas para este curso.</p>' : uns.length ? uns.map(u => unidadStaffHTML(u, edita, nEst)).join('')
+      ${edita && sel.ctab !== 'part' && sel.ctab !== 'calif' ? `<button class="btn" type="button" style="margin-left:auto" onclick="formUnidad()">+ Nueva unidad</button>` : ''}</div>
+      ${a ? cursoCabecera(g, a, edita) : ''}
+      <div class="tabs" role="tablist">${[['cont', 'Contenidos'], ['part', 'Participantes'], ['calif', 'Calificador']].map(([k, l]) => `<button type="button" role="tab" aria-selected="${(sel.ctab || 'cont') === k}" onclick="campusTab('${k}')">${l}</button>`).join('')}</div>
+      ${!a ? '<p class="empty">No hay asignaturas para este curso.</p>' : sel.ctab === 'part' ? participantesHTML() : sel.ctab === 'calif' ? calificadorHTML(g) : uns.length ? uns.map(u => unidadStaffHTML(u, edita, nEst)).join('')
         : `<div class="empty">Aún no hay unidades en el periodo ${sel.cp}.${edita ? ' Oprima <strong>+ Nueva unidad</strong> y luego agregue sus contenidos.' : ''}</div>`}</div>
     ${edita ? `<div class="note"><strong>¿Cómo funciona?</strong> 1) Cree una unidad. 2) Agregue contenidos: recursos y videos (con su enlace), clases en vivo (enlace de Meet, Zoom o Teams), tareas y cuestionarios.
       3) Los estudiantes de ${esc(g.nombre)} los ven en su campus y ganan gemas al participar. 4) Califique las tareas en <em>Entregas</em>; los cuestionarios se califican solos.</div>` : ''}`;
 }
+async function campusTab(k) { sel.ctab = k; $('#view').innerHTML = '<div class="loading">Cargando…</div>'; await guard(cargarCampusStaff); render(); }
+// Revisión 20 oct (como Moodle): cada curso con imagen, descripción y fechas; tarjetas para el estudiante
+const COLORES_CURSO = ['#0B4F8A', '#14A38B', '#8E44AD', '#D35400', '#C0392B', '#16A085', '#2C3E50', '#B7950B', '#1F8A4C', '#6C3483'];
+const colorCurso = id => COLORES_CURSO[[...String(id)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % COLORES_CURSO.length];
+function portadaCurso(a, c, chica) {
+  return c?.imagen ? `<img class="curso-img${chica ? ' chica' : ''}" src="${c.imagen}" alt="">` : `<div class="curso-img${chica ? ' chica' : ''} sin" style="background:${colorCurso(a.id)}"><span>${esc(a.nombre.split(' ').filter(w => w.length > 2).slice(0, 2).map(w => w[0]).join('').toUpperCase() || a.nombre[0])}</span></div>`;
+}
+function cursoCabecera(g, a, edita) {
+  const c = CAM.curso;
+  return `<div class="curso-cab">${portadaCurso(a, c, true)}<div><strong>${esc(a.nombre)} · ${esc(g.nombre)}</strong>${c?.descripcion ? `<br><span class="muted">${esc(c.descripcion)}</span>` : ''}
+    ${c?.inicio || c?.fin ? `<br><span class="muted">${c.inicio ? 'Inicia ' + fechaLarga(c.inicio) : ''}${c.inicio && c.fin ? ' · ' : ''}${c.fin ? 'Termina ' + fechaLarga(c.fin) : ''}</span>` : ''}</div>
+    ${edita ? `<div class="toolbar" style="margin-left:auto"><button class="btn ghost sm" type="button" onclick="formCurso()">Configurar curso</button><button class="btn ghost sm" type="button" onclick="reiniciarCurso()">Reiniciar curso</button></div>` : ''}</div>`;
+}
+function formCurso() {
+  const c = CAM.curso || {}, a = S.asigs.find(x => x.id === sel.ca);
+  openModal(`Configurar ${a?.nombre || 'curso'}`, `<p class="muted">La imagen aparece en la tarjeta del curso que ven los estudiantes. Se guarda liviana (no suba videos).</p>
+    <div class="formgrid"><label class="field"><span>Imagen del curso</span>${c.imagen ? `<img class="prod-prev" id="cuPrev" src="${c.imagen}" alt="">` : ''}<input type="file" id="cuImg" accept="image/*" onchange="previaImg(this,'cuPrev')"></label>
+    ${fIn('cuIni', 'Fecha de inicio (opcional)', c.inicio || '', 'type="date"')}${fIn('cuFin', 'Fecha de terminación (opcional)', c.fin || '', 'type="date"')}</div>
+    ${fTa('cuDes', 'Descripción para los estudiantes (opcional)', c.descripcion || '', 'De qué se trata el curso, cómo se evalúa…')}
+    ${c.imagen ? '<label class="chk"><input type="checkbox" id="cuSin"> Quitar la imagen</label>' : ''}
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="cuBtn" onclick="guardarCurso()">Guardar</button></div>`);
+}
+async function guardarCurso() {
+  const d = { grupo_id: sel.cg, asignatura_id: sel.ca, colegio_id: ctx.colegio_id, descripcion: vv('cuDes') || null, inicio: vv('cuIni') || null, fin: vv('cuFin') || null, actualizado_en: new Date().toISOString() };
+  if (d.inicio && d.fin && d.fin < d.inicio) return toast('La fecha de terminación debe ser posterior a la de inicio');
+  const f = $('#cuImg').files[0];
+  const r = await busy('#cuBtn', () => guard(async () => {
+    if (f) d.imagen = await leerImagen(f, 800); else if ($('#cuSin')?.checked) d.imagen = null; else if (CAM.curso?.imagen) d.imagen = CAM.curso.imagen;
+    return q(db.from('campus_cursos').upsert(d, { onConflict: 'grupo_id,asignatura_id' }).select().single());
+  }, 'Curso guardado'));
+  if (r) { CAM.curso = r; closeModal(); render(); }
+}
+async function reiniciarCurso() {
+  const a = S.asigs.find(x => x.id === sel.ca), g = grupo(sel.cg);
+  if (!await confirmarEscribiendo(`Reiniciar ${a?.nombre} de ${g?.nombre}: se borran las entregas, respuestas y registros de quién abrió cada contenido, para empezar un año nuevo. Se CONSERVAN todas las unidades, lecturas, enlaces, videos y cuestionarios con sus preguntas. Las calificaciones que ya pasaron a Calificaciones no se tocan.`, 'reiniciar', 'Reiniciar curso')) return;
+  const r = await guard(() => q(db.rpc('campus_reiniciar', { p_grupo: sel.cg, p_asig: sel.ca })));
+  if (r) { toast(`Curso reiniciado: ${r.entregas} entregas y ${r.vistos} registros borrados. Los contenidos quedaron intactos`); await guard(cargarCampusStaff); render(); }
+}
+async function copiarUnidad(uid) {
+  const u = CAM.uns.find(x => x.id === uid), gs = gruposVis().filter(g => g.id !== sel.cg && campusGrado(g) && asigsDe(g).some(a => a.id === sel.ca));
+  if (!gs.length) return toast('No hay otro curso con esta asignatura y el campus activo');
+  openModal('Copiar unidad a otro curso', `<p>Se copia "${esc(u.titulo)}" con sus contenidos y las preguntas de sus cuestionarios (sin entregas). Después revise las fechas.</p>
+    <div class="formgrid"><label class="field"><span>Curso</span><select id="cpG">${gs.map(g => opt(g.id, g.nombre)).join('')}</select></label><label class="field"><span>Periodo</span><select id="cpP">${perOpts(sel.cp)}</select></label></div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="cpBtn" onclick="hacerCopiaUnidad('${uid}')">Copiar</button></div>`);
+}
+async function hacerCopiaUnidad(uid) {
+  const r = await busy('#cpBtn', () => guard(() => q(db.rpc('campus_copiar_unidad', { p_unidad: uid, p_grupo: vv('cpG'), p_periodo: +vv('cpP') })), 'Unidad copiada. Revise las fechas de tareas y cuestionarios en el otro curso'));
+  if (r) closeModal();
+}
+function participantesHTML() {
+  const l = CAM.part || [];
+  if (!l.length) return '<p class="empty">Este curso no tiene estudiantes activos.</p>';
+  return `<p class="muted">Último acceso de cada estudiante y de su acudiente, y su actividad en esta asignatura. Sirve cuando alguien dice "no me funciona el campus": aquí se ve si ha entrado.</p>
+    <div class="tbl"><table><thead><tr><th>Estudiante</th><th>Último acceso del estudiante</th><th>Último acceso del acudiente</th><th>Contenidos abiertos</th><th>Entregas</th><th>Última entrega</th></tr></thead><tbody>
+    ${l.map(x => `<tr><td><strong>${esc(x.nombre)}</strong></td><td>${x.cuenta_est ? haceCuanto(x.acceso_est) : '<span class="muted">Sin cuenta de estudiante</span>'}</td><td>${haceCuanto(x.acceso_acu)}</td><td class="num">${x.vistos}</td><td class="num">${x.entregas}</td><td>${x.ultima_entrega ? fechaHoraTxt(x.ultima_entrega) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function calificadorHTML(g) {
+  const its = CAM.its.filter(i => ['tarea', 'cuestionario'].includes(i.tipo)).sort((a, b) => (CAM.uns.findIndex(u => u.id === a.unidad_id) - CAM.uns.findIndex(u => u.id === b.unidad_id)) || a.orden - b.orden);
+  if (!its.length) return '<p class="empty">Aún no hay tareas ni cuestionarios en este curso.</p>';
+  const es = estsDe(g.id), m = {}; (CAM.notas || []).forEach(x => { m[x.item_id + '|' + x.estudiante_id] = x; });
+  return `<p class="muted">Todas las tareas y cuestionarios del curso (todos los periodos). El promedio es simple, de 0 a 100, como en Calificaciones.</p>
+    <div class="tbl"><table class="calificador"><thead><tr><th>Estudiante</th>${its.map(i => `<th title="${esc(i.titulo)}">${TIPO_IT[i.tipo][0]} ${esc(i.titulo.length > 22 ? i.titulo.slice(0, 22) + '…' : i.titulo)}<br><span class="muted">P${CAM.uns.find(u => u.id === i.unidad_id)?.periodo || ''}</span></th>`).join('')}<th>Promedio</th></tr></thead><tbody>
+    ${es.map(e => { const vs = its.map(i => m[i.id + '|' + e.id]); const nums = vs.filter(x => x?.nota != null).map(x => +x.nota);
+      return `<tr><td><strong>${esc(e.apellidos)}</strong> ${esc(e.nombres)}</td>${vs.map(x => `<td class="num">${x ? (x.nota != null ? chip(x.nota) : '<span class="muted">Entregada</span>') : '—'}</td>`).join('')}<td class="num">${nums.length ? chip(Math.round(nums.reduce((s, v) => s + v, 0) / nums.length)) : '—'}</td></tr>`; }).join('')}
+    </tbody></table></div>`;
+}
 function unidadStaffHTML(u, edita, nEst) {
   const its = CAM.its.filter(i => i.unidad_id === u.id);
-  return `<section class="cam-unidad"><div class="cam-uh"><h3>${esc(u.titulo)} ${u.visible ? '' : '<span class="tag">Oculta para los estudiantes</span>'}</h3>
-    ${edita ? `<div class="toolbar"><button class="btn sm" type="button" onclick="elegirTipo('${u.id}')">+ Agregar contenido</button><button class="btn ghost sm" type="button" onclick="formUnidad('${u.id}')">Editar unidad</button></div>` : ''}</div>
+  return `<section class="cam-unidad">${u.banner ? `<img class="banner-u" src="${u.banner}" alt="">` : ''}<div class="cam-uh"><h3>${esc(u.titulo)} ${u.visible ? '' : '<span class="tag">Oculta para los estudiantes</span>'}</h3>
+    ${edita ? `<div class="toolbar"><button class="btn sm" type="button" onclick="elegirTipo('${u.id}')">+ Agregar contenido</button><button class="btn ghost sm" type="button" onclick="formUnidad('${u.id}')">Editar unidad</button><button class="btn ghost sm" type="button" onclick="copiarUnidad('${u.id}')">Copiar a otro curso</button></div>` : ''}</div>
     ${u.descripcion ? `<p class="muted">${esc(u.descripcion)}</p>` : ''}
     ${its.length ? `<ul class="list cam-list">${its.map(i => { const [ico, tl] = TIPO_IT[i.tipo], c = CAM.cnt[i.id] || { ent: 0, cal: 0, vis: 0 };
-      const cuenta = i.tipo === 'tarea' ? `Entregas: ${c.ent} de ${nEst} · Calificadas: ${c.cal}` : i.tipo === 'cuestionario' ? `${i.n_preg} preguntas · Respondieron: ${c.ent} de ${nEst}` : `Lo abrieron: ${c.vis} de ${nEst}`;
+      const cuenta = i.tipo === 'tarea' ? `Entregas: ${c.ent} de ${nEst} · Calificadas: ${c.cal}` : i.tipo === 'cuestionario' ? `${i.n_preg} preguntas · Respondieron: ${c.ent} de ${nEst} · Los estudiantes ven su nota: ${({ cierre: 'después del cierre', intento: 'al terminar', nunca: 'nunca' })[i.ver_nota || 'cierre']}` : `Lo abrieron: ${c.vis} de ${nEst}${i.tipo === 'clase' && !i.url ? ' · <span class="err" style="font-weight:400">Falta el enlace de la clase</span>' : ''}`;
       return `<li class="cam-it"><span class="cam-ico" aria-hidden="true">${ico}</span><div class="cam-tx"><strong>${esc(i.titulo)}</strong> ${i.visible ? '' : '<span class="tag">Oculto</span>'} ${i.calificable ? '<span class="tag piar">Cuenta para calificaciones</span>' : ''}
         <br><span class="muted">${tl}${i.fecha ? ' · ' + (i.tipo === 'clase' ? 'Clase: ' : 'Hasta: ') + fechaHoraTxt(i.fecha) : ''} · ${cuenta}</span>${i.tipo === 'cuestionario' && !i.n_preg ? '<br><span class="err" style="font-weight:400">Sin preguntas: los estudiantes aún no pueden responder.</span>' : ''}</div>
         <div class="cam-ac">${i.tipo === 'cuestionario' && edita ? `<button class="btn sm" type="button" onclick="editorPreguntas('${i.id}')">Preguntas</button>` : ''}
@@ -3975,17 +4414,24 @@ function unidadStaffHTML(u, edita, nEst) {
       : '<p class="muted">Sin contenidos todavía.</p>'}</section>`;
 }
 function formUnidad(id) {
-  const u = id ? CAM.uns.find(x => x.id === id) : { titulo: `Unidad ${CAM.uns.filter(x => x.periodo === +sel.cp).length + 1}: `, descripcion: '', visible: true };
-  openModal(id ? 'Editar unidad' : 'Nueva unidad', `<div class="formgrid">${fIn('uTit', 'Título de la unidad', u.titulo, 'maxlength="120"')}</div>
+  const n = CAM.uns.filter(x => x.periodo === +sel.cp).length + 1;
+  const u = id ? CAM.uns.find(x => x.id === id) : { titulo: '', descripcion: '', visible: true };
+  // Revisión 20 oct: el número de la unidad va aparte y el campo del título queda vacío y señalado, para que se entienda qué escribir
+  openModal(id ? 'Editar unidad' : `Nueva unidad (Unidad ${n})`, `<div class="formgrid"><label class="field full"><span>Título de la unidad ${id ? '' : `<span class="muted">(quedará "Unidad ${n}: …")</span>`}</span><input id="uTit" value="${esc(u.titulo)}" maxlength="110" placeholder="Ej.: Los seres vivos y su entorno" data-pref="${id ? '' : `Unidad ${n}: `}"></label></div>
     ${fTa('uDes', 'Descripción (opcional)', u.descripcion, 'Qué se trabajará en esta unidad')}
+    <label class="field full"><span>Imagen de encabezado (banner) de la unidad, opcional. Se guarda liviana</span>${u.banner ? `<img class="banner-u" id="uPrev" src="${u.banner}" alt="">` : ''}<input type="file" id="uBan" accept="image/*" onchange="previaImg(this,'uPrev')"></label>
+    ${u.banner ? '<label class="chk"><input type="checkbox" id="uSinBan"> Quitar la imagen</label><br>' : ''}
     <label class="chk"><input type="checkbox" id="uVis" ${u.visible ? 'checked' : ''}> Visible para los estudiantes</label>
     <p class="muted">La unidad queda en el periodo ${sel.cp} de ${esc(S.asigs.find(a => a.id === sel.ca)?.nombre || '')}, ${esc(grupo(sel.cg)?.nombre || '')}.</p>
     <div class="modal-foot">${id ? `<button class="btn ghost" type="button" onclick="borrarUnidad('${id}')">Borrar unidad</button>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="uBtn" onclick="guardarUnidad('${id || ''}')">Guardar</button></div>`);
 }
 async function guardarUnidad(id) {
-  const d = { titulo: vv('uTit'), descripcion: vv('uDes') || null, visible: $('#uVis').checked };
-  if (d.titulo.replace(/^Unidad \d+:\s*$/, '').length < 3) return toast('Escriba el título de la unidad');
-  const r = await busy('#uBtn', () => guard(() => id ? q(db.from('campus_unidades').update(d).eq('id', id).select().single())
+  const t = vv('uTit').replace(/^Unidad \d+:\s*/i, '');
+  if (t.length < 3) { $('#uTit').closest('.field').classList.add('falta'); $('#uTit').focus(); return toast('Escriba el título de la unidad (por ejemplo: Los seres vivos)'); }
+  const d = { titulo: ($('#uTit').dataset.pref || (vv('uTit').match(/^Unidad \d+:\s*/i)?.[0] ?? '')) + t, descripcion: vv('uDes') || null, visible: $('#uVis').checked };
+  const fb = $('#uBan')?.files[0];
+  if (fb) d.banner = await guard(() => leerImagen(fb, 1200)); else if ($('#uSinBan')?.checked) d.banner = null;
+  const r = await busy('#uBtn', () => guard(() => id ? uno(db.from('campus_unidades').update(d).eq('id', id).select().single())
     : q(db.from('campus_unidades').insert({ ...d, grupo_id: sel.cg, asignatura_id: sel.ca, periodo: +sel.cp, colegio_id: ctx.colegio_id, anio: S.k.anio, orden: CAM.uns.length + 1 }).select().single()), id ? 'Unidad guardada' : 'Unidad creada. Ahora agregue sus contenidos'));
   if (!r) return; closeModal(); await guard(cargarCampusStaff); render();
 }
@@ -3999,14 +4445,20 @@ function elegirTipo(uid) {
   openModal('Agregar contenido', `<div class="tipos-cam">${Object.entries(TIPO_IT).map(([t, [ico, l]]) => `<button type="button" class="tipo-cam" onclick="formItem('${uid}','${t}')"><span>${ico}</span><strong>${l}</strong><small>${ayuda[t]}</small></button>`).join('')}</div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button></div>`);
 }
+const VER_OPC = [['cierre', 'Después del cierre (recomendado)'], ['intento', 'Apenas termine el intento'], ['nunca', 'Nunca (el docente las comenta en clase)']];
 function formItem(uid, tipo, id) {
   const i = id ? CAM.its.find(x => x.id === id) : { titulo: '', texto: '', url: '', fecha: null, calificable: true, intentos: 1, visible: true };
   const [ico, tl] = TIPO_IT[tipo], conFecha = ['clase', 'tarea', 'cuestionario'].includes(tipo), cal = ['tarea', 'cuestionario'].includes(tipo);
   const lUrl = { recurso: 'Enlace del recurso (opcional si escribe el texto)', video: 'Enlace del video', clase: 'Enlace de la reunión (Meet, Zoom, Teams)', tarea: 'Material de apoyo (enlace, opcional)', cuestionario: 'Material de apoyo (enlace, opcional)' }[tipo];
   openModal(`${ico} ${id ? 'Editar' : 'Nuevo'}: ${tl.toLowerCase()}`, `<div class="formgrid">${fIn('iTit', 'Título', i.titulo, 'maxlength="120"')}
-      ${conFecha ? fIn('iFec', tipo === 'clase' ? 'Fecha y hora de la clase' : 'Fecha y hora límite (opcional)', aLocal(i.fecha), 'type="datetime-local"') : ''}
+      ${conFecha ? fFH('iFec', tipo === 'clase' ? 'Fecha y hora de la clase' : 'Fecha y hora límite (opcional)', aLocal(i.fecha)) : ''}
       ${fIn('iUrl', lUrl, i.url, 'maxlength="500" placeholder="https://"')}
       ${tipo === 'cuestionario' ? `<label class="field"><span>Intentos permitidos</span><select id="iInt">${[1, 2, 3].map(n => opt(n, n === 1 ? '1 intento' : n + ' intentos (queda la mejor)', i.intentos)).join('')}</select></label>` : ''}</div>
+    ${tipo === 'cuestionario' ? `<fieldset class="revision"><legend>Opciones de revisión (como en Moodle)</legend>
+      <p class="muted" style="margin:0 0 8px">Para que los estudiantes no se pasen las respuestas, lo recomendado es mostrar todo después del cierre (la fecha y hora límite).</p>
+      <div class="formgrid"><label class="field"><span>¿Cuándo ve el estudiante su calificación?</span><select id="iVerN">${VER_OPC.map(([v, l]) => opt(v, l, i.ver_nota || 'cierre')).join('')}</select></label>
+      <label class="field"><span>¿Cuándo ve las respuestas correctas?</span><select id="iVerR">${VER_OPC.map(([v, l]) => opt(v, l, i.ver_respuestas || 'cierre')).join('')}</select></label></div></fieldset>` : ''}
+    ${tipo === 'clase' ? '<p class="muted">Si todavía no tiene el enlace, guarde la clase y agréguelo después: los estudiantes verán "Enlace pendiente". Puede pegar la invitación completa de Zoom o Meet en la descripción.</p>' : ''}
     ${fTa('iTxt', tipo === 'tarea' || tipo === 'cuestionario' ? 'Instrucciones para el estudiante' : 'Descripción o texto (opcional)', i.texto, '')}
     ${cal ? `<label class="chk"><input type="checkbox" id="iCal" ${i.calificable ? 'checked' : ''}> Cuenta para calificaciones (crea una actividad del periodo ${sel.cp} en Calificaciones)</label><br>` : ''}
     <label class="chk"><input type="checkbox" id="iVis" ${i.visible ? 'checked' : ''}> Visible para los estudiantes</label>
@@ -4023,11 +4475,13 @@ async function guardarItem(uid, tipo, id) {
   if ($('#iFec')) { d.fecha = deLocal(vv('iFec')); if (tipo === 'clase' && !d.fecha) return toast('Escriba la fecha y la hora de la clase'); }
   if ($('#iCal')) d.calificable = $('#iCal').checked;
   if ($('#iInt')) d.intentos = +$('#iInt').value;
+  if ($('#iVerN')) { d.ver_nota = $('#iVerN').value; d.ver_respuestas = $('#iVerR').value;
+    if ((d.ver_nota === 'cierre' || d.ver_respuestas === 'cierre') && !d.fecha) return toast('Para mostrar los resultados después del cierre, escriba la fecha y hora límite del cuestionario'); }
   if (id) {
     const o = CAM.its.find(x => x.id === id);
     if (o.calificable && d.calificable === false && CAM.cnt[id]?.cal && !(await confirmar('Este contenido ya tiene calificaciones. Si deja de contar, se borran de Calificaciones y se recalcula el periodo. ¿Continuar?', 'Sí, continuar'))) return;
   }
-  const r = await busy('#iBtn', () => guard(() => id ? q(db.from('campus_items').update(d).eq('id', id).select().single())
+  const r = await busy('#iBtn', () => guard(() => id ? uno(db.from('campus_items').update(d).eq('id', id).select().single())
     : q(db.from('campus_items').insert({ ...d, unidad_id: uid, tipo, colegio_id: ctx.colegio_id, orden: CAM.its.filter(x => x.unidad_id === uid).length + 1 }).select().single()), 'Guardado'));
   if (!r) return; closeModal(); await guard(cargarCampusStaff);
   S.loadedG.delete(sel.cg);
@@ -4053,8 +4507,22 @@ function pintarEditor() {
     ${CAM.cnt[QE.id]?.ent ? '<div class="note">Ya hay estudiantes que respondieron. Si cambia las respuestas correctas, sus calificaciones ya registradas no cambian.</div>' : ''}
     <ol class="qe-list">${QE.ps.map((p, k) => preguntaEditHTML(p, k)).join('')}</ol>
     ${QE.ps.length ? '' : '<p class="empty">Aún no hay preguntas. Elija el tipo de la primera:</p>'}
-    <div class="toolbar">${Object.entries(TIPO_P).map(([t, l]) => `<button class="btn ghost sm" type="button" onclick="agregarPregunta('${t}')">+ ${l}</button>`).join('')}</div>
+    <div class="toolbar">${Object.entries(TIPO_P).map(([t, l]) => `<button class="btn ghost sm" type="button" onclick="agregarPregunta('${t}')">+ ${l}</button>`).join('')}<button class="btn ghost sm" type="button" onclick="bancoPreguntas()">📚 Traer de otro cuestionario</button></div>
     <div class="modal-foot guardar-fijo"><span class="muted" style="margin-right:auto">${QE.ps.length} preguntas · ${tot} puntos</span><button class="btn ghost" type="button" onclick="closeModal()">Cerrar sin guardar</button><button class="btn" type="button" id="qeBtn" onclick="guardarPreguntas()">Guardar preguntas</button></div>`);
+}
+// Banco de preguntas: reutilizar preguntas de cuestionarios de la misma asignatura (este año o anteriores, otros cursos)
+async function bancoPreguntas() {
+  leerEditor();
+  const l = (await guard(() => q(db.rpc('campus_banco', { p_asig: sel.ca })))) || [];
+  const otros = l.filter(x => x.id !== QE.id);
+  if (!otros.length) return toast('No hay otros cuestionarios de esta asignatura con preguntas');
+  const elegido = await dialogo(`<h3 style="margin-top:0">Traer preguntas</h3><p class="muted">Se agregan al final; puede editarlas o quitarlas antes de guardar.</p>
+    <select id="bpSel" style="width:100%">${otros.map(x => opt(x.id, `${x.titulo} · ${x.curso} ${x.anio} (${x.n} preguntas)`)).join('')}</select>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(null)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(document.getElementById('bpSel').value)">Traer</button></div>`);
+  if (!elegido) return pintarEditor();
+  const ps = await guard(() => q(db.rpc('campus_preguntas_de', { p_item: elegido })));
+  if (ps?.length) { QE.ps.push(...JSON.parse(JSON.stringify(ps))); toast(`Se agregaron ${ps.length} preguntas. Revise y pulse Guardar`); }
+  pintarEditor();
 }
 function preguntaEditHTML(p, k) {
   let cuerpo = '';
@@ -4190,11 +4658,11 @@ async function prepCampusInicio() {
 }
 // ---------- Parametrización: campus y gemas ----------
 function paramCampus() {
-  const k = S.k, r = isDir(), dis = r ? '' : 'disabled', grados = [...new Set(S.grupos.map(g => g.grado))].sort((a, b) => a - b), sg = k.campus_grados || [];
+  const k = S.k, r = isDir(), dis = r ? '' : 'disabled', grados = GRADOS_TODOS, sg = k.campus_grados || [];
   return `<div class="panel"><h2>Campus virtual</h2><p class="muted">Cada docente arma sus unidades con recursos, videos, clases en vivo, tareas y cuestionarios. Los estudiantes y sus familias entran desde Colegio-IA; quien tiene pagos pendientes no puede usarlo.</p>
     <label class="chk"><input type="checkbox" id="cAct" ${k.campus_activo ? 'checked' : ''} ${dis}> Campus virtual activo</label>
     <p style="margin:12px 0 4px"><strong>Grados con campus</strong> <span class="muted">(si no marca ninguno, funciona en todos)</span></p>
-    <div class="cuotas">${grados.map(g => `<label class="chk"><input type="checkbox" class="cGr" value="${g}" ${sg.includes(g) ? 'checked' : ''} ${dis}> ${esc(gradoTxt(g))}</label>`).join('') || '<span class="muted">Primero cree los cursos.</span>'}</div>
+    <div class="cuotas">${grados.map(g => `<label class="chk"><input type="checkbox" class="cGr" value="${g}" ${sg.includes(g) ? 'checked' : ''} ${dis}> ${gradoEtq(g)}</label>`).join('')}</div>
     <label class="chk" style="margin-top:12px"><input type="checkbox" id="cGem" ${k.gemas_activas !== false ? 'checked' : ''} ${dis}> Gemas, rangos y top del curso (gamificación)</label>
     ${r ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarCampusCfg()">Guardar</button></div>' : ''}</div>`;
 }
@@ -4227,7 +4695,8 @@ function invitacionDemo() {
       <button class="btn ghost" type="button" onclick="dlgFin('planes')">Ver planes</button><button class="btn" type="button" onclick="dlgFin('registro')">Registrar mi colegio gratis</button></div>`);
 }
 function ctaDemo() {
-  return `<div class="cta-demo"><div><strong>¿Quiere esto para su colegio?</strong> <span class="muted">15 días gratis, sin tarjeta.</span></div>
+  // En Mensajes la barra no queda fija: tapaba el botón Enviar (revisión 20 oct)
+  return `<div class="cta-demo${view === 'mensajes' ? ' quieta' : ''}"><div><strong>¿Quiere esto para su colegio?</strong> <span class="muted">15 días gratis, sin tarjeta.</span></div>
     <div class="toolbar"><button class="btn sm" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button><button class="btn ghost sm" type="button" onclick="verPlanes()">Ver planes</button>${waAsesor('Asesor')}</div></div>`;
 }
 function quiereRegistro() {
@@ -4397,7 +4866,7 @@ async function manualBold(orden) {
    ===================================================================== */
 Object.assign(window, { formBoldColegio, guardarBoldColegio, quitarBoldColegio, sumarBold, pagarBoldFam, verificarBoldAhora, manualBold, verPlanes, quiereRegistro, registrarColegio, cancelarRegistro, abrirItem, entregarTarea, enviarCuestionario, campusSel, formUnidad, guardarUnidad, borrarUnidad, elegirTipo, formItem, guardarItem, borrarItem, editorPreguntas, agregarPregunta, quitarPregunta, masOpcion, guardarPreguntas, verEntregas, calificarEntrega, darParticipacion, guardarCampusCfg,
   subirFirma, guardarColegio, guardarAtencion, revisarDiaCita, formGradosAsig, guardarGradosAsig, toggleSec, volver, dlgFin, agregarCarrito, quitarCarrito, cambiarCant, hacerPedido, formComprobantePed, enviarComprobantePed, cancelarPedidoFam, reciboPedido, verPedido, cambiarEstadoPed, listaPreparar, formProducto, guardarProducto, borrarProducto, guardarTienda, verUtiles, copiarUtiles, guardarUtiles, imprimirGraficos,
-  llenarEsts, verAvisos, abrirHilo, enviarMensaje, nuevoMensaje, formAutorizacion, guardarAut, responderAut, detalleAut, borrarAut, formCita, guardarCita, formConfirmarCita, confirmarCita, estadoCita, elegirPerfil, salirApp, verFotoEl, subirFotosClase, borrarFotoClase, subirFotoEst, imprimirCarnet, formContacto, guardarContacto, borrarContacto, filtrarFilas, verCarnet, subirFotoEstModal, guardarRedes, quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
+  llenarEsts, verAvisos, abrirHilo, enviarMensaje, nuevoMensaje, formAutorizacion, guardarAut, responderAut, detalleAut, borrarAut, formCita, guardarCita, formConfirmarCita, confirmarCita, estadoCita, elegirPerfil, salirApp, verFotoEl, subirFotosClase, borrarFotoClase, editarPieFoto, moverAsig, formEditarEvento, guardarEvento, subirFotoEst, imprimirCarnet, formContacto, guardarContacto, borrarContacto, filtrarFilas, verCarnet, subirFotoEstModal, guardarRedes, quiereDemo, entrarDemo, store, setPorClase, agregarFrase, exportarEstudiantes, exportarCartera, exportarPlanilla, detalleFallas, detalleAsig,
   formActividad, guardarActividad, borrarActividad, setNotaAct, formRecup, guardarRecup, borrarRecup,
   formComunicado, destCom, guardarComunicado, marcarLeido, verLecturas, borrarComunicado, copiarCom,
   guardarHorario, verBoletin, formExcusaStaff, guardarExcusaStaff, guardarPlanColegio, formPlanColegio, previewPago, enviarExcusa, verSoporte, revisarExcusa,
@@ -4413,5 +4882,6 @@ Object.assign(window, { formBoldColegio, guardarBoldColegio, quitarBoldColegio, 
   guardarResolucion, formConcepto, guardarConcepto, setCierre, confirmarCierre, abrirCuenta, registrarPago, anularPago, reciboPago,
   imprimirCartera, guardarMediosPago, cambiarAnioCartera, cambiarPerfilDemo, pagarSuscripcion, pagarBoldSusc, copiarTexto, reciboSusc, revisarCompPlat, decidirCompPlat, formPagadoHasta, guardarPagadoHasta, guardarCfgPlat, abrirPiar, guardarPiar, piarHTML, formRetiro,
 });
+Object.assign(window, { marcarPiar, guardarMarcaPiar, calcularHoras, imprimirHorario, bancoPreguntas, ponerTema, toast, dlgFin, previaImg, conFecha, fhTxt, guardarPermisos, permisosDefecto, pedirCambioAut, resolverCambioAut, campusTab, formCurso, guardarCurso, reiniciarCurso, copiarUnidad, hacerCopiaUnidad });
 resetS();
 arrancar();
