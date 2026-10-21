@@ -67,6 +67,22 @@ function msg(e) {
 }
 async function q(p) { const { data, error } = await p; if (error) throw error; return data; }
 // Para cambios: si la base no cambió ninguna fila (sin permiso o registro inexistente) se avisa en vez de decir "guardado"
+// Revisión 21 oct: los datos y nombres siempre en MAYÚSCULA. Lo que se escribe en una casilla de datos se ve en mayúscula
+// al instante (la base también lo guarda así, SQL 031). Quedan como se escriben: correos, contraseñas, enlaces, llaves,
+// referencias de pago, títulos y textos de comunicados y del campus, y las respuestas de los cuestionarios.
+const SIN_MAYUS = new Set(['bkId', 'mpBoU', 'mpLlV', 'tUrl', 'iUrl', 'iWeb', 'fEmail', 'cTit', 'eeTit', 'auT', 'iTit', 'uTit', 'peResp', 'tNota',
+  'cRef', 'pcRef', 'sRef', 'pRef', 'aCod', 'mpEfTxt', 'prOp', 'dsRef']);
+function mayusOk(el) {
+  if (!el || el.tagName !== 'INPUT' || el.readOnly || el.dataset.libre !== undefined) return false;
+  if (!['text', 'tel', ''].includes((el.getAttribute('type') || '').toLowerCase())) return false;   // las búsquedas quedan como se escriben
+  if (SIN_MAYUS.has(el.id) || /^(qz|qq|qa|qe|ec-|rs_)/.test(el.id) || /\b(qe-[lor]|hHora)\b/.test(el.className)) return false;
+  return !/email|password|url/.test(el.autocomplete || '');
+}
+document.addEventListener('input', ev => {
+  const el = ev.target; if (ev.isComposing || !mayusOk(el)) return;
+  const v = el.value, u = v.toLocaleUpperCase('es-CO'); if (v === u) return;
+  const a = el.selectionStart, b = el.selectionEnd; el.value = u; try { el.setSelectionRange(a, b); } catch {}
+}, true);
 async function uno(p) { const d = await q(p); if (d == null || (Array.isArray(d) && !d.length)) { const e = new Error('No tiene permiso para cambiar este dato, o el registro ya no existe. Recargue la página e intente de nuevo'); e.code = '42501'; throw e; } return d; }
 async function all(make) { // lee todas las filas en bloques de 1000
   const out = []; for (let i = 0; ; i += 1000) { const d = await q(make().range(i, i + 999)); out.push(...d); if (d.length < 1000) return out; }
@@ -435,7 +451,7 @@ const VIEWS = [
   { id: 'estudiantes', label: 'Estudiantes y matrícula', ok: isDir, prep: prepEstudiantes, fn: vEstudiantes },
   { id: 'notas', label: 'Calificaciones', ok: () => isDir() || isDoc(), prep: prepGrupoSel, fn: vNotas },
   { id: 'asistencia', label: 'Asistencia', ok: () => isDir() || isDoc(), prep: prepGrupoSel, fn: vAsistencia },
-  { id: 'boletines', label: 'Boletines', ok: () => !isTes(), prep: async () => { await prepGrupoSel(); if (propio()) await cargarFotoEst([propio()]); S.ret = new Set(isDir() && sel.g ? (await q(db.rpc('retenidos_grupo', { p_grupo: sel.g })).catch(() => [])).map(x => x.retenidos_grupo || x) : []); }, fn: vBoletines },
+  { id: 'boletines', label: 'Boletines', ok: () => !isTes(), prep: async () => { await prepGrupoSel(); if (propio()) { await cargarFotoEst([propio()]); await cargarDocSols(propio()); } S.ret = new Set(isDir() && sel.g ? (await q(db.rpc('retenidos_grupo', { p_grupo: sel.g })).catch(() => [])).map(x => x.retenidos_grupo || x) : []); }, fn: vBoletines },
   { id: 'observador', label: 'Observador', ok: () => isDir() || isDoc() || isFam(), prep: prepObservador, fn: vObservador },
   { id: 'piar', label: 'PIAR e inclusión', ok: () => isDir() || isDoc() || isAcud(), prep: prepPiar, fn: vPiar },
   { id: 'comunicados', label: 'Comunicados', ok: () => true, prep: prepComunicados, fn: vComunicados, badge: () => isFam() ? noLeidos() : 0 },
@@ -455,7 +471,9 @@ const VIEWS = [
   { id: 'academico', label: 'Informes académicos', ok: () => isDir() || (isDoc() && S.dirGrupos.length > 0), prep: prepAcademico, fn: vAcademico },
   { id: 'pagos', label: 'Pagos y cartera', ok: vePagos, prep: prepPagos, fn: vPagos },
   { id: 'cuenta', label: 'Estado de cuenta', ok: isAcud, prep: prepCuenta, fn: vCuenta },
+  { id: 'documentos', label: 'Documentos', ok: isAcud, prep: prepDocumentos, fn: vDocumentos },
   { id: 'pedidos', label: 'Tienda y pedidos', ok: manejaPagos, prep: prepPedidos, fn: vPedidos, badge: () => S.nov?.pedidosStaff || 0 },
+  { id: 'docsol', label: 'Documentos pedidos', ok: vePagos, prep: prepDocSol, fn: vDocSol, badge: () => S.docPorConf || 0 },
   { id: 'usuarios', label: 'Usuarios y accesos', ok: isDir, prep: cargarMiembros, fn: vUsuarios },
 ];
 // Menú lateral por secciones (regla general: nada de listas largas grises)
@@ -465,10 +483,10 @@ const MENU = [
   { t: 'Campus virtual', c: 'violeta', ids: ['campus', 'gemas'] },
   { t: 'Comunicación', c: 'verde', ids: ['comunicados', 'mensajes', 'citas', 'autorizaciones', 'cronograma', 'galeria'] },
   { t: 'Estudiantes y familias', c: 'teal', ids: ['estudiantes', 'familia', 'contactos', 'excusas'] },
-  { t: 'Pagos y tienda', c: 'ambar', ids: ['pagos', 'cuenta', 'tienda', 'pedidos'] },
+  { t: 'Pagos y tienda', c: 'ambar', ids: ['pagos', 'cuenta', 'documentos', 'tienda', 'pedidos', 'docsol'] },
   { t: 'Administración', c: 'gris', ids: ['config', 'usuarios'] },
 ];
-const ICO = { campus: '💻', gemas: '💎', inicio: '🏠', notas: '✏️', asistencia: '✅', boletines: '📄', observador: '📝', piar: '🧩', academico: '📊', horario: '🕒', utiles: '🎒', comunicados: '📢', mensajes: '💬', citas: '📅', autorizaciones: '✍️', cronograma: '🗓️', galeria: '📷', estudiantes: '🎓', familia: '🪪', contactos: '📇', excusas: '📩', pagos: '💰', cuenta: '💳', tienda: '🛍️', pedidos: '📦', config: '⚙️', usuarios: '👥' };
+const ICO = { documentos: '📑', docsol: '📑', campus: '💻', gemas: '💎', inicio: '🏠', notas: '✏️', asistencia: '✅', boletines: '📄', observador: '📝', piar: '🧩', academico: '📊', horario: '🕒', utiles: '🎒', comunicados: '📢', mensajes: '💬', citas: '📅', autorizaciones: '✍️', cronograma: '🗓️', galeria: '📷', estudiantes: '🎓', familia: '🪪', contactos: '📇', excusas: '📩', pagos: '💰', cuenta: '💳', tienda: '🛍️', pedidos: '📦', config: '⚙️', usuarios: '👥' };
 // Familias con pagos pendientes: solo inicio, comunicados y estado de cuenta (decisión del 18 oct 2026)
 // Revisión 20 oct: con pagos pendientes la familia solo puede ver su estado de cuenta y pagar
 const PERMITIDAS_MOROSO = ['inicio', 'cuenta'];
@@ -789,7 +807,7 @@ function drawEst() {
     <td>${e.estado}${e.fecha_retiro ? `<br><span class="muted">${fmtF(e.fecha_retiro)}</span>` : ''}</td>
     <td><select class="acc" aria-label="Acciones" onchange="accionEst('${e.id}',this.value);this.value=''"><option value="">Acciones…</option>
       <option value="editar">${puede('matricula') ? 'Editar ficha' : 'Ver ficha'}</option><option value="hoja">Hoja de matrícula</option><option value="constancia">Constancia de estudio</option>
-      <option value="certificado">Constancia con calificaciones</option><option value="anteriores">Certificados de años anteriores</option>${!puede('matricula') ? '' : e.estado === 'Activo' ? '<option value="retirar">Registrar retiro</option>' : '<option value="reactivar">Reactivar</option>'}</select></td></tr>`;
+      <option value="certificado">Constancia con calificaciones</option><option value="anteriores">Certificados de años anteriores</option>${e.estado === 'Retirado' ? '<option value="retiro">Constancia de retiro (SIMAT)</option>' : ''}${!puede('matricula') ? '' : e.estado === 'Activo' ? '<option value="retirar">Registrar retiro</option>' : '<option value="reactivar">Reactivar</option>'}</select></td></tr>`;
   }).join('')}</tbody></table>` : '<div class="empty">No hay estudiantes con ese filtro.</div>';
 }
 async function accionEst(id, a) {
@@ -798,6 +816,7 @@ async function accionEst(id, a) {
   if (a === 'hoja') return showDocs(hojaMatricula(id), 'Hoja de matrícula', nomArchivo('Hoja de matrícula', est(id)));
   if (a === 'constancia') return showDocs(constancia(id), 'Constancia de estudio', nomArchivo('Constancia de estudio', est(id)));
   if (a === 'certificado') { const e = est(id); await guard(() => cargarGrupo(e.grupo_id)); return showDocs(certificado(id), 'Constancia con calificaciones', nomArchivo('Constancia con calificaciones', est(id))); }
+  if (a === 'retiro') { await guard(() => prepDocsEst([id])); return showDocs(constanciaRetiro(id), 'Constancia de retiro', nomArchivo('Constancia de retiro', est(id))); }
   if (a === 'anteriores') return certAnteriores(id);
   if (a === 'retirar') return formRetiro(id);
   if (a === 'reactivar') return reactivar(id);
@@ -837,7 +856,11 @@ function formEst(id) {
   const ac = id ? acudDe(id) : [];
   if (id && !ac.length && e.acudiente_nombre) ac.push({ nombres: e.acudiente_nombre, telefono: e.acudiente_tel || '', responsable_pago: true });
   while (ac.length < 2) ac.push({});
+  fotoNueva = null; setTimeout(() => cargarFotoFicha(id), 0);
   openModal(id ? `Ficha de ${nom(e)}` : 'Matricular estudiante', `
+    <div class="ficha-foto"><div class="carnet-foto" id="fichaFoto"><span>${id ? 'Cargando…' : 'Sin foto'}</span></div>
+      <div><strong>Foto del estudiante</strong><p class="muted" style="margin:4px 0 8px">Es la misma del carnet, la hoja de matrícula, las constancias y el boletín. Foto tipo documento, de frente y con fondo claro.</p>
+      ${isDir() ? `<label class="btn ghost sm">Subir o cambiar foto<input type="file" accept="image/*" hidden onchange="elegirFotoFicha(this,'${id || ''}')"></label>` : ''}</div></div>
     <h3>Datos del estudiante</h3><div class="formgrid">
       ${fIn('fNom', 'Nombres', e.nombres)}${fIn('fApe', 'Apellidos', e.apellidos)}
       <label class="field"><span>Tipo de documento</span><select id="fTd">${TIPOS_DOC.map(t => opt(t, t, e.tipo_doc)).join('')}</select></label>
@@ -944,6 +967,7 @@ async function guardarEst(id) {
   }, id ? 'Ficha actualizada' : 'Estudiante matriculado');
   if (!r) return;
   if (id) Object.assign(est(id), r); else S.ests.push(r);
+  if (!id && fotoNueva) { const fo = fotoNueva; fotoNueva = null; await guard(async () => { await q(db.from('fotos_est').upsert({ estudiante_id: r.id, foto: fo }, { onConflict: 'estudiante_id' })); fotoEst[r.id] = fo; return true; }); }
   S.acud = await all(() => db.from('acudientes').select('*').eq('colegio_id', ctx.colegio_id).order('orden'));
   closeModal(); render();
 }
@@ -1049,7 +1073,7 @@ function famOrden(l) {
 function vUsuarios() {
   const staff = S.miembros.filter(m => !m.estudiante_id);
   const fam = S.miembros.filter(m => m.estudiante_id);
-  return head('Usuarios y accesos', 'Invita a directivos y docentes. Las familias se invitan desde Estudiantes y matrícula.', `<button class="btn" type="button" onclick="formUsuario()">Invitar usuario</button>`) +
+  return head('Usuarios y accesos', 'Agregue directivos y docentes. Las familias se agregan desde Estudiantes y matrícula.', `<button class="btn" type="button" onclick="formUsuario()">Agregar usuario</button>`) +
     `<div class="panel"><h2>Directivos y docentes</h2>${staff.length ? `<ul class="list">${staff.map(m => filaAcceso(m, m.rol === 'docente' ? `<br><span class="muted">Grupos: ${[...new Set(S.dg.filter(d => d.miembro_id === m.id).map(d => d.grupo_id))].map(g => `${esc(grupo(g)?.nombre)} (${esc(asigsDocTxt(m.id, g))})`).join('; ') || 'ninguno'}</span> <button class="linkbtn" type="button" onclick="formGruposDoc('${m.id}')">Asignar grupos y asignaturas</button>` : '')).join('')}</ul>` : '<p class="muted">Sin usuarios.</p>'}</div>
     <div class="panel"><h2>Familias y estudiantes</h2><p>${fam.filter(m => m.user_id).length} cuentas activas y ${fam.filter(m => !m.user_id).length} invitaciones pendientes.</p>
       <div class="toolbar"><label class="field"><span>Buscar</span><input type="search" placeholder="Nombre o correo" value="${esc(sel.uq || '')}" oninput="sel.uq=this.value;filtrarFilas(this.value)"></label>
@@ -1062,11 +1086,11 @@ function vUsuarios() {
       <p class="muted">"Nuevo código" sirve cuando alguien perdió su código o cambió de correo: el código anterior deja de funcionar y la persona vuelve a activar su cuenta con el nuevo. Un acudiente con varios hijos activa a todos con un solo código.</p></div>`;
 }
 function formUsuario() {
-  openModal('Invitar usuario', `<div class="formgrid">
+  openModal('Agregar usuario', `<div class="formgrid">
     <label class="field"><span>Perfil</span><select id="uRol">${(esRector() ? ['docente', 'coordinador', 'secretaria', 'tesoreria', 'rector'] : ['docente']).map(r => opt(r, ROL_TXT[r])).join('')}</select></label>
     <label class="field"><span>Nombre completo</span><input id="uNom"></label>
     <label class="field"><span>Correo electrónico</span><input id="uEmail" type="email"></label></div>
-    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="invitar(null)">Crear invitación</button></div>`);
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="invitar(null)">Agregar usuario</button></div>`);
 }
 function asigsDocTxt(mid, gid) {
   const l = S.dg.filter(d => d.miembro_id === mid && d.grupo_id === gid);
@@ -1432,7 +1456,9 @@ function vBoletines() {
   if (!sel.p) sel.p = S.k.periodo_actual;
   if (propio()) {
     const eid = propio(); if (!est(eid) || !grupo(est(eid).grupo_id)) return head('Boletín') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
-    return head('Boletín', 'Consulta e imprime el informe de cada periodo.', `<div class="toolbar" style="margin:0"><label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label><button class="btn" type="button" onclick="imprimirBoletin('${eid}')">Imprimir</button></div>`) + boletinHTML(eid, sel.p);
+    return head('Boletín', 'Consulta e imprime el informe de cada periodo.', `<div class="toolbar" style="margin:0"><label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label>${docPagado(eid, 'boletin', sel.p) ? `<button class="btn" type="button" onclick="imprimirBoletin('${eid}')">Imprimir</button>` : ''}</div>`) +
+      (docPagado(eid, 'boletin', sel.p) ? boletinHTML(eid, sel.p) : `<div class="panel"><h2>Boletín del periodo ${sel.p}</h2><p>Para ver y descargar el boletín de este periodo, primero pague <strong>${cop(docPrecio('boletin'))}</strong>. Una vez pagado, queda disponible siempre.</p>
+        ${isEst() ? '<p class="muted">Su acudiente puede pagarlo desde su cuenta, en "Documentos".</p>' : docSols.some(x => x.estudiante_id === eid && x.tipo === 'boletin' && x.periodo === sel.p && x.estado === 'Por confirmar') ? '<div class="note">Ya envió el comprobante: el boletín se libera cuando tesorería lo confirme.</div>' : `<div class="toolbar"><button class="btn" type="button" onclick="pedirDoc('boletin',${sel.p})">Pagar el boletín</button><button class="btn ghost" type="button" onclick="go('documentos')">Ver mis documentos</button></div>`}</div>`);
   }
   const gs = gruposVis(); if (!gs.length) return head('Boletines') + sinGrupos();
   const es = estsDe(sel.g), ret = S.ret || new Set(), nRet = es.filter(e => ret.has(e.id)).length;
@@ -1682,6 +1708,7 @@ function paramCostos() {
     <div class="formgrid">${fIn('cRes', 'Número de resolución', c.resolucion)}${fIn('cFec', 'Fecha de la resolución', c.fecha_resolucion, 'type="date"')}${fIn('cEnt', 'Entidad que la expide', c.entidad || 'Secretaría de Educación')}${fTa('cObs', 'Observaciones', c.observaciones)}</div>
     ${ed ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarResolucion()">Guardar resolución</button></div>' : ''}</div>
   ${panelMediosPago()}
+  ${panelDocPrecios()}
   <div class="panel"><h2>Día límite de pago</h2><p class="muted">Cada cuota mensual se considera vencida después de este día de su mes.</p>
     <div class="toolbar"><label class="field"><span>Pagar hasta el día</span><select id="cDia" ${rr ? '' : 'disabled'}>${Array.from({ length: 28 }, (_, i) => opt(i + 1, i + 1, S.k.dia_limite_pago || 5)).join('')}</select></label>
     ${rr ? '<button class="btn" type="button" onclick="guardarDiaLimite()">Guardar</button>' : '<span class="muted">Sin permiso para cambiarlo.</span>'}</div></div>
@@ -2042,7 +2069,7 @@ function imprimirCartera() {
 async function prepCuenta() {
   const h = hermanos();
   S.cuentaHijos = h.length > 1 ? await Promise.all(h.map(async m => { const f = await q(db.rpc('estado_cuenta', { p_estudiante: m.estudiante_id, p_anio: S.k.anio })).catch(() => []); return { m, venc: f.filter(x => x.vencido).reduce((a, x) => a + +x.saldo, 0), total: f.reduce((a, x) => a + +x.saldo, 0) }; })) : [];
-  await cargarCuenta(propio()); await cargarOrdenesFam(); comps = await all(() => db.from('comprobantes').select('id,estudiante_id,fecha,valor,medio,referencia,nota,estado,respuesta,creado_en').eq('estudiante_id', propio()).order('creado_en', { ascending: false })).catch(() => []); }
+  await cargarCuenta(propio()); await cargarOrdenesFam(); await cargarDocSols(propio()); comps = await all(() => db.from('comprobantes').select('id,estudiante_id,fecha,valor,medio,referencia,nota,estado,respuesta,creado_en').eq('estudiante_id', propio()).order('creado_en', { ascending: false })).catch(() => []); }
 function vCuenta() {
   const e = est(propio()); if (!e) return head('Estado de cuenta') + '<div class="panel empty">No encontramos la información del estudiante.</div>';
   const venc = cuenta.filas.filter(x => x.vencido).reduce((a, x) => a + +x.saldo, 0), total = cuenta.filas.reduce((a, x) => a + +x.saldo, 0);
@@ -3473,7 +3500,7 @@ function panelPagarFam(venc) {
       <div class="field full"><span>¿Qué cuotas pagó? Marque las que corresponden a este pago</span>${cuotasFam().length ? `<div class="cuotas">${cuotasFam().map((x, i) => `<label class="chk"><input type="checkbox" class="cCuota" value="${i}" onchange="sumarCuotas()"${x.vencido ? ' checked' : ''}> ${esc(x.concepto)}${x.mes ? ' ' + MESES[x.mes] : ''} ${x.anioCobro || cuenta.anio} <span class="muted">${cop(x.saldo)}</span></label>`).join('')}</div>` : '<p class="muted">No tiene cuotas pendientes.</p>'}</div>
       <label class="field"><span>Foto o captura del comprobante (se borra al confirmarse; quedan el valor y la referencia)</span><input type="file" id="cImg" accept="image/*"></label></div>
     <div class="toolbar" style="margin-top:12px"><button class="btn" type="button" id="cBtn" onclick="enviarComprobante()">Ya pagué: enviar comprobante</button>
-      <button class="btn ghost" type="button" onclick="pazYSalvo('${propio()}')">${venc > 0 ? 'Ver constancia de lo que se debe' : 'Descargar paz y salvo'}</button></div>
+      <button class="btn ghost" type="button" onclick="${venc > 0 || !docPrecio('pazysalvo') ? `pazYSalvo('${propio()}')` : `pedirDoc('pazysalvo')`}">${venc > 0 ? 'Ver constancia de lo que se debe' : docPrecio('pazysalvo') ? `Pedir paz y salvo (${cop(docPrecio('pazysalvo'))})` : 'Descargar paz y salvo'}</button></div>
     ${comps.length ? `<h3 style="margin-top:14px">Comprobantes enviados</h3><div class="tbl"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Medio</th><th>Estado</th></tr></thead><tbody>
       ${comps.map(c => `<tr><td>${fmtF(c.fecha)}</td><td>${cop(c.valor)}</td><td>${esc(c.medio || '')}${c.referencia ? ` <span class="muted">${esc(c.referencia)}</span>` : ''}</td><td>${tagComp(c.estado)}${c.respuesta ? `<br><span class="muted">${esc(c.respuesta)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}</div>` : ''}`;
 }
@@ -4885,3 +4912,183 @@ Object.assign(window, { formBoldColegio, guardarBoldColegio, quitarBoldColegio, 
 Object.assign(window, { marcarPiar, guardarMarcaPiar, calcularHoras, imprimirHorario, bancoPreguntas, ponerTema, toast, dlgFin, previaImg, conFecha, fhTxt, guardarPermisos, permisosDefecto, pedirCambioAut, resolverCambioAut, campusTab, formCurso, guardarCurso, reiniciarCurso, copiarUnidad, hacerCopiaUnidad });
 resetS();
 arrancar();
+
+/* =====================================================================
+   Documentos que la familia paga antes de descargarlos (revisión 21 oct, SQL 032)
+   El colegio fija el precio de cada documento (0 = gratis). La familia lo pide, paga y el documento se libera solo:
+   con Bold al confirmarse el pago en línea; con llave Bre-B o transferencia al confirmar tesorería el comprobante.
+   ===================================================================== */
+const DOC_TIPOS = [
+  ['boletin', 'Boletín (informe académico) de cada periodo', 'Uno por cada periodo. Una vez pagado, queda disponible siempre.'],
+  ['constancia', 'Constancia de estudio', 'Certifica que el estudiante está matriculado este año. Se descarga durante 30 días.'],
+  ['certificado', 'Constancia con calificaciones', 'Con las calificaciones del año en curso. Se descarga durante 30 días.'],
+  ['anteriores', 'Certificado de un año anterior', 'Calificaciones de un año ya cerrado. Una vez pagado, queda disponible siempre.'],
+  ['pazysalvo', 'Paz y salvo', 'Solo si no tiene saldos vencidos. Se descarga durante 30 días.'],
+  ['retiro', 'Constancia de retiro (SIMAT)', 'Solo para estudiantes retirados. Se descarga durante 30 días.'],
+];
+const DOC_TXT = Object.fromEntries(DOC_TIPOS.map(([k, l]) => [k, l]));
+const docPrecio = t => Math.max(0, +((S.k?.doc_precios || {})[t] || 0));
+const DOC_COLS = 'id,estudiante_id,tipo,periodo,anio,valor,medio,estado,referencia,con_comprobante,respuesta,bold_orden,creado_nombre,atendido_nombre,creado_en,pagado_en';
+let docSols = [], docHist = [];
+const docVigente = d => d.estado === 'Pagado' && (['boletin', 'anteriores'].includes(d.tipo) || Date.now() - new Date(d.pagado_en).getTime() < 30 * 864e5);
+const docPagado = (eid, tipo, periodo, anio) => docPrecio(tipo) === 0 || docSols.some(d => d.estudiante_id === eid && d.tipo === tipo && docVigente(d)
+  && (tipo !== 'boletin' || d.periodo === periodo) && (tipo !== 'anteriores' || d.anio === anio));
+async function cargarDocSols(eid) { docSols = await q(db.from('doc_solicitudes').select(DOC_COLS).eq('estudiante_id', eid).order('creado_en', { ascending: false }).limit(60)).catch(() => []); }
+async function prepDocumentos() {
+  const e = propio(); if (!e) return;
+  await Promise.all([cargarDocSols(e), cargarOrdenesFam(), q(db.from('historial').select('anio,grado').eq('estudiante_id', e).order('anio')).then(h => docHist = h).catch(() => docHist = [])]);
+}
+const DOC_ESTADO = { 'Por pagar': '<span class="tag t2">Por pagar</span>', 'Por confirmar': '<span class="tag t2">Comprobante enviado: el colegio lo está revisando</span>', Pagado: '<span class="tag ok-t">Pagado</span>', Cancelado: '<span class="tag">Cancelado</span>' };
+const boldPend = d => !!d.bold_orden && boldOrdenes.some(o => o.orden === d.bold_orden && o.estado === 'Pendiente');
+const docNombre = d => DOC_TXT[d.tipo].replace(' de cada periodo', '') + (d.tipo === 'boletin' ? ` · periodo ${d.periodo}` : d.tipo === 'anteriores' ? ` · año ${d.anio}` : '');
+function vDocumentos() {
+  const eid = propio(), e = est(eid); if (!e) return head('Documentos') + '<div class="panel empty">No hay estudiante seleccionado.</div>';
+  const pend = docSols.filter(d => ['Por pagar', 'Por confirmar'].includes(d.estado)), listos = docSols.filter(docVigente);
+  const fila = ([t, l, d]) => {
+    const p = docPrecio(t);
+    if (t === 'retiro' && e.estado === 'Activo') return '';
+    const accion = t === 'boletin' ? `<select id="dsP" aria-label="Periodo">${perOpts(Math.max(1, S.k.periodo_actual - 1))}</select> <button class="btn sm" type="button" onclick="pedirDoc('boletin')">Pedir</button>`
+      : t === 'anteriores' ? (docHist.length ? `<select id="dsA" aria-label="Año">${docHist.map(h => opt(h.anio, h.anio)).join('')}</select> <button class="btn sm" type="button" onclick="pedirDoc('anteriores')">Pedir</button>` : '<span class="muted">Aún no hay años anteriores</span>')
+      : `<button class="btn sm" type="button" onclick="pedirDoc('${t}')">${p ? 'Pedir' : 'Descargar'}</button>`;
+    return `<tr><td><strong>${l}</strong><br><span class="muted">${d}</span></td><td style="white-space:nowrap">${p ? cop(p) : 'Gratis'}</td><td style="white-space:nowrap">${accion}</td></tr>`;
+  };
+  return head('Documentos', `Documentos de ${esc(nom(e))}. Primero se paga y el documento queda listo para descargar.`) +
+    (pend.length ? `<div class="panel"><h2>Por pagar o en revisión</h2><ul class="list">${pend.map(d => `<li><div><strong>${esc(docNombre(d))}</strong> · ${cop(d.valor)} ${DOC_ESTADO[d.estado]}${d.respuesta ? `<br><span class="muted">Respuesta del colegio: ${esc(d.respuesta)}</span>` : ''}</div>
+      ${d.estado === 'Por pagar' && boldPend(d) ? '<div class="note" style="margin:6px 0 0">Pago en línea en verificación: si Bold lo aprobó, el documento se libera solo en unos minutos.</div>' : d.estado === 'Por pagar' ? `<div class="toolbar" style="margin:6px 0 0"><button class="btn sm" type="button" onclick="pagarDoc('${d.id}')">Pagar</button><button class="btn ghost sm" type="button" onclick="cancelarDoc('${d.id}')">Cancelar</button></div>` : ''}</li>`).join('')}</ul></div>` : '') +
+    (listos.length ? `<div class="panel"><h2>Listos para descargar</h2><ul class="list">${listos.map(d => `<li style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap"><span><strong>${esc(docNombre(d))}</strong> <span class="tag ok-t">${d.medio === 'gratis' ? 'Gratis' : 'Pagado'}</span>${['boletin', 'anteriores'].includes(d.tipo) ? '' : `<br><span class="muted">Disponible hasta el ${fmtF(new Date(new Date(d.pagado_en).getTime() + 30 * 864e5).toISOString().slice(0, 10))}</span>`}</span>
+      <button class="btn sm" type="button" onclick="descargarDoc('${d.tipo}',${d.periodo || 0},${d.anio})">Descargar</button></li>`).join('')}</ul></div>` : '') +
+    `<div class="panel"><h2>Pedir un documento</h2><div class="tbl"><table><thead><tr><th>Documento</th><th>Valor</th><th></th></tr></thead><tbody>${DOC_TIPOS.map(fila).join('')}</tbody></table></div>
+      <p class="muted">Con Bold el documento se libera solo cuando el pago queda aprobado. Con llave Bre-B o transferencia, envíe el comprobante: el documento se libera cuando tesorería lo confirma.</p></div>`;
+}
+const mediosDoc = () => [S.k.pago_bold_auto ? ['bold', 'En línea con Bold (PSE, Nequi o tarjeta): se libera solo'] : null, S.k.pago_llave && S.k.pago_llave_valor ? ['llave', 'Llave Bre-B o transferencia: enviar comprobante'] : null, S.k.pago_efectivo ? ['efectivo', 'Efectivo en la caja del colegio'] : null].filter(Boolean);
+async function pedirDoc(tipo, periodo, anio) {
+  const eid = propio(); periodo = periodo || (tipo === 'boletin' ? +($('#dsP')?.value || sel.p || 1) : null); anio = anio || (tipo === 'anteriores' ? +$('#dsA')?.value : S.k.anio);
+  if (tipo === 'pazysalvo' && docPrecio(tipo) > 0) {
+    await guard(() => cargarCuenta(eid));
+    const venc = [...(cuenta.prevFilas || []), ...cuenta.filas.filter(x => x.vencido && +x.saldo > 0)].reduce((a, x) => a + +x.saldo, 0);
+    if (venc > 0) return toast(`Tiene un saldo vencido de ${cop(venc)}. El paz y salvo se expide cuando esté al día (vea Estado de cuenta)`);
+  }
+  if (docPagado(eid, tipo, periodo, anio)) {
+    if (docPrecio(tipo) === 0) await guard(() => q(db.rpc('pedir_documento', { p_est: eid, p_tipo: tipo, p_periodo: periodo, p_anio: anio, p_medio: null })));
+    return descargarDoc(tipo, periodo, anio);
+  }
+  const ms = mediosDoc(); if (!ms.length) return toast('El colegio aún no ha configurado los medios de pago. Comuníquese con la secretaría');
+  openModal(`Pedir: ${DOC_TXT[tipo].replace(' de cada periodo', '')}${tipo === 'boletin' ? ' · periodo ' + periodo : tipo === 'anteriores' ? ' · año ' + anio : ''}`,
+    `<p>Valor: <strong>${cop(docPrecio(tipo))}</strong>. Elija cómo va a pagar:</p><div class="cuotas">${ms.map(([v, l], i) => `<label class="chk"><input type="radio" name="dsM" value="${v}" ${i ? '' : 'checked'}> ${l}</label>`).join('')}</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="dsBtn" onclick="crearDoc('${tipo}',${periodo || 'null'},${anio || 'null'})">Continuar</button></div>`);
+}
+async function crearDoc(tipo, periodo, anio) {
+  const medio = document.querySelector('input[name=dsM]:checked')?.value;
+  const d = await busy('#dsBtn', () => guard(() => q(db.rpc('pedir_documento', { p_est: propio(), p_tipo: tipo, p_periodo: periodo, p_anio: anio, p_medio: medio }))));
+  if (!d) return;
+  closeModal(); await cargarDocSols(propio());
+  if (d.estado === 'Pagado') { render(); return descargarDoc(tipo, periodo, anio); }
+  pagarDoc(d.id);
+}
+function pagarDoc(id) {
+  const d = docSols.find(x => x.id === id); if (!d) return;
+  if (d.medio === 'bold' && S.k.pago_bold_auto) return pagarDocBold(id);
+  if (d.medio === 'efectivo') { render(); return openModal('Pago en efectivo', `<p>Pague <strong>${cop(d.valor)}</strong> en la caja del colegio${S.k.pago_efectivo_texto ? ` (${esc(S.k.pago_efectivo_texto)})` : ''} y diga que es para: <strong>${esc(docNombre(d))}</strong> de ${esc(nom(est(d.estudiante_id)))}.</p><p class="muted">Cuando tesorería registre el pago, el documento aparecerá en "Listos para descargar".</p><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Entendido</button></div>`); }
+  openModal('Pagar con llave Bre-B o transferencia', `<p>Transfiera <strong>${cop(d.valor)}</strong> a la llave Bre-B <strong class="code">${esc(S.k.pago_llave_valor || '')}</strong>${S.k.pago_llave_titular ? ` (a nombre de ${esc(S.k.pago_llave_titular)})` : ''}.</p>
+    <p>Luego envíe aquí el comprobante. Cuando tesorería lo confirme, el documento queda listo para descargar.</p>
+    <div class="formgrid">${fIn('dsRef', 'Número de referencia o aprobación', '')}<label class="field full"><span>Foto o captura del comprobante</span><input type="file" id="dsImg" accept="image/*"></label></div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal();render()">Después</button><button class="btn" type="button" id="dsCBtn" onclick="enviarComprobanteDoc('${id}')">Enviar comprobante</button></div>`);
+}
+async function enviarComprobanteDoc(id) {
+  const ok = await busy('#dsCBtn', () => guard(async () => { const f = $('#dsImg')?.files[0], img = f ? await leerImagen(f, 1100) : null; await q(db.rpc('doc_comprobante', { p_id: id, p_imagen: img, p_referencia: vv('dsRef') })); return true; }, 'Comprobante enviado. Le avisaremos cuando el documento esté listo'));
+  if (ok) { closeModal(); await cargarDocSols(propio()); render(); }
+}
+async function pagarDocBold(id) {
+  const d = await guard(() => q(db.rpc('doc_bold_orden', { p_id: id }))); if (!d) return;
+  try {
+    await cargarBoldScript();
+    new window.BoldCheckout({ orderId: d.orderId, currency: d.currency, amount: String(d.amount), apiKey: d.apiKey, integritySignature: d.signature, description: d.description, redirectionUrl: location.origin + '/' }).open();
+  } catch { toast('No se pudo abrir el pago con Bold. Intente de nuevo o use otro medio de pago.'); }
+}
+async function cancelarDoc(id) {
+  if (!(await confirmar('¿Cancelar este documento? Podrá pedirlo de nuevo cuando quiera.', 'Sí, cancelar'))) return;
+  if (await guard(async () => { await q(db.rpc('doc_estado', { p_id: id, p_estado: 'Cancelado', p_respuesta: null })); return true; }, 'Cancelado')) { await cargarDocSols(propio()); render(); }
+}
+// Genera el documento ya pagado
+async function descargarDoc(tipo, periodo, anio) {
+  const eid = propio(), e = est(eid);
+  if (!docPagado(eid, tipo, periodo, anio)) return toast('Primero debe pagar este documento');
+  if (!(await guard(async () => { await prepDocsEst([eid]); if (['boletin', 'certificado'].includes(tipo)) await cargarGrupo(e.grupo_id); return true; }))) return;
+  if (tipo === 'boletin') return showDocs(boletinHTML(eid, periodo), 'Boletín', nomArchivo(`Boletín P${periodo}`, e));
+  if (tipo === 'constancia') return showDocs(constancia(eid), 'Constancia de estudio', nomArchivo('Constancia de estudio', e));
+  if (tipo === 'certificado') return showDocs(certificado(eid), 'Constancia con calificaciones', nomArchivo('Constancia con calificaciones', e));
+  if (tipo === 'anteriores') return certAnio(eid, anio);
+  if (tipo === 'retiro') return showDocs(constanciaRetiro(eid), 'Constancia de retiro', nomArchivo('Constancia de retiro', e));
+  if (tipo === 'pazysalvo') { await guard(() => cargarCuenta(eid)); return pazYSalvo(eid); }
+}
+// Constancia de retiro (para el SIMAT)
+function constanciaRetiro(eid) {
+  const e = est(eid), g = grupo(e.grupo_id);
+  if (e.estado === 'Activo') return constancia(eid);
+  return `<section class="doc">${docHead('Constancia de retiro', `Año lectivo ${S.k.anio}`)}${fotoDoc(eid)}
+  <p style="margin-top:18px">El suscrito rector(a) y la secretaría académica de <strong>${esc(S.k.nombre)}</strong> hacen constar que <strong>${esc(nom(e))}</strong>, identificado(a) con ${esc(e.tipo_doc)} ${esc(e.doc)}, estuvo matriculado(a) en esta institución en el grado <strong>${esc(g?.nombre || '')}</strong>, con matrícula No. ${esc(e.matricula || '')}, folio ${esc(e.folio)}, y fue <strong>retirado(a) el ${e.fecha_retiro ? fechaLarga(e.fecha_retiro) : '(sin fecha registrada)'}</strong>${e.motivo_retiro ? `, por el siguiente motivo: ${esc(e.motivo_retiro)}` : ''}.</p>
+  <p>El retiro quedó registrado en el Sistema Integrado de Matrícula (SIMAT), de modo que el estudiante puede ser matriculado en otra institución.</p>
+  <p>Se expide a solicitud del interesado en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
+  ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`;
+}
+
+/* ---------- Tesorería: documentos pedidos por las familias ---------- */
+let docStaff = [];
+async function prepDocSol() {
+  await verificarBold().catch(() => 0);
+  docStaff = await all(() => db.from('doc_solicitudes').select(DOC_COLS).eq('colegio_id', ctx.colegio_id).neq('estado', 'Cancelado').gte('creado_en', new Date(Date.now() - 400 * 864e5).toISOString()).order('creado_en', { ascending: false })).catch(() => []);
+  S.docPorConf = docStaff.filter(d => d.estado === 'Por confirmar').length;
+}
+function vDocSol() {
+  const ed = manejaPagos(), f = sel.dsf || 'pend';
+  const l = docStaff.filter(d => f === 'todos' || (f === 'pend' ? ['Por pagar', 'Por confirmar'].includes(d.estado) : d.estado === 'Pagado'));
+  const precios = DOC_TIPOS.some(([t]) => docPrecio(t) > 0);
+  return head('Documentos pedidos', 'Documentos que las familias pagan antes de descargarlos. Al confirmar el pago, el documento queda listo para la familia.') +
+    (precios ? '' : `<div class="note">Todos los documentos están gratis. Fije sus precios en Parametrización › Costos del año. <button class="linkbtn" type="button" onclick="irPtab('costos')">Ir a costos</button></div>`) +
+    `<div class="panel"><div class="tabs" role="tablist">${[['pend', 'Por pagar o por confirmar'], ['pagados', 'Pagados'], ['todos', 'Todos']].map(([k, t]) => `<button type="button" role="tab" aria-selected="${f === k}" onclick="sel.dsf='${k}';render()">${t}</button>`).join('')}</div>
+    ${l.length ? `<div class="tbl"><table><thead><tr><th>Estudiante</th><th>Documento</th><th>Valor</th><th>Medio</th><th>Estado</th><th></th></tr></thead><tbody>${l.map(d => { const e = est(d.estudiante_id); return `<tr>
+      <td>${esc(e ? nom(e) : '')}<br><span class="muted">${esc(grupo(e?.grupo_id)?.nombre || '')} · pidió ${esc(d.creado_nombre || '')} el ${fmtF(d.creado_en)}</span></td>
+      <td>${esc(docNombre(d))}</td><td>${cop(d.valor)}</td><td>${{ bold: 'Bold', llave: 'Llave / transferencia', efectivo: 'Efectivo', gratis: 'Gratis' }[d.medio]}${d.referencia ? `<br><span class="muted">${esc(d.referencia)}</span>` : ''}</td>
+      <td>${DOC_ESTADO[d.estado] || esc(d.estado)}${d.atendido_nombre && d.estado === 'Pagado' ? `<br><span class="muted">${esc(d.atendido_nombre)}</span>` : ''}</td>
+      <td style="white-space:nowrap">${ed && d.estado !== 'Pagado' ? `${d.con_comprobante ? `<button class="btn ghost sm" type="button" onclick="verComprobanteDoc('${d.id}')">Ver comprobante</button> ` : ''}<button class="btn sm" type="button" onclick="confirmarDoc('${d.id}')">${d.estado === 'Por confirmar' ? 'Confirmar pago' : 'Registrar pago'}</button>${d.estado === 'Por confirmar' ? ` <button class="btn ghost sm" type="button" onclick="rechazarDoc('${d.id}')">Rechazar</button>` : ''}` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
+      : '<p class="empty">No hay documentos en esta lista.</p>'}</div>`;
+}
+async function verComprobanteDoc(id) {
+  const r = await guard(() => q(db.from('doc_solicitudes').select('comprobante').eq('id', id).single())); if (!r?.comprobante) return toast('Sin comprobante');
+  openModal('Comprobante', `<img src="${r.comprobante}" alt="Comprobante" style="max-width:100%"><div class="modal-foot"><button class="btn" type="button" onclick="closeModal();confirmarDoc('${id}')">Confirmar pago</button></div>`);
+}
+async function confirmarDoc(id) {
+  const d = docStaff.find(x => x.id === id);
+  if (!(await confirmar(`¿Confirmar que llegó el pago de ${cop(d?.valor)} por ${docNombre(d)}? El documento quedará listo para la familia.`, 'Sí, confirmar'))) return;
+  if (await guard(async () => { await q(db.rpc('doc_estado', { p_id: id, p_estado: 'Pagado', p_respuesta: null })); return true; }, 'Pago confirmado: el documento quedó listo para la familia')) { await prepDocSol(); render(); }
+}
+async function rechazarDoc(id) {
+  const m = await pedirTexto('Motivo para la familia (por ejemplo: el comprobante no se ve o el valor no coincide):'); if (!m) return;
+  if (await guard(async () => { await q(db.rpc('doc_estado', { p_id: id, p_estado: 'Por pagar', p_respuesta: m })); return true; }, 'Comprobante rechazado')) { await prepDocSol(); render(); }
+}
+// Parametrización › Costos: precios de los documentos
+function panelDocPrecios() {
+  const ed = puede('costos');
+  return `<div class="panel"><h2>Precio de los documentos</h2><p class="muted">Las familias pagan estos documentos antes de descargarlos (en "Documentos"). Deje 0 si un documento es gratis. El valor mínimo para cobrar es $1.000.</p>
+    <div class="formgrid">${DOC_TIPOS.map(([t, l]) => fIn('dp_' + t, l, docPrecio(t), `type="number" min="0" step="100" ${ed ? '' : 'disabled'}`)).join('')}</div>
+    ${ed ? '<div class="toolbar" style="margin-top:10px"><button class="btn" type="button" onclick="guardarDocPrecios()">Guardar precios</button></div>' : ''}</div>`;
+}
+async function guardarDocPrecios() {
+  const p = Object.fromEntries(DOC_TIPOS.map(([t]) => [t, +vv('dp_' + t) || 0]));
+  const ok = await guard(async () => { await q(db.rpc('colegio_doc_precios', { p_colegio: S.k.id, p_precios: p })); return true; }, 'Precios de los documentos guardados');
+  if (ok) { S.k.doc_precios = p; render(); }
+}
+// Foto del estudiante desde la ficha de matrícula (la misma del carnet, la hoja de matrícula y el boletín)
+let fotoNueva = null;
+async function cargarFotoFicha(id) {
+  if (!id) return; await cargarFotoEst([id]).catch(() => {});
+  const b = $('#fichaFoto'); if (b) b.innerHTML = fotoEst[id] ? `<img src="${fotoEst[id]}" alt="Foto del estudiante">` : '<span>Sin foto</span>';
+}
+async function elegirFotoFicha(input, id) {
+  const f = input.files[0]; if (!f) return;
+  const img = await guard(() => leerImagen(f, 300)); if (!img) return;
+  if (id) { const ok = await guard(async () => { await q(db.from('fotos_est').upsert({ estudiante_id: id, foto: img }, { onConflict: 'estudiante_id' })); return true; }, 'Foto guardada'); if (!ok) return; fotoEst[id] = img; }
+  else fotoNueva = img;
+  const b = $('#fichaFoto'); if (b) b.innerHTML = `<img src="${img}" alt="Foto del estudiante">`;
+}
+Object.assign(window, { pedirDoc, crearDoc, pagarDoc, enviarComprobanteDoc, cancelarDoc, descargarDoc, verComprobanteDoc, confirmarDoc, rechazarDoc, guardarDocPrecios, elegirFotoFicha });
