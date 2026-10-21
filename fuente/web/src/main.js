@@ -126,12 +126,13 @@ const isFam = () => ctx && (ctx.rol === 'acudiente' || ctx.rol === 'estudiante')
 const isTes = () => ctx && ctx.rol === 'tesoreria';
 // Permisos por cargo (revisión 20 oct): cada colegio los ajusta en Parametrización › Permisos; la base los aplica igual
 const PERM_DEF = { pagos: ['rector', 'secretaria', 'tesoreria'], pagos_ver: ['rector', 'secretaria', 'tesoreria'], costos: ['rector', 'tesoreria'],
-  matricula: ['rector', 'coordinador', 'secretaria'], contactos: ['rector', 'coordinador', 'secretaria'], citas: ['rector', 'coordinador'], autorizaciones: ['rector', 'coordinador'] };
+  matricula: ['rector', 'coordinador', 'secretaria'], contactos: ['rector', 'coordinador', 'secretaria'], citas: ['rector', 'coordinador'], autorizaciones: ['rector', 'coordinador'], becas: ['rector'] };
 const PERM_TXT = { pagos: ['Registrar pagos', 'Registrar y anular pagos, confirmar comprobantes, administrar la tienda'],
   pagos_ver: ['Ver la cartera', 'Ver pagos, cartera y estados de cuenta sin poder cambiarlos'],
   costos: ['Costos y medios de pago', 'Resolución de costos, conceptos de cobro, día límite y medios de pago'],
   matricula: ['Matrícula', 'Matricular, editar fichas y registrar retiros'], contactos: ['Contactos y recogida', 'Registrar contactos de emergencia y personas autorizadas para recoger'],
-  citas: ['Citas de otros', 'Confirmar, cambiar o reasignar citas pedidas a otra persona'], autorizaciones: ['Cambios de autorizaciones', 'Aprobar o negar cuando una familia pide cambiar su respuesta'] };
+  citas: ['Citas de otros', 'Confirmar, cambiar o reasignar citas pedidas a otra persona'], autorizaciones: ['Cambios de autorizaciones', 'Aprobar o negar cuando una familia pide cambiar su respuesta'],
+  becas: ['Becas y descuentos', 'Asignar y anular becas, subsidios y descuentos en la pensión o la matrícula'] };
 const permRoles = k => S?.k?.permisos?.[k] ?? PERM_DEF[k] ?? [];
 const puede = k => !!ctx && permRoles(k).includes(ctx.rol);
 const manejaPagos = () => puede('pagos');
@@ -807,7 +808,7 @@ function drawEst() {
     <td>${e.estado}${e.fecha_retiro ? `<br><span class="muted">${fmtF(e.fecha_retiro)}</span>` : ''}</td>
     <td><select class="acc" aria-label="Acciones" onchange="accionEst('${e.id}',this.value);this.value=''"><option value="">Acciones…</option>
       <option value="editar">${puede('matricula') ? 'Editar ficha' : 'Ver ficha'}</option><option value="hoja">Hoja de matrícula</option><option value="constancia">Constancia de estudio</option>
-      <option value="certificado">Constancia con calificaciones</option><option value="anteriores">Certificados de años anteriores</option>${e.estado === 'Retirado' ? '<option value="retiro">Constancia de retiro (SIMAT)</option>' : ''}${!puede('matricula') ? '' : e.estado === 'Activo' ? '<option value="retirar">Registrar retiro</option>' : '<option value="reactivar">Reactivar</option>'}</select></td></tr>`;
+      <option value="certificado">Constancia con calificaciones</option><option value="anteriores">Certificados de años anteriores</option>${e.estado === 'Activo' && (puede('matricula') || vePagos()) ? '<option value="contrato">Contrato de matrícula y pagaré</option>' : ''}${e.estado === 'Retirado' ? '<option value="retiro">Constancia de retiro (SIMAT)</option>' : ''}${!puede('matricula') ? '' : e.estado === 'Activo' ? '<option value="retirar">Registrar retiro</option>' : '<option value="reactivar">Reactivar</option>'}</select></td></tr>`;
   }).join('')}</tbody></table>` : '<div class="empty">No hay estudiantes con ese filtro.</div>';
 }
 async function accionEst(id, a) {
@@ -818,6 +819,7 @@ async function accionEst(id, a) {
   if (a === 'certificado') { const e = est(id); await guard(() => cargarGrupo(e.grupo_id)); return showDocs(certificado(id), 'Constancia con calificaciones', nomArchivo('Constancia con calificaciones', est(id))); }
   if (a === 'retiro') { await guard(() => prepDocsEst([id])); return showDocs(constanciaRetiro(id), 'Constancia de retiro', nomArchivo('Constancia de retiro', est(id))); }
   if (a === 'anteriores') return certAnteriores(id);
+  if (a === 'contrato') return generarContrato(id);
   if (a === 'retirar') return formRetiro(id);
   if (a === 'reactivar') return reactivar(id);
 }
@@ -1709,6 +1711,7 @@ function paramCostos() {
     ${ed ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarResolucion()">Guardar resolución</button></div>' : ''}</div>
   ${panelMediosPago()}
   ${panelDocPrecios()}
+  ${panelContrato()}
   <div class="panel"><h2>Día límite de pago</h2><p class="muted">Cada cuota mensual se considera vencida después de este día de su mes.</p>
     <div class="toolbar"><label class="field"><span>Pagar hasta el día</span><select id="cDia" ${rr ? '' : 'disabled'}>${Array.from({ length: 28 }, (_, i) => opt(i + 1, i + 1, S.k.dia_limite_pago || 5)).join('')}</select></label>
     ${rr ? '<button class="btn" type="button" onclick="guardarDiaLimite()">Guardar</button>' : '<span class="muted">Sin permiso para cambiarlo.</span>'}</div></div>
@@ -1915,12 +1918,13 @@ async function borrarAsig(id) {
    Pagos y cartera (rector, secretaría, tesorería)
    ===================================================================== */
 let cartera = [];
+let becas = [], becasAnio = 0, becaVuelve = '';   // becas del año (SQL 033)
 async function prepPagos() {
   const [c, a] = await Promise.all([
     q(db.rpc('cartera', { p_colegio: ctx.colegio_id, p_anio: anioCartera() })),
     all(() => db.from('acudientes').select('estudiante_id,nombres,telefono,responsable_pago,orden').eq('colegio_id', ctx.colegio_id).order('estudiante_id').order('orden')),
   ]);
-  cartera = c; S.acud = a;
+  cartera = c; S.acud = a; await cargarBecas(anioCartera());
   if (S.k.pago_bold_auto) { await verificarBold().catch(() => 0); boldOrdenes = await q(db.from('bold_ordenes').select('orden,valor,estado,creado_en,estudiante_id').eq('colegio_id', ctx.colegio_id).eq('estado', 'Pendiente').order('creado_en', { ascending: false }).limit(50)).catch(() => []); }
   comps = await all(() => db.from('comprobantes').select('id,estudiante_id,fecha,valor,medio,referencia,nota,estado,respuesta,enviado_por,revisado_por,creado_en').eq('colegio_id', ctx.colegio_id).eq('estado', 'Pendiente').order('creado_en')).catch(() => []);
 }
@@ -1937,7 +1941,7 @@ function vPagos() {
   const l = cartera.filter(x => (!fg || x.grupo === fg) && (!qq || x.nombre.toLowerCase().includes(qq)) && (!solo || +x.saldo_vencido > 0));
   const tot = k => cartera.reduce((a, x) => a + +x[k], 0);
   return head('Pagos y cartera', `Año ${anioCartera()}. Cada pago queda registrado con el nombre de quien lo recibió.`,
-    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarCartera()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="imprimirCartera()">Imprimir cartera</button></div>`) + panelBoldStaff() + panelComprobantes() +
+    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarCartera()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="imprimirCartera()">Imprimir cartera</button><button class="btn ghost" type="button" onclick="modalBecas()">Becas y descuentos${becas.filter(b => b.activa).length ? ` (${becas.filter(b => b.activa).length})` : ''}</button></div>`) + panelBoldStaff() + panelComprobantes() +
     `<div class="stats"><div class="stat"><div class="n">${cop(tot('pagado'))}</div><div class="l">Recaudado</div></div>
       <div class="stat"><div class="n">${cop(tot('saldo_vencido'))}</div><div class="l">Saldo vencido</div></div>
       <div class="stat"><div class="n">${cop(tot('saldo_total'))}</div><div class="l">Saldo total del año</div></div>
@@ -1948,7 +1952,7 @@ function vPagos() {
       <label class="field"><span>Buscar</span><input type="search" value="${esc(sel.pq || '')}" placeholder="Nombre" onchange="sel.pq=this.value;render()"></label>
       <label class="chk"><input type="checkbox" ${solo ? 'checked' : ''} onchange="sel.pmora=this.checked;render()"> Solo con saldo vencido</label></div>
     ${l.length ? `<div class="tbl"><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Cobrado</th><th>Pagado</th><th>Vencido</th><th>Saldo del año</th><th></th></tr></thead><tbody>
-      ${l.map(x => `<tr class="${x.estado === 'Activo' ? '' : 'dim'}"><td><strong>${esc(x.nombre)}</strong>${x.estado !== 'Activo' ? ` <span class="tag">${x.estado}</span>` : ''}</td><td>${esc(x.grupo || '—')}</td><td>${cop(x.cobrado)}</td><td>${cop(x.pagado)}</td>
+      ${l.map(x => `<tr class="${x.estado === 'Activo' ? '' : 'dim'}"><td><strong>${esc(x.nombre)}</strong>${x.estado !== 'Activo' ? ` <span class="tag">${x.estado}</span>` : ''}${becasDe(x.estudiante_id).length ? ` <span class="tag t2" title="${esc(becasDe(x.estudiante_id).map(b => b.tipo + ': ' + becaTxt(b)).join('; '))}">${esc(becasDe(x.estudiante_id)[0].tipo)}</span>` : ''}</td><td>${esc(x.grupo || '—')}</td><td>${cop(x.cobrado)}</td><td>${cop(x.pagado)}</td>
         <td>${+x.saldo_vencido > 0 ? `<strong style="color:var(--red)">${cop(x.saldo_vencido)}</strong>` : cop(0)}</td><td>${cop(x.saldo_total)}</td>
         <td style="white-space:nowrap"><button class="btn sm" type="button" onclick="abrirCuenta('${x.estudiante_id}', ${anioCartera()})">${manejaPagos() ? 'Ver y registrar pago' : 'Ver estado de cuenta'}</button> ${+x.saldo_vencido > 0 ? avisoMora(x) : ''}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty">${conceptosVacios()}</div>`}</div>`;
 }
@@ -1973,7 +1977,7 @@ async function deudasAnteriores(eid) {
 const aniosConDeuda = () => [...new Set(cuenta.prevFilas.map(x => x.anioCobro))];
 const saldoPrevio = () => cuenta.prevFilas.reduce((a, x) => a + +x.saldo, 0);
 async function abrirCuenta(eid, anio) {
-  const ok = await guard(async () => { await cargarCuenta(eid, anio || S.k.anio); return true; });
+  const ok = await guard(async () => { await cargarCuenta(eid, anio || S.k.anio); if (becasAnio !== (anio || S.k.anio)) await cargarBecas(anio || S.k.anio); return true; });
   if (ok) modalCuenta();
 }
 function tablaCuenta(conCheck) {
@@ -2011,8 +2015,8 @@ function modalCuenta() {
       ${fIn('pRef', 'Referencia o comprobante (opcional)', '')}</div>
     <div id="pPrev" class="muted" style="margin-top:8px"></div>
     <div class="toolbar" style="margin-top:10px"><button class="btn" type="button" id="pBtn" onclick="registrarPago()">Registrar pago</button>
-      <button class="btn ghost" type="button" onclick="pazYSalvo('${cuenta.eid}')">${venc ? 'Constancia de deuda' : 'Paz y salvo'}</button></div>` : '<div class="note">Usted puede consultar la cartera. Registrar pagos lo hace quien tenga ese permiso (Parametrización › Permisos).</div>'}
-    <h3 style="margin-top:14px">Cobros del año</h3>${tablaCuenta(false)}
+      <button class="btn ghost" type="button" onclick="pazYSalvo('${cuenta.eid}')">${venc ? 'Constancia de deuda' : 'Paz y salvo'}</button>${!otro && e.estado === 'Activo' ? `<button class="btn ghost" type="button" onclick="generarContrato('${cuenta.eid}')">Contrato y pagaré</button>` : ''}${!otro && (venc + previo) > 0 ? `<button class="btn ghost" type="button" onclick="formAcuerdo()">Acuerdo de pago</button>` : ''}</div>` : '<div class="note">Usted puede consultar la cartera. Registrar pagos lo hace quien tenga ese permiso (Parametrización › Permisos).</div>'}
+    <h3 style="margin-top:14px">Cobros del año</h3>${tablaCuenta(false)}${panelBecasEst(cuenta.eid)}
     <h3 style="margin-top:14px">Pagos del año</h3>${tablaPagos(manejaPagos())}`);
 }
 // Reparte un valor entre las cuotas pendientes, de la más antigua a la más reciente
@@ -2069,7 +2073,7 @@ function imprimirCartera() {
 async function prepCuenta() {
   const h = hermanos();
   S.cuentaHijos = h.length > 1 ? await Promise.all(h.map(async m => { const f = await q(db.rpc('estado_cuenta', { p_estudiante: m.estudiante_id, p_anio: S.k.anio })).catch(() => []); return { m, venc: f.filter(x => x.vencido).reduce((a, x) => a + +x.saldo, 0), total: f.reduce((a, x) => a + +x.saldo, 0) }; })) : [];
-  await cargarCuenta(propio()); await cargarOrdenesFam(); await cargarDocSols(propio()); comps = await all(() => db.from('comprobantes').select('id,estudiante_id,fecha,valor,medio,referencia,nota,estado,respuesta,creado_en').eq('estudiante_id', propio()).order('creado_en', { ascending: false })).catch(() => []); }
+  await cargarCuenta(propio()); S.misBecas = await all(() => db.from('becas').select('*').eq('estudiante_id', propio()).eq('anio', S.k.anio).eq('activa', true)).catch(() => []); await cargarOrdenesFam(); await cargarDocSols(propio()); comps = await all(() => db.from('comprobantes').select('id,estudiante_id,fecha,valor,medio,referencia,nota,estado,respuesta,creado_en').eq('estudiante_id', propio()).order('creado_en', { ascending: false })).catch(() => []); }
 function vCuenta() {
   const e = est(propio()); if (!e) return head('Estado de cuenta') + '<div class="panel empty">No encontramos la información del estudiante.</div>';
   const venc = cuenta.filas.filter(x => x.vencido).reduce((a, x) => a + +x.saldo, 0), total = cuenta.filas.reduce((a, x) => a + +x.saldo, 0);
@@ -2083,6 +2087,7 @@ function vCuenta() {
       ${S.cuentaHijos.map(x => `<tr><td><strong>${esc(x.m.estudiantes?.nombres || '')} ${esc(x.m.estudiantes?.apellidos || '')}</strong></td><td>${x.venc > 0 ? `<strong style="color:var(--red)">${cop(x.venc)}</strong>` : '<span class="ok">Al día</span>'}</td>
         <td>${x.m.id === ctx.id ? '<span class="tag">Viendo</span>' : `<button class="btn ghost sm" type="button" onclick="entrarContexto('${x.m.id}')">Ver detalle</button>`}</td></tr>`).join('')}
       <tr><td><strong>Total</strong></td><td><strong>${cop(S.cuentaHijos.reduce((a, x) => a + x.venc, 0))}</strong></td><td></td></tr></tbody></table></div></div>` : ''}
+    ${(S.misBecas || []).length ? `<div class="note">${esc(e.nombres)} tiene ${S.misBecas.map(b => `<strong>${esc(b.tipo.toLowerCase())}</strong> de ${esc(becaTxt(b))}`).join(' y ')}. Los valores de abajo ya tienen el descuento.</div>` : ''}
     <div class="panel"><h2>Cobros</h2>${tablaCuenta(false)}</div>${panelPagarFam(venc)}<div class="panel"><h2>Pagos realizados</h2>${tablaPagos(false)}</div>`;
 }
 
@@ -5092,3 +5097,298 @@ async function elegirFotoFicha(input, id) {
   const b = $('#fichaFoto'); if (b) b.innerHTML = `<img src="${img}" alt="Foto del estudiante">`;
 }
 Object.assign(window, { pedirDoc, crearDoc, pagarDoc, enviarComprobanteDoc, cancelarDoc, descargarDoc, verComprobanteDoc, confirmarDoc, rechazarDoc, guardarDocPrecios, elegirFotoFicha });
+
+/* =====================================================================
+   Becas, subsidios y descuentos (SQL 033). Se aplican como descuento en la pensión y/o la matrícula:
+   el estado de cuenta, la cartera, el pago con Bold y el contrato ya traen el valor rebajado.
+   ===================================================================== */
+const TIPOS_BECA = ['Beca', 'Subsidio', 'Descuento por hermanos', 'Convenio', 'Otro'];
+const APLICA_BECA = { pension: 'Pensión', matricula: 'Matrícula', ambos: 'Matrícula y pensión' };
+const becaTxt = b => `${b.modo === 'porcentaje' ? `${+b.valor}%` : `${cop(b.valor)} por cuota`} en ${APLICA_BECA[b.aplica].toLowerCase()}${b.aplica !== 'matricula' && !(b.mes_desde === 1 && b.mes_hasta === 12) ? ` (${MESES[b.mes_desde].toLowerCase()} a ${MESES[b.mes_hasta].toLowerCase()})` : ''}`;
+async function cargarBecas(anio = S.k.anio) {
+  becasAnio = anio;
+  becas = await all(() => db.from('becas').select('*').eq('colegio_id', ctx.colegio_id).eq('anio', anio).order('creado_en')).catch(() => []);
+}
+const becasDe = eid => becas.filter(b => b.estudiante_id === eid && b.activa);
+function filasBecas(l, conEst) {
+  return `<div class="tbl"><table><thead><tr>${conEst ? '<th>Estudiante</th>' : ''}<th>Tipo</th><th>Descuento</th><th>Motivo</th><th>Registró</th><th></th></tr></thead><tbody>
+    ${l.map(b => { const e = est(b.estudiante_id); return `<tr class="${b.activa ? '' : 'dim'}">${conEst ? `<td><strong>${e ? esc(e.apellidos + ' ' + e.nombres) : '—'}</strong><br><span class="muted">${esc(grupo(e?.grupo_id)?.nombre || '')}</span></td>` : ''}
+      <td>${esc(b.tipo)}</td><td>${esc(becaTxt(b))}</td><td>${esc(b.motivo)}</td><td>${esc(b.creado_nombre || '')}<br><span class="muted">${fmtF(String(b.creado_en).slice(0, 10))}</span></td>
+      <td>${b.activa ? (puede('becas') ? `<button class="btn ghost sm" type="button" onclick="anularBeca('${b.id}')">Anular</button>` : '<span class="tag">Vigente</span>') : `<span class="tag t3">Anulada</span><br><span class="muted">${esc(b.anulada_nombre || '')}: ${esc(b.anulada_motivo || '')}${b.mes_corte >= b.mes_desde ? `. Se mantiene hasta ${MESES[Math.min(b.mes_corte, b.mes_hasta)].toLowerCase()}` : ''}</span>`}</td></tr>`; }).join('')}
+    </tbody></table></div>`;
+}
+async function modalBecas() {
+  becaVuelve = 'lista';
+  if (becasAnio !== anioCartera()) await guard(() => cargarBecas(anioCartera()));
+  const actual = anioCartera() === S.k.anio, act = becas.filter(b => b.activa).length;
+  openModal(`Becas, subsidios y descuentos ${anioCartera()}`, `<p class="muted">El descuento se aplica solo en el estado de cuenta, la cartera, el pago en línea y el contrato de matrícula. Las becas son por año lectivo: al empezar el año siguiente se vuelven a asignar. No se aplican a cuotas que ya tienen pagos. No se borran: si se retira un beneficio se anula con el motivo, deja de aplicarse desde el mes siguiente y queda el historial.</p>
+    ${actual && puede('becas') ? '<div class="toolbar"><button class="btn" type="button" onclick="formBeca()">Asignar beca o descuento</button></div>' : !puede('becas') ? '<div class="note">Asignar o anular becas lo hace quien tenga el permiso "Becas y descuentos" (Parametrización › Permisos).</div>' : ''}
+    ${becas.length ? `<p><strong>${act}</strong> beneficio(s) vigente(s).</p>${filasBecas(becas.slice().sort((a, b) => (b.activa - a.activa) || (est(a.estudiante_id)?.apellidos || '').localeCompare(est(b.estudiante_id)?.apellidos || '', 'es')), true)}` : '<p class="muted">Aún no hay becas ni descuentos en este año.</p>'}`);
+}
+async function formBeca(eid) {
+  if (!conceptos.length) await cargarCostos().catch(() => {});
+  if (!puede('becas')) return toast('No tiene permiso para asignar becas');
+  if (eid) becaVuelve = 'cuenta';
+  const acts = S.ests.filter(e => e.estado === 'Activo').sort((a, b) => a.apellidos.localeCompare(b.apellidos, 'es'));
+  const ultPag = eid && cuenta.eid === eid && cuenta.anio === S.k.anio ? Math.max(0, ...cuenta.filas.filter(x => x.tipo === 'pension' && +x.pagado > 0).map(x => x.mes)) : 0;
+  const mesOpt = (id, v) => `<select id="${id}" onchange="previewBeca()">${MESES.slice(1).map((m, i) => opt(i + 1, m, v)).join('')}</select>`;
+  openModal('Asignar beca o descuento', `<div class="formgrid">
+    ${eid ? `<input type="hidden" id="bEst" value="${eid}"><div class="field full"><span class="muted">Estudiante</span><br><strong>${esc(nom(est(eid)))}</strong></div>`
+      : `<label class="field full"><span>Estudiante</span><select id="bEst" onchange="previewBeca()"><option value="">Elija…</option>${acts.map(e => opt(e.id, `${e.apellidos} ${e.nombres} · ${grupo(e.grupo_id)?.nombre || ''}`, '')).join('')}</select></label>`}
+    <label class="field"><span>Tipo</span><select id="bTipo">${TIPOS_BECA.map(t => opt(t, t, 'Beca')).join('')}</select></label>
+    ${fIn('bMot', 'Motivo o entidad que lo otorga', '', 'maxlength="300" placeholder="Ejemplo: RENDIMIENTO ACADÉMICO, CONVENIO CAJA DE COMPENSACIÓN"')}
+    <label class="field"><span>Descuento en</span><select id="bModo" onchange="previewBeca()">${opt('porcentaje', 'Porcentaje (%)', 'porcentaje')}${opt('valor', 'Valor fijo por cuota ($)', '')}</select></label>
+    ${fIn('bVal', 'Valor del descuento', '', 'type="number" min="1" step="1" oninput="previewBeca()"')}
+    <label class="field"><span>Se aplica a</span><select id="bApl" onchange="previewBeca()">${Object.entries(APLICA_BECA).map(([v, l]) => opt(v, l, 'pension')).join('')}</select></label>
+    <label class="field"><span>Pensión desde</span>${mesOpt('bD1', Math.min(ultPag + 1, 12))}</label><label class="field"><span>Pensión hasta</span>${mesOpt('bD2', 12)}</label></div>
+    <div id="bPrev" class="note" style="margin-top:10px">Escriba el valor del descuento para ver cómo queda la cuota.</div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="volverBecas()">Cancelar</button><button class="btn" type="button" onclick="guardarBeca()">Guardar beca</button></div>`);
+}
+function previewBeca() {
+  const el = $('#bPrev'); if (!el) return;
+  const eid = vv('bEst'), v = +vv('bVal') || 0, modo = vv('bModo'), e = eid && est(eid), g = e && grupo(e.grupo_id);
+  if (!e || v <= 0) { el.textContent = 'Elija el estudiante y escriba el valor del descuento para ver cómo queda la cuota.'; return; }
+  if (modo === 'porcentaje' && v > 100) { el.textContent = 'El porcentaje no puede pasar de 100.'; return; }
+  const tipos = vv('bApl') === 'ambos' ? ['matricula', 'pension'] : [vv('bApl')];
+  const l = conceptos.filter(c => c.activo && tipos.includes(c.tipo)).map(c => { const b = +(c.valores_grado?.[g?.grado] ?? c.valor) || 0, d = Math.min(b, modo === 'porcentaje' ? Math.round(b * v / 100) : v); return `${esc(c.nombre)}: ${cop(b)} → <strong>${cop(b - d)}</strong>`; });
+  el.innerHTML = l.length ? `Así queda: ${l.join('; ')}${tipos.includes('pension') ? ` (de ${MESES[+vv('bD1')].toLowerCase()} a ${MESES[+vv('bD2')].toLowerCase()})` : ''}. Si el estudiante ya tiene otra beca, los descuentos se suman.` : 'No hay conceptos de ese tipo en los costos del año.';
+}
+async function volverBecas() { if (becaVuelve === 'cuenta' && cuenta.eid) { await cargarCuenta(cuenta.eid, cuenta.anio); modalCuenta(); } else modalBecas(); }
+async function guardarBeca() {
+  const d = { tipo: vv('bTipo'), motivo: vv('bMot'), modo: vv('bModo'), valor: Math.round(+vv('bVal') || 0), aplica: vv('bApl'), mes_desde: +vv('bD1'), mes_hasta: +vv('bD2') };
+  const eid = vv('bEst');
+  if (!eid) return toast('Elija el estudiante');
+  if ((d.motivo || '').trim().length < 3) return toast('Escriba el motivo o la entidad que otorga el beneficio');
+  if (d.valor <= 0) return toast('Escriba el valor del descuento');
+  if (d.modo === 'porcentaje' && d.valor > 100) return toast('El porcentaje no puede pasar de 100');
+  if (d.mes_hasta < d.mes_desde) return toast('El mes final no puede ser anterior al inicial');
+  const r = await guard(() => q(db.rpc('beca_guardar', { p_est: eid, p_datos: d })), `${d.tipo} asignada a ${nom(est(eid))}`);
+  if (!r) return;
+  await cargarBecas(S.k.anio);
+  if (view === 'pagos') { await prepPagos().catch(() => {}); render(); }
+  if (becaVuelve === 'cuenta') { cuenta.eid = eid; await guard(() => cargarCuenta(eid, S.k.anio)); modalCuenta(); } else modalBecas();
+}
+async function anularBeca(id) {
+  const b = becas.find(x => x.id === id); if (!b) return;
+  const m = await pedirTexto(`Motivo para anular ${b.tipo.toLowerCase()} de ${nom(est(b.estudiante_id) || { nombres: '', apellidos: '' })} (queda registrado). Las cuotas hasta este mes conservan el descuento; desde el mes siguiente se cobra el valor completo:`);
+  if (!m) return volverBecas();
+  const ok = await guard(() => q(db.rpc('beca_anular', { p_beca: id, p_motivo: m })), 'Beca anulada');
+  if (!ok) return;
+  await cargarBecas(becasAnio || S.k.anio);
+  if (view === 'pagos') { await prepPagos().catch(() => {}); render(); }
+  volverBecas();
+}
+// Becas del estudiante dentro de su estado de cuenta (Pagos y cartera)
+function panelBecasEst(eid) {
+  becaVuelve = 'cuenta';
+  const l = becas.filter(b => b.estudiante_id === eid);
+  return `<h3 style="margin-top:14px">Becas y descuentos</h3>${l.length ? filasBecas(l, false) : '<p class="muted">Sin becas ni descuentos en este año.</p>'}
+    ${cuenta.anio === S.k.anio && puede('becas') && est(eid)?.estado === 'Activo' ? `<div class="toolbar"><button class="btn ghost sm" type="button" onclick="formBeca('${eid}')">Asignar beca o descuento</button></div>` : ''}`;
+}
+
+/* =====================================================================
+   Contrato de matrícula + pagaré en blanco + carta de instrucciones (SQL 033)
+   Firman los dos acudientes como deudores solidarios. El colegio fija sus datos en Parametrización › Costos.
+   ===================================================================== */
+function numLetras(n) {
+  n = Math.round(Math.abs(+n || 0));
+  const U = ['', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve', 'diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete', 'dieciocho', 'diecinueve', 'veinte',
+    'veintiuno', 'veintidós', 'veintitrés', 'veinticuatro', 'veinticinco', 'veintiséis', 'veintisiete', 'veintiocho', 'veintinueve'];
+  const D = ['', '', '', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa'];
+  const C = ['', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos', 'novecientos'];
+  const m999 = x => { if (x === 0) return ''; if (x === 100) return 'cien'; const c = Math.floor(x / 100), r = x % 100;
+    const dr = r < 30 ? U[r] : D[Math.floor(r / 10)] + (r % 10 ? ' y ' + U[r % 10] : ''); return [C[c], dr].filter(Boolean).join(' '); };
+  if (n === 0) return 'cero';
+  const mill = Math.floor(n / 1e6), miles = Math.floor((n % 1e6) / 1000), resto = n % 1000;
+  const p = [];
+  if (mill) p.push(mill === 1 ? 'un millón' : m999(mill).replace(/veintiuno$/, 'veintiún').replace(/uno$/, 'un') + ' millones');
+  if (miles) p.push(miles === 1 ? 'mil' : m999(miles).replace(/veintiuno$/, 'veintiún').replace(/uno$/, 'un') + ' mil');
+  if (resto) p.push(m999(resto));
+  return p.join(' ').replace(/\s+/g, ' ');
+}
+const pesosLetras = n => `${numLetras(n).replace(/veintiuno$/, "veintiún").replace(/uno$/, "un")}${Math.round(+n) % 1e6 === 0 && +n >= 1e6 ? ' de' : ''} pesos m/cte`.toUpperCase();
+const raya = (v, w = 220) => v ? `<strong>${esc(v)}</strong>` : `<span style="display:inline-block;min-width:${w}px;border-bottom:1px solid #111">&nbsp;</span>`;
+function firmaContrato(rol, n, doc, conHuella) {
+  return `<div class="fc"><div class="fc-l">${conHuella ? '<div class="fc-h">Huella</div>' : ''}</div><div class="fc-t"><strong>${esc(rol)}</strong><br>${n ? esc(n) : 'Nombre: ______________________________'}<br>${doc ? esc(doc) : 'C.C. No. ____________________'}</div></div>`;
+}
+const docAcud = a => a?.doc ? `${a.tipo_doc || 'CC'} ${a.doc}` : '';
+const fichaAcud = a => a?.nombres ? `<strong>${esc(a.nombres)}</strong>, mayor de edad, identificado(a) con ${esc(docAcud(a) || '__________')}, ${esc((a.parentesco || 'acudiente').toLowerCase())} del estudiante, con domicilio en ${esc(a.direccion || '__________')}, teléfono ${esc(a.telefono || '__________')}${a.email ? ` y correo ${esc(a.email)}` : ''}`
+  : `${raya('', 260)}, mayor de edad, identificado(a) con C.C. No. ${raya('', 120)}, domiciliado(a) en ${raya('', 200)}`;
+async function generarContrato(eid) {
+  const e = est(eid); if (!e) return;
+  if (!(puede('matricula') || vePagos())) return toast('No tiene permiso para generar contratos');
+  if (e.estado !== 'Activo') return toast('El contrato se genera para estudiantes activos');
+  // siempre frescos y completos (Pagos y cartera carga solo algunas columnas de los acudientes)
+  const ac = await q(db.from('acudientes').select('*').eq('estudiante_id', eid).order('orden')).catch(() => []);
+  if (!ac.length || !ac[0].nombres || !ac[0].doc) return toast('Antes de generar el contrato registre en la ficha del estudiante al menos un acudiente con nombre y documento');
+  toast('Preparando el contrato…');
+  const r = await guard(async () => {
+    const [d, ca] = await Promise.all([q(db.rpc('contrato_datos', { p_est: eid })), q(db.from('costos_anio').select('*').eq('colegio_id', ctx.colegio_id).eq('anio', S.k.anio))]);
+    return { d, ca: ca[0] || {} };
+  });
+  if (!r) return;
+  const html = contratoHTML(e, ac, r.d, r.ca);
+  const falta = [];
+  const cfg = S.k.contrato_cfg || {};
+  if (!cfg.rep_doc) falta.push('el documento del representante legal');
+  if (!(cfg.titular_nit || S.k.nit)) falta.push('el NIT');
+  if (ac.length < 2 || !ac[1]?.nombres || !ac[1]?.doc) falta.push('el segundo acudiente (deudor solidario)');
+  if (!r.d.conceptos.length) falta.push('los costos del año');
+  showDocs(html, 'Contrato de matrícula, pagaré y carta de instrucciones', nomArchivo('Contrato de matrícula', e));
+  if (falta.length) setTimeout(() => toast(`Faltan datos: ${falta.join(', ')}. Quedan líneas para llenar a mano. ${!cfg.rep_doc ? 'Los datos del colegio se completan en Parametrización › Costos › Contrato de matrícula.' : ''}`), 400);
+}
+function contratoHTML(e, ac, d, ca) {
+  const k = S.k, cfg = k.contrato_cfg || {}, g = grupo(e.grupo_id), anio = d.anio || k.anio;
+  const titular = cfg.titular || k.nombre, nit = cfg.titular_nit || k.nit || '', rep = cfg.rep_nombre || k.rector_nombre || '', repDoc = cfg.rep_doc || '';
+  const repCargo = cfg.rep_cargo || 'RECTOR(A) Y REPRESENTANTE LEGAL', ciudad = cfg.ciudad || k.ciudad || '', nMora = cfg.cuotas_mora || 2;
+  const a1 = ac[0], a2 = ac[1]?.nombres ? ac[1] : null;
+  const num = `${anio}-${String(e.folio || 0).padStart(4, '0')}`;
+  const ps = (k.periodos || []).filter(p => p.inicio || p.fin);
+  const vigencia = ps.length && ps[0].inicio && ps[ps.length - 1].fin ? `del ${fechaLarga(ps[0].inicio)} al ${fechaLarga(ps[ps.length - 1].fin)}` : `de enero a diciembre de ${anio}`;
+  const cs = d.conceptos || [], bs = d.becas || [];
+  const total = cs.reduce((a, c) => a + +c.total, 0), totalBase = cs.reduce((a, c) => a + +c.total_base, 0);
+  const pen = cs.find(c => c.tipo === 'pension'), mat = cs.find(c => c.tipo === 'matricula');
+  const dia = k.dia_limite_pago || 5;
+  const res = ca.resolucion ? `la Resolución No. ${esc(ca.resolucion)}${ca.fecha_resolucion ? ` del ${fechaLarga(ca.fecha_resolucion)}` : ''}${ca.entidad ? ` de la ${esc(ca.entidad)}` : ''}` : 'la resolución de costos educativos expedida por la Secretaría de Educación para el año lectivo';
+  const contratantes = a2 ? `${fichaAcud(a1)}; y ${fichaAcud(a2)}` : `${fichaAcud(a1)}; y ${fichaAcud(null)}`;
+  const tabla = cs.length ? `<table style="margin:6px 0 8px"><thead><tr><th>Concepto</th><th>Cuotas</th><th style="text-align:right">Valor por cuota</th>${bs.length ? '<th style="text-align:right">Con beca</th>' : ''}<th style="text-align:right">Total del año</th></tr></thead><tbody>
+    ${cs.map(c => `<tr><td>${esc(c.nombre)}</td><td>${c.cuotas > 1 ? `${c.cuotas} (${c.meses.map(m => MESES[m].slice(0, 3).toLowerCase()).join(', ')})` : `1 (${MESES[c.meses[0]].toLowerCase()})`}</td><td style="text-align:right">${cop(c.valor_cuota)}</td>${bs.length ? `<td style="text-align:right">${+c.descuento_cuota ? cop(+c.valor_cuota - +c.descuento_cuota) + (c.meses_beca.length < c.cuotas ? `<br><span style="font-size:.85em">(${c.meses_beca.map(m => MESES[m].slice(0, 3).toLowerCase()).join(', ')})</span>` : '') : '—'}</td>` : ''}<td style="text-align:right">${cop(c.total)}</td></tr>`).join('')}
+    <tr><td colspan="${bs.length ? 4 : 3}"><strong>Valor total del año lectivo</strong></td><td style="text-align:right"><strong>${cop(total)}</strong></td></tr></tbody></table>` : `<p>Matrícula: ${raya('', 140)}; pensión mensual: ${raya('', 140)} por ${raya('', 40)} cuotas; otros cobros: ${raya('', 140)}. Valor total del año: ${raya('', 160)}.</p>`;
+  const ORD = ['PRIMERA', 'SEGUNDA', 'TERCERA', 'CUARTA', 'QUINTA', 'SEXTA', 'SÉPTIMA', 'OCTAVA', 'NOVENA', 'DÉCIMA', 'UNDÉCIMA', 'DUODÉCIMA', 'DECIMOTERCERA', 'DECIMOCUARTA', 'DECIMOQUINTA', 'DECIMOSEXTA', 'DECIMOSÉPTIMA', 'DECIMOCTAVA', 'DECIMONOVENA', 'VIGÉSIMA'];
+  let n = 0; const cl = t => { const o = ORD[n] || `CLÁUSULA ${n + 1}`; n++; return `<p><strong>${o}.</strong> ${t}</p>`; };
+  const extra = (cfg.clausulas || '').split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
+  const contrato = `<section class="doc contrato">${docHead('Contrato de prestación de servicios educativos', `No. ${num}<br>Año lectivo ${anio}`)}
+    <p>Entre los suscritos, <strong>${esc(titular)}</strong>${nit ? `, NIT ${esc(nit)}` : ''}, propietario(a) del establecimiento educativo <strong>${esc(k.nombre)}</strong>${k.resolucion ? ` (${esc(k.resolucion)})` : ''}${k.dane ? `, código DANE ${esc(k.dane)}` : ''}, representado(a) por ${raya(rep, 220)}, identificado(a) con C.C. No. ${raya(repDoc, 120)}, en calidad de ${esc(repCargo.toLowerCase())}, quien en adelante se denomina <strong>EL COLEGIO</strong>; y ${contratantes}, quienes obran en nombre propio y en representación del estudiante, y en adelante se denominan <strong>LOS PADRES O ACUDIENTES</strong>; en beneficio de <strong>${esc(nom(e))}</strong>, identificado(a) con ${esc(e.tipo_doc)} ${esc(e.doc)}, matrícula No. ${esc(e.matricula || '')}, folio ${e.folio}, en adelante <strong>EL ESTUDIANTE</strong>, hemos celebrado el presente contrato de prestación de servicios educativos, regido por la Constitución Política, la Ley 115 de 1994, la Ley 1098 de 2006, la Ley 1620 de 2013, el Decreto 1075 de 2015 y las demás normas que los modifiquen, y por las siguientes cláusulas:</p>
+    ${cl(`<u>Objeto.</u> EL COLEGIO prestará a EL ESTUDIANTE el servicio público de educación formal en el grado <strong>${esc(gradoTxt(g?.grado) || g?.nombre || '')}</strong>${g?.nombre ? ` (curso ${esc(g.nombre)})` : ''}, jornada ${esc((e.jornada || '').toLowerCase())}, conforme a su Proyecto Educativo Institucional (PEI), su plan de estudios, su Sistema Institucional de Evaluación (SIEE) y su Manual de Convivencia. LOS PADRES O ACUDIENTES se obligan a pagar el valor del servicio y a cumplir los deberes que les corresponden en la formación de EL ESTUDIANTE.`)}
+    ${cl(`<u>Duración.</u> El contrato rige durante el año lectivo ${anio}, ${vigencia}. No se renueva automáticamente: para el año siguiente debe renovarse la matrícula (artículo 95 de la Ley 115 de 1994), renovación que EL COLEGIO puede negar cuando LOS PADRES O ACUDIENTES hayan incumplido de manera injustificada sus obligaciones de pago de este contrato.`)}
+    ${cl(`<u>Valor y forma de pago.</u> El valor del servicio corresponde a las tarifas autorizadas mediante ${res}, así:${tabla}La matrícula se paga al firmar este contrato y las pensiones mensuales a más tardar el día <strong>${dia}</strong> de cada mes, por los medios que EL COLEGIO informe (caja del colegio, transferencia o pago en línea). Cada pago tiene su recibo. El valor total del año es de <strong>${cop(total)} (${pesosLetras(total)})</strong>${totalBase !== total ? `, que ya incluye los descuentos de la cláusula CUARTA (sin ellos sería ${cop(totalBase)})` : ''}. Si EL ESTUDIANTE ingresa después de iniciado el año, solo se cobran los meses que cursa.`)}
+    ${bs.length ? cl(`<u>Becas, subsidios y descuentos.</u> EL COLEGIO reconoce a EL ESTUDIANTE: ${bs.map(b => `<strong>${esc(b.tipo)}</strong> de ${esc(becaTxt(b))}, por ${esc(b.motivo.toLowerCase())}${b.activa ? '' : ` (retirada; aplica solo hasta ${MESES[Math.min(b.mes_corte || 1, b.mes_hasta)].toLowerCase()})`}`).join('; ')}. El beneficio es personal e intransferible, rige solo para el año lectivo ${anio}, no constituye derecho adquirido ni se renueva automáticamente, y podrá retirarse para las cuotas siguientes, previo aviso escrito, si dejan de cumplirse las condiciones por las que se otorgó.`) : ''}
+    ${cl(`<u>Mora.</u> Si LOS PADRES O ACUDIENTES no pagan dentro del plazo, reconocerán intereses de mora, que se pactan a la tasa máxima legal certificada por la Superintendencia Financiera de Colombia (artículo 884 del Código de Comercio), además de los gastos razonables de cobranza que la ley permita. Los intereses pactados nunca excederán el límite legal (usura). Este contrato podrá prestar mérito ejecutivo en los términos del artículo 422 del Código General del Proceso.`)}
+    ${cl(`<u>Garantía.</u> Para respaldar las obligaciones de este contrato, LOS PADRES O ACUDIENTES firman en este acto, como deudores solidarios, un <strong>pagaré con espacios en blanco</strong> y su <strong>carta de instrucciones</strong> (artículo 622 del Código de Comercio), que hacen parte de este contrato. EL COLEGIO solo podrá llenarlo según esa carta. Al terminar el contrato a paz y salvo, el pagaré se devuelve o se anula a solicitud de LOS PADRES O ACUDIENTES.`)}
+    ${cl(`<u>Solidaridad.</u> Quienes firman como PADRES O ACUDIENTES responden de manera solidaria e indivisible por todas las obligaciones económicas de este contrato; EL COLEGIO puede exigir el pago total a cualquiera de ellos.`)}
+    ${cl(`<u>Obligaciones de EL COLEGIO.</u> (1) Prestar el servicio educativo con calidad, conforme al PEI y a las normas vigentes; (2) contar con docentes idóneos y los recursos necesarios; (3) informar periódicamente el desempeño de EL ESTUDIANTE mediante los informes académicos de cada periodo; (4) respetar el debido proceso en toda actuación de convivencia; (5) proteger los derechos de EL ESTUDIANTE y velar por su integridad y bienestar; (6) expedir los certificados, constancias y documentos que se soliciten, con los costos autorizados; (7) proteger los datos personales conforme a la Ley 1581 de 2012.`)}
+    ${cl(`<u>Obligaciones de LOS PADRES O ACUDIENTES.</u> (1) Pagar oportunamente la matrícula, las pensiones y los demás cobros; (2) cumplir y hacer cumplir el Manual de Convivencia, que declaran conocer y aceptar; (3) acompañar el proceso formativo de EL ESTUDIANTE y asistir a las reuniones y citaciones (artículo 39 de la Ley 1098 de 2006 y artículo 22 de la Ley 1620 de 2013); (4) proporcionar a EL ESTUDIANTE los útiles, uniformes y elementos necesarios; (5) informar oportunamente las condiciones de salud, de inclusión o las situaciones especiales de EL ESTUDIANTE; (6) mantener actualizados sus datos de contacto; (7) responder por los daños que EL ESTUDIANTE cause a los bienes del colegio o de terceros.`)}
+    ${cl(`<u>Obligaciones de EL ESTUDIANTE.</u> Cumplir el Manual de Convivencia, asistir puntualmente, desarrollar las actividades académicas y respetar a todos los miembros de la comunidad educativa, de acuerdo con su edad y su proceso de formación.`)}
+    ${cl(`<u>Retiro y terminación.</u> El contrato termina: (1) al finalizar el año lectivo; (2) por mutuo acuerdo; (3) por retiro voluntario, que LOS PADRES O ACUDIENTES deben avisar por escrito a la secretaría; en ese caso pagan las pensiones causadas hasta el mes del retiro, inclusive; (4) por las causales previstas en el Manual de Convivencia, con aplicación del debido proceso; (5) por las demás causas legales. La matrícula y los demás cobros únicos no se devuelven una vez iniciado el año lectivo, salvo lo que la ley disponga.`)}
+    ${cl(`<u>Datos personales y comunicaciones.</u> LOS PADRES O ACUDIENTES autorizan el tratamiento de los datos personales suyos y de EL ESTUDIANTE para fines académicos, administrativos y de cobro, conforme a la Ley 1581 de 2012 y a la política de tratamiento de datos del colegio. Aceptan recibir comunicaciones, avisos de cobro y estados de cuenta en las direcciones, teléfonos y correos aquí registrados y en la plataforma institucional del colegio; las gestiones de cobro respetarán los horarios y la frecuencia que permite la Ley 2300 de 2023.`)}
+    ${extra.map(t => cl(esc(t).replace(/\n/g, '<br>'))).join('')}
+    ${cl(`<u>Aceptación.</u> Las partes declaran haber leído y entendido este contrato. Se firma en ${raya(ciudad, 140)}, el ${fechaLarga(hoy())}, en dos ejemplares del mismo valor, uno para cada parte.`)}
+    <div class="firmas-c">${firmaContrato('EL COLEGIO', rep, repDoc ? `C.C. No. ${repDoc} · ${repCargo}` : '', false)}${firmaContrato('PADRE, MADRE O ACUDIENTE', a1.nombres, docAcud(a1), true)}${firmaContrato('PADRE, MADRE O ACUDIENTE', a2?.nombres, docAcud(a2), true)}</div></section>`;
+  const deud = [a1, a2];
+  const lineaDeudores = deud.map(a => a?.nombres ? `<strong>${esc(a.nombres)}</strong>, identificado(a) con ${esc(docAcud(a))}` : `${raya('', 240)}, identificado(a) con C.C. No. ${raya('', 110)}`).join(' y ');
+  const pagare = `<section class="doc contrato">${docHead('Pagaré', `No. ${num}<br>Respalda el contrato No. ${num}`)}
+    <div class="dgrid" style="grid-template-columns:1fr 1fr"><div><span>Valor</span>$ ____________________</div><div><span>Fecha de vencimiento</span>_____ de ______________ de ______</div><div><span>Beneficiario</span>${esc(titular)}${nit ? ` · NIT ${esc(nit)}` : ''}</div><div><span>Lugar de pago</span>${ciudad ? esc(ciudad) : '____________________'}</div></div>
+    <p>Nosotros, ${lineaDeudores}, mayores de edad, obrando en nombre propio, nos obligamos a pagar de manera <strong>solidaria, incondicional e indivisible</strong> a la orden de <strong>${esc(titular)}</strong>${nit ? `, NIT ${esc(nit)}` : ''}, o a quien represente sus derechos, en la ciudad de ${raya(ciudad, 160)}, la suma de <strong>$ ____________________ (________________________________________________ pesos m/cte)</strong>, el día ______ del mes de ______________ del año ________.</p>
+    <p>En caso de mora pagaremos, sobre el capital, intereses moratorios a la tasa máxima legal certificada por la Superintendencia Financiera de Colombia, sin perjuicio de las acciones legales del acreedor. Serán de nuestro cargo los gastos de cobranza judicial y extrajudicial que la ley permita.</p>
+    <p>Renunciamos a la presentación para el pago, al aviso de rechazo y al protesto. Autorizamos expresamente al tenedor para llenar los espacios en blanco de este pagaré conforme a la carta de instrucciones que firmamos en la misma fecha (artículo 622 del Código de Comercio). Cualquiera de los firmantes puede ser requerido por el total.</p>
+    <p>Se firma en ${raya(ciudad, 140)}, el ${fechaLarga(hoy())}.</p>
+    <div class="firmas-c">${firmaContrato('DEUDOR(A) SOLIDARIO(A)', a1.nombres, docAcud(a1), true)}${firmaContrato('DEUDOR(A) SOLIDARIO(A)', a2?.nombres, docAcud(a2), true)}</div></section>`;
+  const carta = `<section class="doc contrato">${docHead('Carta de instrucciones', `Pagaré No. ${num}`)}
+    <p>${raya(ciudad, 140)}, ${fechaLarga(hoy())}</p>
+    <p>Señores<br><strong>${esc(titular)}</strong>${nit ? `<br>NIT ${esc(nit)}` : ''}<br>${esc(k.nombre)}<br>${esc([k.direccion, k.ciudad].filter(Boolean).join(', '))}</p>
+    <p><strong>Referencia:</strong> instrucciones para llenar el pagaré No. ${num}, firmado con espacios en blanco.</p>
+    <p>Nosotros, ${lineaDeudores}, de conformidad con el artículo 622 del Código de Comercio, autorizamos de manera expresa e irrevocable a ${esc(titular)}, o a quien represente sus derechos, para llenar los espacios en blanco del pagaré de la referencia, que firmamos como deudores solidarios para respaldar el contrato de prestación de servicios educativos No. ${num} de <strong>${esc(nom(e))}</strong> (${esc(e.tipo_doc)} ${esc(e.doc)}), según estas instrucciones:</p>
+    <ol class="carta">
+      <li><strong>Cuándo:</strong> el pagaré podrá llenarse cuando estemos en mora en el pago de <strong>${nMora}</strong> o más cuotas o cobros de ese contrato, o cuando el contrato termine (por cualquier causa) y quede un saldo pendiente.</li>
+      <li><strong>Valor:</strong> será la suma de lo que debamos al momento de llenarlo por matrícula, pensiones y demás cobros de este contrato y de sus renovaciones para años siguientes, según el estado de cuenta del colegio. Los intereses de mora y los gastos de cobranza no se suman al capital del pagaré: se cobran aparte, conforme a la ley.</li>
+      <li><strong>Fecha de vencimiento:</strong> será el día en que se llene el pagaré.</li>
+      <li><strong>Lugar de pago:</strong> la ciudad de ${raya(ciudad, 140)}.</li>
+      <li><strong>Intereses:</strong> desde el vencimiento, intereses de mora a la tasa máxima legal certificada por la Superintendencia Financiera de Colombia.</li>
+      <li><strong>Aviso:</strong> antes de llenar el pagaré, el colegio nos enviará un estado de cuenta con el saldo a los datos de contacto registrados en el contrato.</li>
+      <li><strong>Consulta y reporte:</strong> autorizamos al colegio para consultar y reportar nuestro comportamiento de pago ante los operadores de información (centrales de riesgo), conforme a la Ley 1266 de 2008 y la Ley 2157 de 2021. Todo reporte negativo irá precedido de una comunicación con al menos veinte (20) días calendario de anticipación.</li>
+      <li>Declaramos que recibimos copia de esta carta y del pagaré, y que conocemos que el pagaré, una vez lleno, presta mérito ejecutivo.</li>
+    </ol>
+    <p>Atentamente,</p>
+    <div class="firmas-c">${firmaContrato('DEUDOR(A) SOLIDARIO(A)', a1.nombres, docAcud(a1), true)}${firmaContrato('DEUDOR(A) SOLIDARIO(A)', a2?.nombres, docAcud(a2), true)}</div></section>`;
+  return contrato + pagare + carta;
+}
+// Parametrización › Costos: datos del contrato de matrícula
+function panelContrato() {
+  const c = S.k.contrato_cfg || {}, ed = puede('costos'), dis = ed ? '' : 'disabled';
+  return `<div class="panel"><h2>Contrato de matrícula y pagaré</h2><p class="muted">Con estos datos Colegio-IA arma el contrato de prestación de servicios educativos de cada estudiante (Estudiantes y matrícula › Acciones › Contrato de matrícula y pagaré), con los costos del año, sus becas y los dos acudientes como deudores solidarios del pagaré. Pida a su abogado que revise el modelo una vez; lo propio del colegio se agrega en "Cláusulas adicionales".</p>
+    <div class="formgrid">${fIn('ctTit', 'Propietario o razón social (a quien se le paga)', c.titular || '', `placeholder="${esc(S.k.nombre)}" ${dis}`)}${fIn('ctNit', 'NIT', c.titular_nit || S.k.nit || '', dis)}
+      ${fIn('ctRep', 'Representante legal (quien firma)', c.rep_nombre || '', `placeholder="${esc(S.k.rector_nombre || '')}" ${dis}`)}${fIn('ctRepD', 'Cédula del representante legal', c.rep_doc || '', `inputmode="numeric" ${dis}`)}
+      ${fIn('ctCar', 'Cargo de quien firma', c.rep_cargo || 'RECTOR(A) Y REPRESENTANTE LEGAL', dis)}${fIn('ctCiu', 'Ciudad donde se firma y se paga', c.ciudad || S.k.ciudad || '', dis)}
+      <label class="field"><span>El pagaré se puede llenar con</span><select id="ctMora" ${dis}>${[1, 2, 3, 4, 6].map(n => opt(n, `${n} cuota(s) en mora`, c.cuotas_mora || 2)).join('')}</select></label>
+      ${fTa('ctCla', 'Cláusulas adicionales (opcional; separe cada cláusula con una línea en blanco)', c.clausulas || '', 'Ejemplo: Transporte escolar. El servicio de ruta se contrata aparte…')}</div>
+    ${ed ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarContratoCfg()">Guardar datos del contrato</button></div>' : '<p class="muted">Los cambia quien tenga el permiso "Costos y medios de pago".</p>'}</div>`;
+}
+async function guardarContratoCfg() {
+  const cfg = { titular: vv('ctTit'), titular_nit: vv('ctNit'), rep_nombre: vv('ctRep'), rep_doc: vv('ctRepD'), rep_cargo: vv('ctCar'), ciudad: vv('ctCiu'), cuotas_mora: +vv('ctMora') || 2, clausulas: $('#ctCla').value };
+  const r = await guard(() => q(db.rpc('colegio_contrato', { p_colegio: S.k.id, p_cfg: cfg })), 'Datos del contrato guardados');
+  if (r) { S.k.contrato_cfg = r; render(); }
+}
+Object.assign(window, { formAcuerdo, planAcuerdo, previewAcuerdo, generarAcuerdo, modalBecas, formBeca, previewBeca, volverBecas, guardarBeca, anularBeca, generarContrato, guardarContratoCfg });
+
+/* =====================================================================
+   Acuerdo de pago (familias que ya deben cuotas vencidas): reconoce la deuda, fija cuota inicial y cuotas
+   con fechas, y dice qué pasa si se incumple (se puede llenar el pagaré). Se imprime y se firma a mano.
+   ===================================================================== */
+const deudaVencida = () => [...cuenta.prevFilas.map(x => ({ ...x, anioX: x.anioCobro })), ...cuenta.filas.filter(x => x.vencido && +x.saldo > 0).map(x => ({ ...x, anioX: cuenta.anio }))];
+function formAcuerdo() {
+  if (!manejaPagos()) return toast('Los acuerdos de pago los hace quien tenga el permiso "Registrar pagos"');
+  const l = deudaVencida(), tot = l.reduce((a, x) => a + +x.saldo, 0);
+  if (tot <= 0) return toast('Este estudiante no tiene saldo vencido');
+  const [hy, hm] = hoy().split('-').map(Number), f = new Date(hy, hm, Math.min(S.k.dia_limite_pago || 5, 28));
+  const fIni = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
+  openModal(`Acuerdo de pago: ${nom(est(cuenta.eid))}`, `<p>Saldo vencido a hoy: <strong>${cop(tot)}</strong> (${l.length} cobro(s)${cuenta.prevFilas.length ? ', incluye años anteriores' : ''}). Las cuotas que aún no vencen no entran: se siguen pagando normalmente.</p>
+    <div class="formgrid">${fIn('agIni', 'Cuota inicial (al firmar)', 0, `type="number" min="0" step="1000" oninput="previewAcuerdo()"`)}
+      <label class="field"><span>Número de cuotas para el resto</span><select id="agN" onchange="previewAcuerdo()">${[1, 2, 3, 4, 5, 6, 8, 10, 12].map(n => opt(n, n, 3)).join('')}</select></label>
+      ${fIn('agF', 'Fecha de la primera cuota (luego, cada mes)', fIni, 'type="date" onchange="previewAcuerdo()"')}
+      <label class="field chk"><input type="checkbox" id="agInt" checked> Sin intereses de mora mientras cumpla el acuerdo</label>
+      ${fTa('agObs', 'Observaciones (opcional)', '', 'Ejemplo: se compromete a pagar además la pensión de cada mes')}</div>
+    <div id="agPrev" class="note" style="margin-top:10px"></div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="modalCuenta()">Volver</button><button class="btn" type="button" onclick="generarAcuerdo()">Generar acuerdo para imprimir</button></div>`);
+  previewAcuerdo();
+}
+function planAcuerdo() {
+  const tot = deudaVencida().reduce((a, x) => a + +x.saldo, 0), ini = Math.max(0, Math.round(+vv('agIni') || 0)), n = +vv('agN') || 1, f0 = vv('agF');
+  if (ini > tot) return { error: 'La cuota inicial no puede ser mayor que la deuda' };
+  if (!f0) return { error: 'Elija la fecha de la primera cuota' };
+  if (f0 < hoy()) return { error: 'La primera cuota no puede ser en una fecha pasada' };
+  const resto = tot - ini, base = Math.floor(resto / n / 100) * 100, cuotas = [];
+  if (resto > 0 && n > 1 && base < 1000) return { error: 'El saldo es muy pequeño para tantas cuotas: elija menos cuotas' };
+  const [y, m, d] = f0.split('-').map(Number);
+  for (let i = 0; i < n; i++) {
+    const dt = new Date(y, m - 1 + i, 1); const ult = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+    const fecha = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(Math.min(d, ult)).padStart(2, '0')}`;
+    cuotas.push({ n: i + 1, fecha, valor: i === n - 1 ? resto - base * (n - 1) : base });
+  }
+  return { tot, ini, cuotas: resto > 0 ? cuotas : [] };
+}
+function previewAcuerdo() {
+  const el = $('#agPrev'); if (!el) return; const p = planAcuerdo();
+  el.innerHTML = p.error ? esc(p.error) : `${p.ini ? `Cuota inicial ${cop(p.ini)} al firmar. ` : ''}${p.cuotas.length ? p.cuotas.map(c => `${c.n}) ${fmtF(c.fecha)}: <strong>${cop(c.valor)}</strong>`).join(' · ') : 'Paga todo al firmar.'}`;
+}
+async function generarAcuerdo() {
+  const p = planAcuerdo(); if (p.error) return toast(p.error);
+  const e = est(cuenta.eid), l = deudaVencida(), sinInt = $('#agInt').checked, obs = vv('agObs');
+  const ac = await q(db.from('acudientes').select('*').eq('estudiante_id', cuenta.eid).order('orden')).catch(() => []);
+  const k = S.k, cfg = k.contrato_cfg || {}, titular = cfg.titular || k.nombre, nit = cfg.titular_nit || k.nit || '';
+  const rep = cfg.rep_nombre || k.rector_nombre || '', repDoc = cfg.rep_doc || '', ciudad = cfg.ciudad || k.ciudad || '', nMora = cfg.cuotas_mora || 2;
+  const a1 = ac[0]?.nombres ? ac[0] : null, a2 = ac[1]?.nombres ? ac[1] : null;
+  if (!a1) setTimeout(() => toast('El estudiante no tiene acudientes registrados en la ficha: los datos de los deudores quedan en blanco para llenar a mano'), 400);
+  const num = `${k.anio}-${String(e.folio || 0).padStart(4, '0')}`;
+  const deudores = [a1, a2].map(a => a ? `<strong>${esc(a.nombres)}</strong>, identificado(a) con ${esc(docAcud(a) || '__________')}` : `${raya('', 240)}, identificado(a) con C.C. No. ${raya('', 110)}`).join(' y ');
+  let n = 0; const ORD = ['PRIMERA', 'SEGUNDA', 'TERCERA', 'CUARTA', 'QUINTA', 'SEXTA', 'SÉPTIMA', 'OCTAVA', 'NOVENA', 'DÉCIMA'];
+  const cl = t => `<p><strong>${ORD[n++] || 'CLÁUSULA ' + n}.</strong> ${t}</p>`;
+  const html = `<section class="doc contrato">${docHead('Acuerdo de pago', `Contrato No. ${num}<br>${fechaLarga(hoy())}`)}
+    <p>Entre <strong>${esc(titular)}</strong>${nit ? `, NIT ${esc(nit)}` : ''}, propietario(a) de <strong>${esc(k.nombre)}</strong>, representado(a) por ${raya(rep, 200)}, C.C. No. ${raya(repDoc, 110)}, en adelante <strong>EL COLEGIO</strong>; y ${deudores}, acudientes de <strong>${esc(nom(e))}</strong> (${esc(e.tipo_doc)} ${esc(e.doc)}), en adelante <strong>LOS DEUDORES</strong>, se celebra el siguiente acuerdo de pago:</p>
+    ${cl(`<u>Reconocimiento de la deuda.</u> LOS DEUDORES reconocen que a la fecha deben a EL COLEGIO la suma de <strong>${cop(p.tot)} (${pesosLetras(p.tot)})</strong> por los siguientes cobros vencidos del servicio educativo:
+      <table style="margin:6px 0"><thead><tr><th>Año</th><th>Concepto</th><th>Mes</th><th style="text-align:right">Saldo</th></tr></thead><tbody>
+      ${l.map(x => `<tr><td>${x.anioX}</td><td>${esc(x.concepto)}</td><td>${MESES[x.mes] || ''}</td><td style="text-align:right">${cop(x.saldo)}</td></tr>`).join('')}
+      <tr><td colspan="3"><strong>Total</strong></td><td style="text-align:right"><strong>${cop(p.tot)}</strong></td></tr></tbody></table>
+      Este reconocimiento interrumpe la prescripción de la deuda (artículo 2539 del Código Civil).`)}
+    ${cl(`<u>Forma de pago.</u> LOS DEUDORES pagarán ${p.ini ? `una cuota inicial de <strong>${cop(p.ini)}</strong> al firmar este acuerdo${p.cuotas.length ? ' y el saldo así' : ''}` : 'la deuda así'}:${p.cuotas.length ? `
+      <table style="margin:6px 0"><thead><tr><th>Cuota</th><th>Fecha límite</th><th style="text-align:right">Valor</th></tr></thead><tbody>
+      ${p.cuotas.map(c => `<tr><td>${c.n}</td><td>${fechaLarga(c.fecha)}</td><td style="text-align:right">${cop(c.valor)}</td></tr>`).join('')}</tbody></table>` : '.'}
+      Cada pago se hace por los medios que informe EL COLEGIO y tendrá su recibo. Pueden pagar antes de las fechas, sin penalidad.`)}
+    ${cl(`<u>Pensiones siguientes.</u> Este acuerdo no cubre las pensiones y cobros que se causen después de su firma: LOS DEUDORES seguirán pagándolos en las fechas del contrato de matrícula.`)}
+    ${cl(sinInt ? `<u>Intereses.</u> Mientras LOS DEUDORES cumplan este acuerdo, EL COLEGIO no cobrará intereses de mora sobre la suma reconocida.` : `<u>Intereses.</u> Sobre los saldos en mora se causarán intereses a la tasa máxima legal certificada por la Superintendencia Financiera de Colombia, sin exceder el límite de usura.`)}
+    ${cl(`<u>Incumplimiento.</u> Si LOS DEUDORES no pagan una cuota de este acuerdo en su fecha, o dejan de pagar ${nMora} o más pensiones siguientes, EL COLEGIO podrá exigir de inmediato todo el saldo pendiente${sinInt ? ', con los intereses de mora causados desde el incumplimiento' : ''}, y llenar el pagaré firmado con el contrato de matrícula, si lo hubiere, conforme a su carta de instrucciones, además de las demás acciones legales de cobro.`)}
+    ${cl(`<u>Paz y salvo.</u> EL COLEGIO expedirá el paz y salvo cuando se haya pagado la totalidad de lo acordado y no haya otros cobros vencidos.`)}
+    ${obs ? cl(`<u>Observaciones.</u> ${esc(obs).replace(/\n/g, '<br>')}`) : ''}
+    ${cl(`<u>Aceptación.</u> Se firma en ${raya(ciudad, 140)}, el ${fechaLarga(hoy())}, en dos ejemplares, uno para cada parte. Este acuerdo hace parte del contrato de prestación de servicios educativos No. ${num}.`)}
+    <div class="firmas-c">${firmaContrato('EL COLEGIO', rep, repDoc ? `C.C. No. ${repDoc}` : '', false)}${firmaContrato('DEUDOR(A)', a1?.nombres, docAcud(a1), true)}${firmaContrato('DEUDOR(A)', a2?.nombres, docAcud(a2), true)}</div></section>`;
+  showDocs(html, 'Acuerdo de pago', nomArchivo('Acuerdo de pago', e));
+}
