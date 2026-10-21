@@ -481,3 +481,4 @@ table.planilla td:has(.h-cel){padding:3px}
 @media print{.h-cel{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 tr.h-desc td{background:#FFF7E6;color:#9A6200;text-align:center;font-weight:600;font-size:.88rem;padding:4px}
 .btn:disabled, .btn[disabled] { opacity: .35; cursor: not-allowed; }
+.ficha-foto{display:flex;gap:14px;align-items:center;margin-bottom:12px;padding:10px;border:1px solid var(--line);border-radius:10px;background:#F8FBFD}
