@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@neondatabase/neon-js@0.7.0-beta';
 import { AUTH_URL, DATA_URL, VERSION } from './config.js';
+import { escribirXlsx, leerXlsx, leerCsv, fechaExcel, descargarBlob } from './xlsx.js';
 
 const db = createClient({ auth: { url: AUTH_URL }, dataApi: { url: DATA_URL } });
 
@@ -39,7 +40,7 @@ function dlgFin(v) { document.getElementById('dlg')?._res?.(v); }
 const confirmarEscribiendo = (msg, palabra, si = 'Sí, eliminar') => dialogo(`<p>${esc(msg)}</p><p class="muted" style="margin:6px 0">Para confirmar, escriba <strong>${esc(palabra)}</strong>:</p><input id="dlgW" autocomplete="off" style="width:100%" oninput="document.getElementById('dlgOk').disabled = this.value.trim().toLowerCase() !== ${esc(JSON.stringify(palabra.toLowerCase()))}"><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(false)">Cancelar</button><button class="btn warn" id="dlgOk" type="button" disabled onclick="dlgFin(true)">${esc(si)}</button></div>`);
 const confirmar = (msg, si = 'Sí, continuar') => dialogo(`<p>${esc(msg)}</p><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(false)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(true)">${esc(si)}</button></div>`);
 const pedirTexto = (msg, ph = '', val = '') => dialogo(`<p>${esc(msg)}</p><textarea id="dlgT" rows="3" placeholder="${esc(ph)}" style="width:100%">${esc(val)}</textarea><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(null)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(document.getElementById('dlgT').value.trim())">Aceptar</button></div>`);
-function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 4500); }
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 6500); }
 function openModal(t, html) { $('#mt').textContent = t; $('#mb').innerHTML = html; $('#modal').hidden = false; const f = $('#mb input,#mb select,#mb textarea,#mb button'); if (f) f.focus(); }
 function closeModal() { $('#modal').hidden = true; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').hidden) closeModal(); });
@@ -339,7 +340,7 @@ function authMsg(e) {
   if (c.includes('INVALID_EMAIL')) return 'El correo no es válido';
   return msg(e);
 }
-async function busy(btnSel, fn) { const b = $(btnSel); if (b) { b.disabled = true; b.dataset.t = b.textContent; b.textContent = 'Un momento…'; } try { return await fn(); } finally { if (b) { b.disabled = false; b.textContent = b.dataset.t; } } }
+async function busy(btnSel, fn) { const b = typeof btnSel === 'string' ? $(btnSel) : btnSel; if (b) { b.disabled = true; b.dataset.t = b.textContent; b.textContent = 'Un momento…'; } try { return await fn(); } finally { if (b) { b.disabled = false; b.textContent = b.dataset.t; } } }
 async function doLogin() {
   authErr('');
   await busy('#auth .btn', async () => {
@@ -709,6 +710,34 @@ async function refrescar(prep) { await guard(prep || (() => cargarGrupo(sel.g, t
 /* =====================================================================
    Inicio
    ===================================================================== */
+// v0.22 (simulación del ciclo de un colegio nuevo): lista para arrancar que la rectoría ve hasta completar lo básico
+const arranqueOculto = () => store.get('arranque:' + ctx.colegio_id) === 'oculto';
+async function prepArranque() {
+  const [con, mie] = await Promise.all([
+    all(() => db.from('conceptos').select('valor,valores_grado').eq('colegio_id', ctx.colegio_id).eq('anio', S.k.anio)),
+    all(() => db.from('miembros').select('rol,estudiante_id').eq('colegio_id', ctx.colegio_id))]);
+  S.arr = { costos: con.some(c => +c.valor > 0 || Object.values(c.valores_grado || {}).some(v => +v > 0)),
+    docentes: mie.filter(m => m.rol === 'docente').length, familias: mie.filter(m => m.estudiante_id).length };
+}
+function arranqueHTML() {
+  if (!esRector() || S.k.demo || !S.arr || arranqueOculto()) return '';
+  const k = S.k, ps = periodos(), act = S.ests.filter(e => e.estado === 'Activo').length;
+  const pasos = [
+    [!!(k.nit && k.dane && k.resolucion && k.direccion), 'Datos legales del colegio', 'NIT, código DANE, resolución de aprobación y dirección. Salen en boletines, constancias y certificados.', "irPtab('inst')"],
+    [!!k.logo, 'Escudo del colegio', 'Se imprime en todos los documentos y en el carnet.', "irPtab('inst')"],
+    [ps.length > 0 && ps.every(p => p.inicio && p.fin), 'Fechas de los periodos', 'Inicio, fin y fecha de cierre de cada periodo: con ellas se cierran las calificaciones a tiempo.', "irPtab('periodos')"],
+    [S.arr.costos, 'Costos del año', 'Matrícula, pensión y otros cobros. Sin valores, la cartera y el estado de cuenta quedan en cero.', "irPtab('costos')"],
+    [S.arr.docentes > 0, 'Docentes', 'Agréguelos y asígneles sus cursos y asignaturas.', "go('usuarios')"],
+    [act > 0, 'Estudiantes matriculados', 'Uno por uno o desde Excel con la plantilla.', "go('estudiantes')"],
+    [S.arr.familias > 0, 'Familias con acceso', 'Desde la ficha de cada estudiante, botón de accesos.', "go('estudiantes')"],
+    [!!S.estado && !S.estado.en_prueba, 'Suscripción', 'Pague el primer mes para seguir sin interrupciones al terminar la prueba.', 'pagarSuscripcion()']];
+  const hechos = pasos.filter(p => p[0]).length;
+  if (hechos === pasos.length) return '';
+  return `<section class="panel arranque"><h2>Para arrancar con Colegio-IA <span class="badge">${hechos} de ${pasos.length}</span></h2>
+    <div class="bar"><i style="width:${Math.round(hechos / pasos.length * 100)}%"></i></div>
+    <ul class="list">${pasos.map(([ok, t, d, fn]) => `<li class="${ok ? 'dim' : ''}">${ok ? '✅' : '⬜'} <strong>${t}</strong><br><span class="muted">${d}</span>${ok ? '' : ` <button class="linkbtn" type="button" onclick="${fn}">Hacerlo ahora</button>`}</li>`).join('')}</ul>
+    <div class="toolbar"><button class="btn ghost sm" type="button" onclick="ocultarArranque()">Ocultar esta lista</button></div></section>`;
+}
 let resumen = null;
 async function prepInicio() {
   resumen = null;
@@ -718,6 +747,7 @@ async function prepInicio() {
       .catch(async () => { await new Promise(r => setTimeout(r, 1500)); return q(db.rpc('resumen_colegio', { p_colegio: ctx.colegio_id })); });
     S.susc = await q(db.rpc('mi_suscripcion', { p_colegio: ctx.colegio_id })).catch(() => null);
     await cargarCumples();
+    if (esRector() && !S.k.demo && !arranqueOculto()) await prepArranque().catch(() => {});
   }
   if (isDoc()) { for (const g of gruposVis()) await cargarGrupo(g.id); }
   if (isFam()) { const e = est(propio()); if (e) await cargarGrupo(e.grupo_id).catch(() => {}); await prepCampusInicio(); }
@@ -744,7 +774,7 @@ function vInicio() {
         <div class="stat"><div class="n">${r.piar ?? 0}</div><div class="l">Estudiantes con PIAR</div></div>
       </div>
       ${avisoCierre()}${panelCumples()}
-      ${!S.grupos.length ? `<div class="note"><strong>Primeros pasos.</strong> 1) Revise los datos del colegio en Parametrización. 2) Cree los grupos. 3) Matricula estudiantes. 4) Invita a docentes y acudientes desde Usuarios y accesos.</div>` : ''}
+      ${arranqueHTML()}
       <div class="cols">
         <section class="panel"><h2>Estudiantes en riesgo académico</h2>
           ${r.riesgo?.length ? `<ul class="list">${r.riesgo.map(x => `<li><strong>${esc(x.nombre)}</strong>, ${esc(x.grupo)}<br><span class="muted">En bajo: ${x.asignaturas.map(esc).join(', ')}</span></li>`).join('')}</ul>` : `<p class="muted">Ningún estudiante alcanza ${S.k.max_perdidas} o más asignaturas en bajo.</p>`}
@@ -791,9 +821,9 @@ async function prepEstudiantes() {
 const acudDe = eid => (S.acud || []).filter(a => a.estudiante_id === eid).sort((a, b) => a.orden - b.orden);
 function vEstudiantes() {
   const act = S.ests.filter(e => e.estado === 'Activo');
-  return head('Estudiantes y matrícula', 'Matricula, consulta y retira estudiantes. Cada matrícula recibe folio automático.',
-    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarEstudiantes()" ${S.ests.length ? '' : 'disabled'}>Exportar a Excel</button><button class="btn ghost" type="button" onclick="libroMatricula()" ${S.ests.length ? '' : 'disabled'}>Libro de matrícula</button><button class="btn" type="button" onclick="formEst()" ${!puede('matricula') ? 'disabled title="Sin permiso de matrícula (Parametrización › Permisos)"' : S.grupos.length ? '' : 'disabled title="Primero crea los grupos en Parametrización"'}>Matricular estudiante</button></div>`) +
-    (S.grupos.length ? '' : '<div class="note">Antes de matricular, crea los grupos en <button class="linkbtn" type="button" onclick="go(\'config\')">Parametrización</button>.</div>') +
+  return head('Estudiantes y matrícula', 'Matricule, consulte y retire estudiantes. Cada matrícula recibe folio automático.',
+    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarEstudiantes()" ${S.ests.length ? '' : 'disabled'}>Exportar a Excel</button>${puede('matricula') && S.grupos.length ? '<button class="btn ghost" type="button" onclick="formCargaExcel()">Cargar desde Excel</button>' : ''}<button class="btn ghost" type="button" onclick="libroMatricula()" ${S.ests.length ? '' : 'disabled'}>Libro de matrícula</button><button class="btn" type="button" onclick="formEst()" ${!puede('matricula') ? 'disabled title="Sin permiso de matrícula (Parametrización › Permisos)"' : S.grupos.length ? '' : 'disabled title="Primero crea los grupos en Parametrización"'}>Matricular estudiante</button></div>`) +
+    avisoTopePlan(act.length) + (S.grupos.length ? '' : '<div class="note">Antes de matricular, cree los cursos en <button class="linkbtn" type="button" onclick="go(\'config\')">Parametrización</button>.</div>') +
     `<div class="panel"><div class="toolbar">
       <label class="field"><span>Grupo</span><select onchange="sel.fg=this.value;drawEst()"><option value="">Todos</option>${S.grupos.map(g => opt(g.id, g.nombre, sel.fg)).join('')}</select></label>
       <label class="field"><span>Estado</span><select onchange="sel.fe=this.value;drawEst()">${['Activo', 'Retirado', 'Graduado', ''].map(x => opt(x, x || 'Todos', sel.fe ?? 'Activo')).join('')}</select></label>
@@ -1002,13 +1032,16 @@ async function toggleRetiro(id) { const e = est(id); return e.estado === 'Activo
 
 function formFamilia(eid) {
   const e = est(eid), fam = familiaDe(eid);
+  // v0.22: se propone el acudiente de la ficha que aún no tiene acceso (primero el responsable de pagos), con su correo ya escrito
+  const yaInv = new Set(fam.map(m => (m.email || '').toLowerCase()));
+  const sug = acudDe(eid).filter(a => a.email && !yaInv.has(a.email.toLowerCase())).sort((x, y) => (y.responsable_pago ? 1 : 0) - (x.responsable_pago ? 1 : 0))[0];
   openModal(`Accesos de ${nom(e)}`, `
     ${fam.length ? `<ul class="list">${fam.map(m => filaAcceso(m)).join('')}</ul>` : '<p class="muted">Aún no hay accesos para este estudiante.</p>'}
     <h3 style="margin-top:16px">Invitar</h3>
     <div class="formgrid">
       <label class="field"><span>Perfil</span><select id="iRol">${opt('acudiente', 'Acudiente')}${opt('estudiante', 'Estudiante')}</select></label>
-      <label class="field"><span>Nombre</span><input id="iNom" value="${esc(e.acudiente_nombre || '')}"></label>
-      <label class="field"><span>Correo electrónico</span><input id="iEmail" type="email"></label>
+      <label class="field"><span>Nombre</span><input id="iNom" value="${esc(sug ? sug.nombres : fam.length ? '' : (e.acudiente_nombre || ''))}"></label>
+      <label class="field"><span>Correo electrónico</span><input id="iEmail" type="email" value="${esc(sug?.email || '')}"></label>
     </div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button><button class="btn" type="button" onclick="invitar('${eid}')">Crear invitación</button></div>`);
 }
@@ -1032,7 +1065,7 @@ function telDe(m) {
 }
 function textoInvitacion(m) {
   const url = location.origin + location.pathname;
-  return `Hola, ${m.nombre}. ${S.k.nombre} le da acceso a Colegio-IA como ${ROL_TXT[m.rol].toLowerCase()}.\n\n1. Entre a ${url}\n2. Elija "Cree su cuenta" y regístrese con este correo: ${m.email}\n3. Escriba el código de activación: ${m.codigo}\n\nEl código es personal; no lo compartas.`;
+  return `Hola, ${m.nombre}. ${S.k.nombre} le da acceso a Colegio-IA como ${ROL_TXT[m.rol].toLowerCase()}.\n\n1. Entre a ${url}\n2. Elija "Cree su cuenta" y regístrese con este correo: ${m.email}\n3. Escriba el código de activación: ${m.codigo}\n\nEl código es personal; no lo comparta.`;
 }
 async function copiar(s) { const t = $(s); try { await navigator.clipboard.writeText(t.value); toast('Mensaje copiado'); } catch { t.select(); document.execCommand('copy'); toast('Mensaje copiado'); } }
 const ROLES_DIRECTIVOS = ['rector', 'coordinador', 'secretaria', 'tesoreria'];
@@ -1114,7 +1147,7 @@ function formGruposDoc(mid) {
     ${S.grupos.map(g => `<fieldset style="border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:0 0 10px"><legend style="padding:0 6px;font-weight:700">${esc(g.nombre)}</legend>
       <div class="toolbar" style="gap:6px 14px"><label class="chk"><input type="checkbox" class="gAll" data-g="${g.id}" ${tiene(g.id) ? 'checked' : ''}> Todas</label>
       ${asigsDe(g).map(a => `<label class="chk"><input type="checkbox" class="gAsig" data-g="${g.id}" value="${a.id}" ${tiene(g.id, a.id) ? 'checked' : ''}> ${esc(a.nombre)}</label>`).join('')}</div></fieldset>`).join('')}
-    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarGruposDoc('${mid}')">Guardar</button></div>` : '<p class="muted">Primero crea grupos en Parametrización.</p>');
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarGruposDoc('${mid}')">Guardar</button></div>` : '<p class="muted">Primero cree los cursos en Parametrización.</p>');
 }
 async function guardarGruposDoc(mid) {
   const filas = [];
@@ -1141,7 +1174,7 @@ async function prepGrupoSel() {
 }
 async function cambiarGrupo(g) { sel.g = g; sel.a = ''; $('#view').innerHTML = '<div class="loading">Cargando…</div>'; await guard(() => cargarGrupo(g)); render(); }
 const perOpts = s => periodos().map(p => opt(p.n, 'Periodo ' + p.n, s)).join('');
-function sinGrupos() { return `<div class="panel empty">${isDir() ? 'Aún no hay grupos. Créalos en Parametrización.' : 'No tiene grupos asignados.'}</div>`; }
+function sinGrupos() { return `<div class="panel empty">${isDir() ? 'Aún no hay cursos. Créelos en Parametrización.' : 'No tiene grupos asignados.'}</div>`; }
 const cierreDe = p => periodos().find(x => x.n === +p)?.cierre || '';
 const cerrado = p => !isDir() && !!cierreDe(p) && hoy() > cierreDe(p);
 const selGrupoHTML = gs => `<label class="field"><span>Grupo</span><select onchange="cambiarGrupo(this.value)">${gs.map(x => opt(x.id, x.nombre, sel.g)).join('')}</select></label>`;
@@ -1466,7 +1499,7 @@ function vBoletines() {
   if (!sel.p) sel.p = S.k.periodo_actual;
   if (propio()) {
     const eid = propio(); if (!est(eid) || !grupo(est(eid).grupo_id)) return head('Boletín') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
-    return head('Boletín', 'Consulta e imprime el informe de cada periodo.', `<div class="toolbar" style="margin:0"><label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label>${docPagado(eid, 'boletin', sel.p) ? `<button class="btn" type="button" onclick="imprimirBoletin('${eid}')">Imprimir</button>` : ''}</div>`) +
+    return head('Boletín', 'Consulte e imprima el informe de cada periodo.', `<div class="toolbar" style="margin:0"><label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label>${docPagado(eid, 'boletin', sel.p) ? `<button class="btn" type="button" onclick="imprimirBoletin('${eid}')">Imprimir</button>` : ''}</div>`) +
       (docPagado(eid, 'boletin', sel.p) ? boletinHTML(eid, sel.p) : `<div class="panel"><h2>Boletín del periodo ${sel.p}</h2><p>Para ver y descargar el boletín de este periodo, primero pague <strong>${cop(docPrecio('boletin'))}</strong>. Una vez pagado, queda disponible siempre.</p>
         ${isEst() ? '<p class="muted">Su acudiente puede pagarlo desde su cuenta, en "Documentos".</p>' : docSols.some(x => x.estudiante_id === eid && x.tipo === 'boletin' && x.periodo === sel.p && x.estado === 'Por confirmar') ? '<div class="note">Ya envió el comprobante: el boletín se libera cuando tesorería lo confirme.</div>' : `<div class="toolbar"><button class="btn" type="button" onclick="pedirDoc('boletin',${sel.p})">Pagar el boletín</button><button class="btn ghost" type="button" onclick="go('documentos')">Ver mis documentos</button></div>`}</div>`);
   }
@@ -1578,6 +1611,8 @@ function paramInst() {
   const k = S.k, r = esRector();
   const f = (id, l, v, t) => `<label class="field"><span>${l}</span><input id="${id}" ${t ? `type="${t}"` : ''} value="${esc(v ?? '')}" ${r ? '' : 'disabled'}></label>`;
   return (r ? '' : '<div class="note">Solo el rector o la rectora pueden cambiar estos datos.</div>') +
+    (r && !k.demo ? `<div class="panel"><h2>Copia de toda la información</h2><p>Descargue en un solo Excel los estudiantes, acudientes, usuarios, calificaciones, asistencia, observador, pagos, historial y costos del colegio. La información es del colegio: puede guardarla cuando quiera.</p>
+      <div class="toolbar"><button class="btn ghost" type="button" onclick="descargarTodo(this)">Descargar toda la información</button></div></div>` : '') +
     `<div class="panel"><h2>Datos institucionales</h2><div class="formgrid">${f('iN', 'Nombre', k.nombre)}${f('iNit', 'NIT', k.nit)}${f('iDane', 'Código DANE', k.dane)}${f('iRes', 'Licencia de funcionamiento o resolución', k.resolucion)}${f('iCiu', 'Ciudad', k.ciudad)}${f('iDir', 'Dirección', k.direccion)}${f('iTel', 'Teléfono', k.telefono)}${f('iWeb', 'Página web', k.web)}${f('iLema', 'Lema o mensaje institucional', k.lema)}${f('iRec', 'Rector(a) que firma', k.rector_nombre)}${f('iSec', 'Secretaría académica', k.secretaria_nombre)}
       <label class="field full"><span>Política de tratamiento de datos (enlace o texto breve, aparece en la hoja de matrícula)</span><textarea id="iPol" ${r ? '' : 'disabled'}>${esc(k.politica_datos || '')}</textarea></label></div>
       ${r ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarInst()">Guardar datos</button></div>' : ''}</div>
@@ -1773,7 +1808,9 @@ async function prepCierre() {
   for (const g of S.grupos) await cargarGrupo(g.id);
   cierre = S.ests.filter(e => e.estado === 'Activo').map(e => {
     const g = grupo(e.grupo_id), sig = S.grupos.filter(x => x.grado === (g?.grado ?? 0) + 1);
-    const res = g?.grado === 11 ? (perdidas(e.id).length > S.k.max_perdidas ? 'No promovido' : 'Graduado')
+    // v0.22: el último grado que ofrece el colegio (Quinto en un colegio de primaria, Transición en un jardín) termina el nivel y egresa
+    const ultimo = g && g.grado === Math.max(...S.grupos.map(x => x.grado)) && !sig.length;
+    const res = g?.grado === 11 || ultimo ? (g?.nivel !== 'preescolar' && perdidas(e.id).length > S.k.max_perdidas ? 'No promovido' : 'Graduado')
       : (g?.nivel !== 'preescolar' && perdidas(e.id).length > S.k.max_perdidas ? 'No promovido' : 'Promovido');
     return { id: e.id, resultado: res, destino: res === 'Promovido' ? (sig[0]?.id || '') : res === 'No promovido' ? e.grupo_id : '' };
   });
@@ -1785,7 +1822,7 @@ function paramCierre() {
   return (sinCurso.length ? `<div class="note bloqueo"><strong>Hay ${sinCurso.length} estudiante(s) promovido(s) sin curso del grado siguiente</strong> (${[...new Set(sinCurso.map(c => grupo(est(c.id)?.grupo_id)?.nombre))].map(esc).join(', ')}). Si cierra así, seguirían en el mismo curso. Cree primero el curso del grado siguiente en <button class="linkbtn" type="button" onclick="irPtab('grupos')">Cursos</button> o elija el curso de destino en la tabla.</div>` : '') + `<div class="note">Al cerrar el año ${S.k.anio}: cada estudiante queda en su nuevo curso, el sistema guarda su resultado en el historial, el año pasa a ${S.k.anio + 1} y se copian los costos como punto de partida. Esta acción no se puede deshacer. Revise la propuesta: el sistema sugiere "No promovido" cuando hay más de ${S.k.max_perdidas} asignaturas en bajo.</div>
   ${porG.map(({ g, es }) => `<div class="panel"><h2>${esc(g.nombre)}</h2><div class="tbl"><table><thead><tr><th>Estudiante</th><th>En bajo</th><th>Resultado</th><th>Curso ${S.k.anio + 1}</th></tr></thead><tbody>
     ${es.map(e => { const c = cierre.find(x => x.id === e.id) || { resultado: 'Promovido', destino: '' }; return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td><td>${perdidas(e.id).length}</td>
-      <td><select onchange="setCierre('${e.id}','resultado',this.value)">${['Promovido', 'No promovido', 'Graduado'].map(r => opt(r, r, c.resultado)).join('')}</select></td>
+      <td><select onchange="setCierre('${e.id}','resultado',this.value)">${['Promovido', 'No promovido', 'Graduado'].map(r => opt(r, r === 'Graduado' ? (g.grado === 11 ? 'Graduado (bachiller)' : 'Termina el nivel y egresa') : r, c.resultado)).join('')}</select></td>
       <td>${c.resultado === 'Graduado' ? '<span class="muted">Egresa</span>' : `<select onchange="setCierre('${e.id}','destino',this.value)"><option value="">Mismo curso</option>${S.grupos.map(x => opt(x.id, x.nombre, c.destino)).join('')}</select>`}</td></tr>`; }).join('')}
   </tbody></table></div></div>`).join('')}
   ${porG.length ? `<div class="toolbar"><button class="btn warn" type="button" onclick="confirmarCierre()">Cerrar el año ${S.k.anio}</button></div>` : '<div class="panel empty">No hay estudiantes activos.</div>'}`;
@@ -2272,13 +2309,13 @@ function panelSuscripcion(r) {
   if (x.en_prueba) return `<p><span class="tag t2">Prueba gratis</span> Hasta el <strong>${fechaLarga(x.prueba_hasta)}</strong> (${x.dias_prueba === 1 ? 'queda 1 día' : `quedan ${x.dias_prueba} días`}).</p>
     <p>Plan hasta <strong>${x.plan_max} estudiantes</strong>: <strong>${cop(x.valor)} al mes</strong>, con todos los módulos y usuarios ilimitados. Estudiantes activos: ${x.activos}.</p>
     <p class="muted">El primer pago cubre el mes en que termina la prueba. Si no se paga, al terminar la prueba se cierra el acceso, pero la información queda guardada.</p>
-    <div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar el primer mes</button>${waAsesor()}</div>`;
+    <div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar el primer mes</button>${esRector() ? '<button class="btn ghost" type="button" onclick="formAmpliarPlan()">Cambiar a un plan mayor</button>' : ''}${waAsesor()}</div>`;
   const tag = { activa: x.meses_pendientes > 0 ? '<span class="tag t2">Mes en curso por pagar</span>' : '<span class="tag">Al día</span>', aviso: '<span class="tag t3">Pago vencido: aviso de suspensión</span>', cerrada: '<span class="tag t3">Cerrada por pago</span>' }[x.cobro] || '';
   return `<p>Plan hasta <strong>${x.plan_max} estudiantes</strong>: <strong>${cop(x.valor)} al mes</strong>. Incluye todos los módulos y usuarios ilimitados para docentes, familias y directivos.</p>
-    <p>Estudiantes activos: <strong>${x.activos} de ${x.plan_max}</strong>${x.activos >= x.plan_max ? ' <span class="tag t3">Plan completo: para matricular más, solicite la ampliación</span>' : ''}</p>
+    <p>Estudiantes activos: <strong>${x.activos} de ${x.plan_max}</strong>${x.activos >= x.plan_max ? ' <span class="tag t3">Plan completo</span>' : ''}</p>
     <p>${tag} Pagado hasta el <strong>${fechaLarga(x.pagado_hasta)}</strong>.</p>
     <p class="muted">Cada mes se paga por anticipado. Si el mes no se ha pagado, el día 5 se cierra el acceso del colegio hasta que se confirme el pago.</p>
-    <div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar suscripción</button></div>
+    <div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar suscripción</button>${esRector() ? '<button class="btn ghost" type="button" onclick="formAmpliarPlan()">Ampliar el plan</button>' : ''}</div>
     ${x.ultimos?.length ? `<h3>Pagos recibidos</h3><div class="tbl"><table><tbody>${x.ultimos.map(p => `<tr><td>${mesTxt(p.mes)}</td><td>${cop(p.valor)}</td><td>${esc(p.medio || '')}</td><td><button class="btn ghost sm" type="button" onclick="reciboSusc('${p.id}')">Recibo</button></td></tr>`).join('')}</tbody></table></div>` : ''}`;
 }
 async function pagarSuscripcion() {
@@ -2316,6 +2353,14 @@ function pantallaCerrada() {
     : `<div class="who"><strong>${esc(ctx.colegios.nombre)}</strong><br>${esc(quien())}</div>`;
   $('#nav').innerHTML = '';
   $('#foot').innerHTML = `${esc(me?.email || '')}<br><button class="btn ghost sm" type="button" onclick="doLogout()">Cerrar sesión</button><div style="margin-top:10px">${sgFirma()}</div>`;
+  // v0.22 (simulación del ciclo, 31 oct): familias, estudiantes y docentes no ven el cobro de la suscripción ni el asesor de ventas
+  if (!e.directivo && !isTes()) {
+    $('#view').innerHTML = `<div class="panel cerrado"><h1>Colegio-IA no está disponible en este momento</h1>
+      <p>El acceso de <strong>${esc(ctx.colegios.nombre)}</strong> está cerrado temporalmente. <strong>Su información está guardada.</strong></p>
+      <p>Para más información, comuníquese con la secretaría o la rectoría del colegio.</p>
+      <div class="toolbar" style="margin-top:12px"><button class="btn ghost" type="button" onclick="location.reload()">Volver a intentar</button></div></div>`;
+    return;
+  }
   $('#view').innerHTML = e.en_prueba ? `<div class="panel cerrado"><h1>Terminó su prueba gratis de 15 días</h1>
     <p>Gracias por probar Colegio-IA en <strong>${esc(ctx.colegios.nombre)}</strong>. <strong>Toda la información que registró está guardada.</strong> Para seguir usándola, pague el primer mes del plan en línea; el acceso se abre apenas Bold confirme el pago.</p>
     ${e.directivo ? `<p>Valor del primer mes: <strong>${cop(valorDeuda(e))}</strong> (plan hasta ${e.plan_max} estudiantes).</p><div class="toolbar"><button class="btn" type="button" onclick="pagarSuscripcion()">Pagar en línea con Bold</button></div>` : '<p>Comuníquese con la rectoría del colegio.</p>'}
@@ -2336,7 +2381,7 @@ function reciboSusc(id) {
 let plat = [], pruebas = [];
 let visitas = [];
 let platComps = [], platCfg = {};
-async function prepPlataforma() { plat = await q(db.rpc('plataforma_resumen')); pruebas = await q(db.rpc('plataforma_pruebas_lista')).catch(() => []) || []; platComps = await q(db.from('plataforma_comprobantes').select('id,colegio_id,meses,valor,referencia,enviado_por,creado_en').eq('estado', 'Pendiente').order('creado_en')).catch(() => []); platCfg = (await q(db.from('plataforma_config').select('*').eq('id', 1)).catch(() => []))[0] || {}; visitas = await q(db.from('demo_visitas').select('*').order('fecha', { ascending: false }).range(0, 99)).catch(() => []); }
+async function prepPlataforma() { plat = await q(db.rpc('plataforma_resumen')); pruebas = await q(db.rpc('plataforma_pruebas_lista')).catch(() => []) || []; platComps = await q(db.from('plataforma_comprobantes').select('id,colegio_id,meses,valor,referencia,enviado_por,creado_en').eq('estado', 'Pendiente').order('creado_en')).catch(() => []); platCfg = (await q(db.from('plataforma_config').select('*').eq('id', 1)).catch(() => []))[0] || {}; visitas = await q(db.from('demo_visitas').select('*').order('fecha', { ascending: false }).range(0, 99)).catch(() => []); cambiosPlan = await q(db.from('plataforma_cambios_plan').select('*').order('creado_en', { ascending: false }).range(0, 49)).catch(() => []) || []; }
 function vPlataforma() {
   const total = plat.filter(c => c.activo && !c.demo).reduce((s, c) => s + c.valor_mensual, 0);
   return head('Colegios', 'Alta de colegios, estudiantes activos y valor mensual de cada suscripción.', `<button class="btn ghost" type="button" onclick="verCuentas()">🔐 Cuentas y accesos</button><button class="btn" type="button" onclick="formColegio()">Nuevo colegio</button>`) +
@@ -2347,7 +2392,7 @@ function vPlataforma() {
       ${plat.map(c => `<tr class="${c.activo ? '' : 'dim'}"><td><strong>${esc(c.nombre)}</strong></td><td>${esc(c.ciudad || '')}</td><td>${c.anio}</td><td>${c.estudiantes_activos}${c.interna ? '' : ` de ${c.plan_max ?? '—'}`}${c.demo ? ' <span class="tag">Demo</span>' : ''}${c.interna ? ` <span class="tag ok-tag" title="${esc(c.interna_motivo || '')}">Interna</span>` : ''}</td><td>${c.demo || c.interna ? '<span class="muted">Sin cobro</span>' : cop(c.valor_mensual)}</td><td>${fmtF(c.creado_en)}</td>
         <td>${c.demo ? '<span class="muted">No aplica</span>' : c.interna ? '<span class="muted">Permanente</span>' : `${fmtF(c.pagado_hasta)} <button class="linkbtn" type="button" onclick="formPagadoHasta('${c.colegio_id}')">Cambiar</button>`}</td><td>${c.demo ? '' : c.interna ? '<span class="tag">Activa</span>' : estadoCobroTag(c)}${c.comprobante_id ? ` <button class="btn sm" type="button" onclick="revisarCompPlat('${c.comprobante_id}')">Revisar comprobante</button>` : ''}</td>
         <td>${c.activo ? 'Activo' : 'Suspendido'}</td><td style="white-space:nowrap">${c.interna ? '' : `<button class="btn sm" type="button" onclick="formPagoSusc('${c.colegio_id}')">Registrar pago</button> <button class="btn ghost sm" type="button" onclick="formPlanColegio('${c.colegio_id}')">Plan</button> `}${c.demo ? '' : `<button class="btn ghost sm" type="button" onclick="marcarInterna('${c.colegio_id}',${!c.interna})">${c.interna ? 'Quitar interna' : 'Hacer interna'}</button> `}<button class="btn ghost sm" type="button" onclick="toggleColegio('${c.colegio_id}',${!c.activo})">${c.activo ? 'Suspender' : 'Reactivar'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Aún no hay colegios. Cree el primero.</div>'}</div>
-    ${panelPruebasPlat()}${panelCompsPlat()}${panelCfgPlat()}
+    ${panelCambiosPlat()}${panelPruebasPlat()}${panelCompsPlat()}${panelCfgPlat()}
     <div class="panel"><h2>Personas que probaron la demostración</h2>${visitas.length ? `<div class="tbl"><table><thead><tr><th>Fecha</th><th>Nombre</th><th>Correo</th><th>Perfil</th></tr></thead><tbody>${visitas.map(v => `<tr><td>${fechaHora(v.fecha)}</td><td>${esc(v.nombre || '')}</td><td>${esc(v.email || '')}</td><td>${{ coordinador: 'Directivo', docente: 'Docente', acudiente: 'Acudiente' }[v.rol] || esc(v.rol)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún nadie ha probado la demostración. Comparta el enlace de Colegio-IA y pídales que pulsen "Probar la demostración".</p>'}</div>
     <p class="muted">Planes: hasta 100 estudiantes $120.000; hasta 250, $220.000; hasta 500, $350.000; hasta 1.000, $550.000 al mes; más de 1.000, $40.000 adicionales por cada 100. Cada colegio puede matricular hasta el tope de su plan. Cada mes se paga por anticipado: si el mes no se ha pagado, el día 5 se cierra el acceso del colegio hasta confirmar el pago. Al registrar un pago o cambiar la fecha de «Pagado hasta», el acceso se restablece de inmediato.</p>`;
 }
@@ -4778,7 +4823,8 @@ function formRegistroHTML() {
   return `<p class="muted">Usted quedará como rector(a) del colegio con el correo <strong>${esc(me?.email || '')}</strong>. Después podrá invitar a coordinación, secretaría, docentes y familias.</p>
     <div class="formgrid">${fIn('rgNom', 'Nombre del colegio', '', 'maxlength="120" placeholder="Ejemplo: Colegio Nuevo Horizonte"')}${fIn('rgCiu', 'Ciudad o municipio', '', 'maxlength="80"')}
       ${fIn('rgTel', 'Celular o WhatsApp de contacto', '', 'inputmode="tel" maxlength="15"')}
-      <label class="field"><span>Número de estudiantes</span><select id="rgPlan">${PLANES.map(n => opt(n, `${PLAN_TXT[n]} · ${cop(precioPlan(n))} al mes`, 100)).join('')}</select></label></div>
+      <label class="field"><span>Número de estudiantes</span><select id="rgPlan" onchange="rgMasBox.hidden=this.value!=='mas'">${PLANES.map(n => opt(n, `${PLAN_TXT[n]} · ${cop(precioPlan(n))} al mes`, 100)).join('')}<option value="mas">Más de 1.000 estudiantes · ${cop(precioPlan(1100))} o más al mes</option></select></label>
+      <label class="field" id="rgMasBox" hidden><span>¿Cuántos estudiantes tiene? (hasta 3.000)</span><input id="rgMas" type="number" min="1001" max="3000" step="1" inputmode="numeric" oninput="rgMasVal.textContent=+this.value>1000&&+this.value<=3000?'Plan hasta '+Math.ceil(this.value/100)*100+' estudiantes: '+cop(precioPlan(Math.ceil(this.value/100)*100))+' al mes':''"><small class="muted" id="rgMasVal"></small></label></div>
     <p style="margin:12px 0 4px"><strong>Grados que ofrece</strong> <span class="muted">(se crea un curso "A" por cada grado; luego puede agregar más)</span></p>
     ${GR_NIVEL.map(([n, gs]) => `<div class="rg-niv"><button class="linkbtn" type="button" onclick="document.querySelectorAll('.rgN${gs[0] + 2}').forEach(x=>x.checked=!x.checked)">${n}</button>
       <div class="cuotas">${gs.map(g => `<label class="chk"><input type="checkbox" class="rgGr rgN${gs[0] + 2}" value="${g}"> ${esc(gradoTxt(g))}</label>`).join('')}</div></div>`).join('')}
@@ -4789,7 +4835,9 @@ function formRegistroHTML() {
 function cancelarRegistro() { store.del('regcol'); if (modo === 'colegio' && ctx && $('#auth').hidden) return closeModal(); authMode = ctxs.length ? 'login' : 'activar'; if (ctxs.length && ctx) volverApp(); else authScreen(); }
 async function registrarColegio() {
   const err = t => { const e = $('#rgErr'); if (e) e.textContent = t; else toast(t); };
-  const d = { p_nombre: vv('rgNom'), p_ciudad: vv('rgCiu'), p_telefono: vv('rgTel'), p_plan: +$('#rgPlan').value, p_grados: [...document.querySelectorAll('.rgGr:checked')].map(x => +x.value) };
+  const mas = $('#rgPlan').value === 'mas', nm = +vv('rgMas') || 0;
+  if (mas && (nm <= 1000 || nm > 3000)) return err('Escriba cuántos estudiantes tiene (de 1.001 a 3.000). Si tiene más, escríbanos por WhatsApp.');
+  const d = { p_nombre: vv('rgNom'), p_ciudad: vv('rgCiu'), p_telefono: vv('rgTel'), p_plan: mas ? Math.ceil(nm / 100) * 100 : +$('#rgPlan').value, p_grados: [...document.querySelectorAll('.rgGr:checked')].map(x => +x.value) };
   if (d.p_nombre.length < 5) return err('Escriba el nombre completo del colegio');
   if (d.p_ciudad.length < 3) return err('Escriba la ciudad o el municipio');
   if (d.p_telefono.replace(/\D/g, '').length < 7) return err('Escriba un número de celular o WhatsApp');
@@ -4805,7 +4853,8 @@ function bienvenidaColegio() {
   openModal('¡Su colegio ya está en Colegio-IA!', `<p>La prueba gratis va hasta el <strong>${fechaLarga(f)}</strong>. Estos son los primeros pasos:</p>
     <ol class="pasos"><li><strong>Revise los datos del colegio</strong> y suba el logo (Parametrización › Institución).</li>
       <li><strong>Revise los cursos</strong> que se crearon y el plan de estudios (Parametrización › Cursos y Plan de estudios).</li>
-      <li><strong>Matricule a los estudiantes</strong> (Estudiantes y matrícula).</li>
+      <li><strong>Ponga las fechas de los periodos y los costos del año</strong> (Parametrización › Periodos y escala, y Costos del año).</li>
+      <li><strong>Matricule a los estudiantes</strong> uno por uno o desde Excel con la plantilla (Estudiantes y matrícula).</li>
       <li><strong>Invite a docentes y familias</strong> (Usuarios y accesos): cada uno recibe su código.</li></ol>
     <p class="muted">¿Quiere ayuda para empezar? Escríbanos y le acompañamos.</p>
     <div class="modal-foot" style="flex-wrap:wrap">${waAsesor('Pedir acompañamiento')}<button class="btn ghost" type="button" onclick="closeModal();pagarSuscripcion()">Pagar ya el primer mes</button><button class="btn" type="button" onclick="closeModal();irPtab('inst')">Empezar</button></div>`);
@@ -5544,3 +5593,183 @@ function descargarCuentas() {
   toast('Archivo descargado');
 }
 Object.assign(window, { formFnacMiembro, guardarFnacMiembro, marcarInterna, verCuentas, dibujarCuentasLista, bloquearCuenta, descargarCuentas });
+
+/* =====================================================================
+   v0.22 · Simulación del ciclo de un colegio nuevo (31 oct 2026)
+   1) Carga inicial de estudiantes desde Excel  2) Descargar toda la información  3) Ampliar el plan pagando la diferencia con Bold
+   ===================================================================== */
+const CARGA_COLS = [
+  ['nombres', 'Nombres', 1], ['apellidos', 'Apellidos', 1], ['tipo_doc', 'Tipo de documento', 1, TIPOS_DOC], ['doc', 'Número de documento', 1],
+  ['lugar_expedicion', 'Lugar de expedición', 1], ['fnac', 'Fecha de nacimiento (AAAA-MM-DD)', 1], ['lugar_nacimiento', 'Lugar de nacimiento', 1],
+  ['sexo', 'Sexo', 1, LISTAS.sexo], ['direccion', 'Dirección', 1], ['barrio', 'Barrio', 1], ['municipio', 'Municipio', 1], ['zona', 'Zona', 1, LISTAS.zona],
+  ['estrato', 'Estrato', 1, LISTAS.estrato], ['eps', 'EPS', 1], ['rh', 'Grupo sanguíneo y RH', 1, LISTAS.rh], ['sisben', 'SISBÉN (o No tiene)', 1],
+  ['curso', 'Curso', 1], ['jornada', 'Jornada', 1, LISTAS.jornada], ['situacion', 'Situación', 1, LISTAS.situacion],
+  ['etnia', 'Grupo étnico', 0, LISTAS.etnia], ['discapacidad', 'Discapacidad', 0, LISTAS.discapacidad], ['institucion_procedencia', 'Institución de procedencia', 0],
+  ['a_parentesco', 'Acudiente: parentesco', 0, LISTAS.parentesco], ['a_nombres', 'Acudiente: nombres y apellidos', 1], ['a_tipo_doc', 'Acudiente: tipo de documento', 0, ['CC', 'CE', 'PPT', 'PEP', 'Pasaporte']],
+  ['a_doc', 'Acudiente: número de documento', 1], ['a_telefono', 'Acudiente: teléfono', 1], ['a_email', 'Acudiente: correo', 1], ['a_direccion', 'Acudiente: dirección', 1], ['a_ocupacion', 'Acudiente: ocupación', 1]];
+const sinTilde = t => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+let carga = null;
+function avisoTopePlan(n) {
+  const pm = S.estado?.plan_max; if (!pm || S.k.demo || S.k.interna || n < pm * 0.9) return '';
+  return `<div class="note ${n >= pm ? 'bloqueo' : ''}"><strong>${n >= pm ? 'Su plan está completo' : 'Su plan está casi completo'}:</strong> ${n} de ${pm} estudiantes activos.
+    ${esRector() ? '<button class="btn sm" type="button" onclick="formAmpliarPlan()">Ampliar el plan</button>' : 'La rectoría puede ampliar el plan.'}</div>`;
+}
+async function plantillaCarga() {
+  const ej = ['SOFÍA', 'GÓMEZ RÍOS', 'RC', '1081234567', 'CIÉNAGA', '2019-05-10', 'CIÉNAGA', 'Femenino', 'CRA 3 # 4-5', 'CENTRO', 'CIÉNAGA', 'Urbana', '2', 'NUEVA EPS', 'O+', 'B4',
+    S.grupos[0]?.nombre || 'PRIMERO A', 'Mañana', 'Nuevo', 'No aplica', 'No aplica', '', 'Madre', 'ANA RÍOS', 'CC', '57111222', '3015556677', 'ana@correo.com', 'CRA 3 # 4-5', 'COMERCIANTE'];
+  const opciones = CARGA_COLS.filter(c => c[3]).map(c => [c[1], c[3].filter(Boolean).join(' · ')]);
+  const b = await escribirXlsx([{ nombre: 'Estudiantes', filas: [CARGA_COLS.map(c => c[1] + (c[2] ? ' *' : '')), ej] },
+    { nombre: 'Opciones', filas: [['Columna', 'Valores permitidos'], ['Curso', S.grupos.map(g => g.nombre).join(' · ')], ...opciones,
+      ['Instrucciones', 'Borre la fila de ejemplo. Una fila por estudiante. Las columnas con * son obligatorias (las pide el SIMAT). Las fechas en formato AAAA-MM-DD.']] }]);
+  descargarBlob(b, `Plantilla de matrícula ${S.k.nombre}.xlsx`);
+}
+function formCargaExcel() {
+  carga = null;
+  openModal('Cargar estudiantes desde Excel', `<ol class="pasos"><li><button class="btn ghost sm" type="button" onclick="plantillaCarga()">Descargar la plantilla</button> y llénela en Excel: una fila por estudiante, con su acudiente responsable de pagos.</li>
+    <li>Súbala aquí. Antes de guardar, Colegio-IA le muestra qué filas están completas y cuáles tienen datos por corregir.</li></ol>
+    <label class="btn">Elegir archivo (.xlsx o .csv)<input type="file" accept=".xlsx,.csv" hidden onchange="leerCarga(this.files[0]);this.value=''"></label>
+    <div id="cargaRes" style="margin-top:12px"></div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button></div>`);
+}
+function validarFilaCarga(o, docs) {
+  const f = [];
+  CARGA_COLS.forEach(([k, l, ob, lista]) => {
+    if (ob && !o[k]) return f.push(l);
+    if (lista && o[k]) { const m = lista.find(x => sinTilde(x) === sinTilde(o[k])); if (m == null) f.push(`${l} (no válido)`); else o[k] = m; }
+  });
+  if (o.doc && !/^[0-9A-Za-z]{5,15}$/.test(o.doc)) f.push('Número de documento (solo números, sin puntos)');
+  if (o.doc && docs.has(o.doc)) f.push('Documento repetido (ya está matriculado o se repite en el archivo)');
+  if (o.fnac && !/^\d{4}-\d{2}-\d{2}$/.test(o.fnac)) f.push('Fecha de nacimiento (AAAA-MM-DD)');
+  else if (o.fnac && (o.fnac > hoy() || o.fnac < '1990-01-01')) f.push('Fecha de nacimiento válida');
+  if (o.a_email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.a_email)) f.push('Correo del acudiente');
+  if (o.a_telefono && !/^[0-9+ ]{7,15}$/.test(o.a_telefono)) f.push('Teléfono del acudiente');
+  if (o.a_doc && !/^[0-9A-Za-z]{5,15}$/.test(o.a_doc)) f.push('Documento del acudiente (sin puntos)');
+  const g = S.grupos.find(x => sinTilde(x.nombre) === sinTilde(o.curso)); if (o.curso && !g) f.push(`Curso "${o.curso}" no existe`); else if (g) o.grupo_id = g.id;
+  return f;
+}
+async function leerCarga(file) {
+  const box = $('#cargaRes'); if (!file) return; box.innerHTML = '<p class="muted">Leyendo el archivo…</p>';
+  let filas;
+  try { filas = /\.csv$/i.test(file.name) ? leerCsv(await file.text()) : await leerXlsx(await file.arrayBuffer()); }
+  catch (e) { box.innerHTML = `<p class="err">No se pudo leer el archivo: ${esc(e.message || e)}. Use la plantilla en formato .xlsx.</p>`; return; }
+  const cab = (filas.shift() || []).map(x => sinTilde(String(x).replace(/\*/g, '')));
+  const idx = CARGA_COLS.map(([, l]) => cab.indexOf(sinTilde(l)));
+  if (idx.filter(i => i >= 0).length < 10) { box.innerHTML = '<p class="err">El archivo no tiene las columnas de la plantilla. Descargue la plantilla y copie allí sus datos.</p>'; return; }
+  const docs = new Set(S.ests.map(e => e.doc));
+  carga = filas.filter(r => r.some(v => String(v).trim())).map((r, n) => {
+    const o = {}; CARGA_COLS.forEach(([k], i) => { let v = idx[i] >= 0 ? String(r[idx[i]] ?? '').trim() : ''; if (k === 'fnac' && /^\d{4,5}(\.\d+)?$/.test(v)) v = fechaExcel(v); if (['doc', 'a_doc'].includes(k)) v = v.replace(/[\s.]/g, ''); if (k === 'a_email') v = v.toLowerCase(); o[k] = v; });
+    const errs = validarFilaCarga(o, docs); if (o.doc) docs.add(o.doc); return { fila: n + 2, o, errs };
+  });
+  const ok = carga.filter(x => !x.errs.length), mal = carga.filter(x => x.errs.length), pm = S.estado?.plan_max || 0, act = S.ests.filter(e => e.estado === 'Activo').length;
+  const cupo = S.k.interna || S.k.demo || !pm ? Infinity : Math.max(0, pm - act);
+  box.innerHTML = `<p><strong>${carga.length}</strong> filas leídas: <span class="tag ok-tag">${ok.length} completas</span> ${mal.length ? `<span class="tag t3">${mal.length} por corregir</span>` : ''}</p>
+    ${ok.length > cupo ? `<div class="note bloqueo">Su plan permite ${cupo} estudiantes más. Amplíe el plan antes de cargar todos. <button class="btn sm" type="button" onclick="closeModal();formAmpliarPlan()">Ampliar el plan</button></div>` : ''}
+    ${mal.length ? `<div class="tbl" style="max-height:260px;overflow:auto"><table><thead><tr><th>Fila</th><th>Estudiante</th><th>Por corregir</th></tr></thead><tbody>${mal.map(x => `<tr><td>${x.fila}</td><td>${esc(`${x.o.nombres} ${x.o.apellidos}`)}</td><td>${x.errs.map(esc).join(', ')}</td></tr>`).join('')}</tbody></table></div><p class="muted">Corrija esas filas en el Excel y vuelva a subirlo; las que ya queden matriculadas no se repiten.</p>` : ''}
+    ${ok.length ? `<div class="toolbar"><button class="btn" type="button" id="cargaBtn" onclick="guardarCarga()">Matricular ${Math.min(ok.length, cupo)} estudiantes</button></div>` : ''}`;
+}
+async function guardarCarga() {
+  const ok = (carga || []).filter(x => !x.errs.length); if (!ok.length) return;
+  let n = 0, fallas = [];
+  await busy('#cargaBtn', async () => {
+    for (const { o, fila } of ok) {
+      const d = { nombres: o.nombres, apellidos: o.apellidos, tipo_doc: o.tipo_doc, doc: o.doc, lugar_expedicion: o.lugar_expedicion, fnac: o.fnac, lugar_nacimiento: o.lugar_nacimiento,
+        sexo: o.sexo, pais_origen: 'Colombia', direccion: o.direccion, barrio: o.barrio, municipio: o.municipio, zona: o.zona, estrato: o.estrato, eps: o.eps, rh: o.rh, sisben: o.sisben,
+        etnia: o.etnia || 'No aplica', discapacidad: o.discapacidad || 'No aplica', capacidades_excepcionales: 'No aplica', grupo_id: o.grupo_id, jornada: o.jornada, situacion: o.situacion,
+        fecha_matricula: hoy(), institucion_procedencia: o.institucion_procedencia, acudiente_nombre: o.a_nombres, acudiente_tel: o.a_telefono, colegio_id: ctx.colegio_id };
+      try {
+        const e = await q(db.from('estudiantes').insert(d).select().single());
+        await q(db.from('acudientes').insert({ colegio_id: ctx.colegio_id, estudiante_id: e.id, orden: 1, parentesco: o.a_parentesco || 'Madre', nombres: o.a_nombres, tipo_doc: o.a_tipo_doc || 'CC',
+          doc: o.a_doc, telefono: o.a_telefono, email: o.a_email, direccion: o.a_direccion, ocupacion: o.a_ocupacion, responsable_pago: true }));
+        S.ests.push(e); n++;
+      } catch (er) { fallas.push(`Fila ${fila}: ${msg(er)}`); if (/plan permite/i.test(msg(er))) break; }
+    }
+  });
+  S.acud = await all(() => db.from('acudientes').select('*').eq('colegio_id', ctx.colegio_id).order('orden'));
+  $('#cargaRes').innerHTML = `<div class="note"><strong>${n} estudiantes matriculados.</strong>${fallas.length ? `<br>No se pudieron guardar ${fallas.length}: ${fallas.slice(0, 5).map(esc).join('; ')}` : ''}<br>Ahora puede dar acceso a cada familia desde la ficha del estudiante.</div>`;
+  carga = null; toast(`${n} estudiantes matriculados`); render();
+}
+
+// Descargar toda la información del colegio en un solo Excel (una hoja por tema)
+async function descargarTodo(btn) {
+  if (!esRector()) return toast('Solo la rectoría puede descargar toda la información');
+  const c = ctx.colegio_id, tx = (t, sel = '*', ord = 'id') => all(() => db.from(t).select(sel).eq('colegio_id', c).order(ord));
+  await busy(btn, async () => {
+    toast('Preparando el archivo con toda la información…');
+    const [ests, acs, mie, pag, obs, asi, act, nac, hist, con] = await Promise.all([tx('estudiantes'), tx('acudientes'), tx('miembros', 'nombre,email,rol,activo,estudiante_id,ultimo_acceso'),
+      tx('pagos'), tx('observador'), tx('asistencia', '*', 'fecha'), tx('actividades'), tx('notas_act', '*', 'actividad_id'), tx('historial', '*', 'anio'), tx('conceptos')]);
+    const nomE = Object.fromEntries(ests.map(e => [e.id, `${e.apellidos} ${e.nombres}`])), gN = id => grupo(id)?.nombre || '', aN = id => S.asigs.find(a => a.id === id)?.nombre || '';
+    const actN = Object.fromEntries(act.map(a => [a.id, a])), conN = Object.fromEntries(con.map(x => [x.id, x.nombre]));
+    const tabla = (l, cols) => [cols.map(x => x[0]), ...l.map(r => cols.map(x => { const v = x[1](r); return v == null ? '' : typeof v === 'boolean' ? (v ? 'Sí' : 'No') : v; }))];
+    const campos = l => l.length ? Object.keys(l[0]).filter(k => !/^(id|colegio_id|foto|imagen)$/.test(k)) : [];
+    const hojas = [
+      { nombre: 'Estudiantes', filas: tabla(ests, [['Curso', r => gN(r.grupo_id)], ...campos(ests).filter(k => k !== 'grupo_id').map(k => [k, r => r[k]])]) },
+      { nombre: 'Acudientes', filas: tabla(acs, [['Estudiante', r => nomE[r.estudiante_id]], ...campos(acs).filter(k => k !== 'estudiante_id').map(k => [k, r => r[k]])]) },
+      { nombre: 'Usuarios', filas: tabla(mie, [['Nombre', r => r.nombre], ['Correo', r => r.email], ['Perfil', r => ROL_TXT[r.rol] || r.rol], ['Estudiante', r => nomE[r.estudiante_id]], ['Activo', r => r.activo], ['Último acceso', r => r.ultimo_acceso]]) },
+      { nombre: 'Calificaciones', filas: tabla(nac, [['Estudiante', r => nomE[r.estudiante_id]], ['Curso', r => gN(actN[r.actividad_id]?.grupo_id)], ['Asignatura', r => aN(actN[r.actividad_id]?.asignatura_id)], ['Año', r => actN[r.actividad_id]?.anio], ['Periodo', r => actN[r.actividad_id]?.periodo], ['Actividad', r => actN[r.actividad_id]?.nombre], ['Calificación', r => +r.valor]]) },
+      { nombre: 'Asistencia', filas: tabla(asi, [['Fecha', r => r.fecha], ['Estudiante', r => nomE[r.estudiante_id]], ['Estado', r => ({ P: 'Presente', A: 'Ausente', T: 'Tarde', E: 'Excusa' })[String(r.estado).trim()] || r.estado]]) },
+      { nombre: 'Observador', filas: tabla(obs, [['Fecha', r => r.fecha], ['Estudiante', r => nomE[r.estudiante_id]], ['Tipo', r => r.tipo], ['Descripción', r => r.descripcion], ['Compromiso', r => r.compromiso], ['Seguimiento', r => r.seguimiento], ['Registró', r => r.autor_nombre]]) },
+      { nombre: 'Pagos', filas: tabla(pag, [['Recibo', r => r.recibo], ['Fecha', r => r.fecha], ['Estudiante', r => nomE[r.estudiante_id]], ['Concepto', r => conN[r.concepto_id]], ['Año', r => r.anio], ['Mes', r => r.mes], ['Valor', r => +r.valor], ['Medio', r => r.medio], ['Referencia', r => r.referencia], ['Anulado', r => r.anulado], ['Registró', r => r.registrado_nombre]]) },
+      { nombre: 'Historial de años', filas: tabla(hist, [['Año', r => r.anio], ['Estudiante', r => nomE[r.estudiante_id]], ['Curso', r => r.grupo_nombre], ['Resultado', r => r.resultado]]) },
+      { nombre: 'Costos', filas: tabla(con, [['Año', r => r.anio], ['Concepto', r => r.nombre], ['Periodicidad', r => r.periodicidad], ['Valor', r => +r.valor], ['Meses', r => (r.meses || []).join(', ')]]) },
+    ];
+    descargarBlob(await escribirXlsx(hojas), `Información completa ${S.k.nombre} ${hoy()}.xlsx`);
+    return true;
+  });
+}
+
+// Ampliar el plan: en prueba o sin meses pagados por delante se cambia de inmediato; con meses ya pagados se paga la diferencia con Bold
+const PLANES_AMPLIAR = [100, 250, 500, 1000, ...Array.from({ length: 20 }, (_, i) => 1100 + i * 100)];
+const planTxt = n => PLAN_TXT[n] || `Hasta ${n.toLocaleString('es-CO')} estudiantes`;
+async function formAmpliarPlan() {
+  if (!esRector()) return toast('Solo la rectoría puede ampliar el plan');
+  const e = S.estado = await q(db.rpc('estado_colegio', { p_colegio: ctx.colegio_id })).catch(() => S.estado) || {};
+  const pm = e.plan_max || 100, ops = PLANES_AMPLIAR.filter(n => n > pm);
+  if (!ops.length) return toast('Para más de 3.000 estudiantes escríbanos por WhatsApp al 304 437 5758');
+  openModal('Ampliar el plan', `<p>Plan actual: <strong>${planTxt(pm)}</strong> (${cop(precioPlan(pm))} al mes).</p>
+    <label class="field"><span>Nuevo plan</span><select id="apPlan" onchange="calcAmpliar()">${ops.map(n => opt(n, `${planTxt(n)} · ${cop(precioPlan(n))} al mes`)).join('')}</select></label>
+    <div id="apRes" style="margin-top:10px"><p class="muted">Calculando…</p></div>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button></div>`);
+  calcAmpliar();
+}
+async function calcAmpliar() {
+  const p = +$('#apPlan').value, box = $('#apRes');
+  const r = await q(db.rpc('plan_cambio', { p_colegio: ctx.colegio_id, p_plan: p, p_aplicar: false })).catch(er => ({ error: msg(er) }));
+  if (r.error) { box.innerHTML = `<p class="err">${esc(r.error)}</p>`; return; }
+  box.innerHTML = r.total > 0
+    ? `<p>Ya tiene ${r.meses} ${r.meses === 1 ? 'mes pagado' : 'meses pagados'} con el plan actual. Para ampliar hoy, pague la diferencia: ${cop(r.dif_mes)} × ${r.meses} = <strong>${cop(r.total)}</strong>.</p>
+       <p class="muted">Apenas Bold confirme el pago, el plan nuevo queda activo (puede tardar unos minutos). Desde el siguiente mes pagará ${cop(precioPlan(p))}.</p>
+       <button class="btn" type="button" onclick="pagarAmpliar(this,${p},${r.total})">Pagar la diferencia con Bold</button>`
+    : `<p>${r.en_prueba ? 'Está en la prueba gratis: el cambio no tiene costo ahora.' : 'No tiene meses pagados por delante: el cambio no tiene costo ahora.'} Desde su próximo pago, la mensualidad será de <strong>${cop(precioPlan(p))}</strong>.</p>
+       <button class="btn" type="button" onclick="aplicarAmpliar(this,${p})">Ampliar ahora</button>`;
+}
+async function aplicarAmpliar(btn, p) {
+  const r = await busy(btn, () => q(db.rpc('plan_cambio', { p_colegio: ctx.colegio_id, p_plan: p, p_aplicar: true })).catch(er => { toast(msg(er)); return null; }));
+  if (!r) return;
+  S.estado = await q(db.rpc('estado_colegio', { p_colegio: ctx.colegio_id })).catch(() => S.estado);
+  closeModal(); toast(`Plan ampliado: ${planTxt(p)}`); render();
+}
+async function pagarAmpliar(btn, p, total) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Abriendo Bold…'; }
+  try {
+    const qs = new URLSearchParams({ plan: 'genesis:paq_dif-x' + Math.round(total / 1000), empresa: `${ctx.colegio_id}__s${p}`, meses: '1', org: (ctx.colegios?.nombre || '').slice(0, 40), volver: location.origin + '/' });
+    const r = await fetch('https://skynetgenesis.com/bold-firma.php?' + qs.toString(), { cache: 'no-store' }), d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'firma');
+    if (+d.amount !== total) throw new Error('valor');
+    if (!window.BoldCheckout) await new Promise((ok, ko) => { const sc = document.createElement('script'); sc.src = 'https://checkout.bold.co/library/boldPaymentButton.js'; sc.onload = ok; sc.onerror = ko; document.head.appendChild(sc); });
+    new window.BoldCheckout({ orderId: d.orderId, currency: d.currency, amount: String(d.amount), apiKey: d.apiKey, integritySignature: d.signature, description: d.description, redirectionUrl: d.redirectionUrl }).open();
+  } catch { toast('No se pudo abrir el pago con Bold. Intente de nuevo o escríbanos por WhatsApp al 304 437 5758.'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Pagar la diferencia con Bold'; } }
+}
+function ocultarArranque() { store.set('arranque:' + ctx.colegio_id, 'oculto'); render(); }
+Object.assign(window, { cop, precioPlan, ocultarArranque, formCargaExcel, plantillaCarga, leerCarga, guardarCarga, descargarTodo, formAmpliarPlan, calcAmpliar, aplicarAmpliar, pagarAmpliar });
+
+// Superadministrador: ampliaciones de plan (las pagadas con Bold que no cuadraron quedan "para revisar")
+let cambiosPlan = [];
+function panelCambiosPlat() {
+  if (!cambiosPlan.length) return '';
+  const rev = cambiosPlan.filter(c => c.estado === 'revisar'), nom = id => plat.find(x => x.colegio_id === id)?.nombre || id;
+  return `<div class="panel"><h2>Ampliaciones de plan${rev.length ? ` <span class="badge">${rev.length} por revisar</span>` : ''}</h2>
+    ${rev.length ? '<div class="note bloqueo">Un pago de Bold por diferencia de plan no cubrió el valor o llegó repetido. Revíselo en Bold y, si corresponde, aplique el plan con "Plan" en la tabla de colegios.</div>' : ''}
+    <div class="tbl"><table><thead><tr><th>Fecha</th><th>Colegio</th><th>Cambio</th><th>Pagó</th><th>Origen</th><th>Estado</th></tr></thead><tbody>
+    ${cambiosPlan.map(c => `<tr><td>${fmtF(c.creado_en)}</td><td>${esc(nom(c.colegio_id))}</td><td>${c.plan_antes} → ${c.plan_nuevo}</td><td>${cop(c.valor)}${c.meses ? ` (${c.meses} ${c.meses === 1 ? 'mes' : 'meses'})` : ''}</td><td>${esc(c.origen)}${c.referencia ? `<br><span class="muted">${esc(c.referencia)}</span>` : ''}</td><td>${c.estado === 'revisar' ? '<span class="tag t3">Por revisar</span>' : '<span class="tag ok-tag">Aplicado</span>'}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
