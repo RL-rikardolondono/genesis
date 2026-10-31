@@ -420,7 +420,7 @@ let cargaN = 0; // evita que una carga vieja pise a una más reciente
 async function entrarContexto(id) {
   ctx = ctxs.find(m => m.id === id); if (!ctx) return;
   const n = ++cargaN;
-  store.set('ctx', ctx.id); modo = 'colegio'; view = 'inicio'; Object.assign(sel, { g: '', a: '', p: 0, fecha: '', fg: '', q: '', panio: 0 });
+  store.set('ctx', ctx.id); modo = 'colegio'; view = 'inicio'; if (S) S.cumples = null; Object.assign(sel, { g: '', a: '', p: 0, fecha: '', fg: '', q: '', panio: 0 });
   mostrarApp(); $('#view').innerHTML = '<div class="loading">Cargando datos del colegio…</div>';
   if (!superadmin) {
     const est = await q(db.rpc('estado_colegio', { p_colegio: ctx.colegio_id })).catch(() => null);
@@ -436,6 +436,7 @@ async function entrarContexto(id) {
   if (!VIEWS.some(x => x.id === ir && x.ok())) ir = 'inicio';
   prepararAtras();
   await go(ir);
+  if (isDir() && !store.get('bienvenida') && !store.get('regcol')) cumpleDiario(n);
   if (store.get('bienvenida')) bienvenidaColegio();
   else if (store.get('regcol')) openModal('Registre su colegio · 15 días gratis', formRegistroHTML());
 }
@@ -712,6 +713,7 @@ async function prepInicio() {
     resumen = await q(db.rpc('resumen_colegio', { p_colegio: ctx.colegio_id }))
       .catch(async () => { await new Promise(r => setTimeout(r, 1500)); return q(db.rpc('resumen_colegio', { p_colegio: ctx.colegio_id })); });
     S.susc = await q(db.rpc('mi_suscripcion', { p_colegio: ctx.colegio_id })).catch(() => null);
+    await cargarCumples();
   }
   if (isDoc()) { for (const g of gruposVis()) await cargarGrupo(g.id); }
   if (isFam()) { const e = est(propio()); if (e) await cargarGrupo(e.grupo_id).catch(() => {}); await prepCampusInicio(); }
@@ -737,7 +739,7 @@ function vInicio() {
         <div class="stat"><div class="n">${pct}%</div><div class="l">Calificaciones del periodo ${pa} registradas</div><div class="bar"><i style="width:${pct}%"></i></div></div>
         <div class="stat"><div class="n">${r.piar ?? 0}</div><div class="l">Estudiantes con PIAR</div></div>
       </div>
-      ${avisoCierre()}
+      ${avisoCierre()}${panelCumples()}
       ${!S.grupos.length ? `<div class="note"><strong>Primeros pasos.</strong> 1) Revise los datos del colegio en Parametrización. 2) Cree los grupos. 3) Matricula estudiantes. 4) Invita a docentes y acudientes desde Usuarios y accesos.</div>` : ''}
       <div class="cols">
         <section class="panel"><h2>Estudiantes en riesgo académico</h2>
@@ -1009,6 +1011,7 @@ function formFamilia(eid) {
 async function invitar(eid) {
   const d = { colegio_id: ctx.colegio_id, rol: eid ? $('#iRol').value : $('#uRol').value, nombre: (eid ? $('#iNom') : $('#uNom')).value.trim(), email: (eid ? $('#iEmail') : $('#uEmail')).value.trim(), estudiante_id: eid || null };
   if (!d.nombre || !/^\S+@\S+\.\S+$/.test(d.email)) return toast('Escriba el nombre y un correo válido');
+  if (!eid && $('#uFnac')?.value) { d.fnac = $('#uFnac').value; if (d.fnac < '1920-01-01' || d.fnac > '2015-12-31') return toast('Revise la fecha de nacimiento'); }
   const m = await guard(() => q(db.from('miembros').insert(d).select().single()), 'Invitación creada');
   if (!m) return;
   S.miembros.push(m);
@@ -1043,7 +1046,7 @@ function haceCuanto(t) {
 function filaAcceso(m, extra) {
   return `<li style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
     <span><strong>${esc(m.nombre)}</strong> <span class="tag">${ROL_TXT[m.rol]}</span> ${estadoAcceso(m)}<br>
-    <span class="muted">${esc(m.email)} · ${m.user_id ? `Último acceso: ${haceCuanto(m.ultimo_acceso)}` : `Invitación pendiente, código <span class="code">${esc(m.codigo)}</span>`}</span>${extra || ''}</span>
+    <span class="muted">${esc(m.email)} · ${m.user_id ? `Último acceso: ${haceCuanto(m.ultimo_acceso)}` : `Invitación pendiente, código <span class="code">${esc(m.codigo)}</span>`}</span>${m.estudiante_id ? '' : `<br><span class="muted">🎂 ${m.fnac ? `Cumpleaños: ${diaMes(m.fnac)}` : 'Sin fecha de nacimiento'}</span>${puedeManejar(m) ? ` <button class="linkbtn" type="button" onclick="formFnacMiembro('${m.id}')">${m.fnac ? 'Cambiar' : 'Agregar'}</button>` : ''}`}${extra || ''}</span>
     <span style="white-space:nowrap">${!puedeManejar(m) ? '<span class="muted">Solo el rector(a) lo modifica</span>' : `${m.user_id ? '' : `<button class="btn ghost sm" type="button" onclick="verInvitacion('${m.id}')">Mensaje</button> `}<button class="btn ghost sm" type="button" onclick="nuevoCodigo('${m.id}')">Nuevo código</button> ${m.user_id === me?.id ? '' : `<button class="btn ghost sm" type="button" onclick="toggleMiembro('${m.id}')">${m.activo ? 'Bloquear' : 'Activar'}</button>`}`}</span></li>`;
 }
 function verInvitacion(id) {
@@ -1091,7 +1094,8 @@ function formUsuario() {
   openModal('Agregar usuario', `<div class="formgrid">
     <label class="field"><span>Perfil</span><select id="uRol">${(esRector() ? ['docente', 'coordinador', 'secretaria', 'tesoreria', 'rector'] : ['docente']).map(r => opt(r, ROL_TXT[r])).join('')}</select></label>
     <label class="field"><span>Nombre completo</span><input id="uNom"></label>
-    <label class="field"><span>Correo electrónico</span><input id="uEmail" type="email"></label></div>
+    <label class="field"><span>Correo electrónico</span><input id="uEmail" type="email"></label>
+    <label class="field"><span>Fecha de nacimiento (opcional, para el recordatorio de cumpleaños)</span><input id="uFnac" type="date" min="1920-01-01" max="2015-12-31"></label></div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="invitar(null)">Agregar usuario</button></div>`);
 }
 function asigsDocTxt(mid, gid) {
@@ -2260,6 +2264,7 @@ function avisoCobro() {
 function panelSuscripcion(r) {
   const x = S.susc; if (!x) return `<p>Paquete para ${r.activos ?? 0} estudiantes activos.</p>`;
   if (x.demo) return '<p><span class="tag">Colegio de demostración</span> Sin cobro.</p>';
+  if (S.k?.interna) return '<p><span class="tag ok-tag">Institución interna de SkyNet Genesis</span> Activa de forma permanente, sin prueba, sin cobro y sin límite de estudiantes.</p>';
   if (x.en_prueba) return `<p><span class="tag t2">Prueba gratis</span> Hasta el <strong>${fechaLarga(x.prueba_hasta)}</strong> (${x.dias_prueba === 1 ? 'queda 1 día' : `quedan ${x.dias_prueba} días`}).</p>
     <p>Plan hasta <strong>${x.plan_max} estudiantes</strong>: <strong>${cop(x.valor)} al mes</strong>, con todos los módulos y usuarios ilimitados. Estudiantes activos: ${x.activos}.</p>
     <p class="muted">El primer pago cubre el mes en que termina la prueba. Si no se paga, al terminar la prueba se cierra el acceso, pero la información queda guardada.</p>
@@ -2287,13 +2292,14 @@ async function pagarSuscripcion() {
 // No volver al enlace fijo bold_url.
 async function pagarBoldSusc(btn) {
   const e = S.estado || {}, m = e.en_prueba ? 1 : Math.max(1, Math.min(12, e.meses_debe || 1)), pm = e.plan_max || 0;
-  const pl = pm <= 100 ? 'g100' : pm <= 250 ? 'g250' : pm <= 500 ? 'g500' : pm <= 1000 ? 'g1000' : null;
-  if (!pl) return toast('Para planes de más de 1.000 estudiantes escríbanos por WhatsApp');
+  // más de 1.000 estudiantes: plan por cada 100 (g1100, g1200… hasta g3000 en el firmador)
+  const pl = pm <= 100 ? 'g100' : pm <= 250 ? 'g250' : pm <= 500 ? 'g500' : pm <= 1000 ? 'g1000' : pm <= 3000 ? 'g' + Math.ceil(pm / 100) * 100 : null;
+  if (!pl) return toast('Para planes de más de 3.000 estudiantes escríbanos por WhatsApp');
   if (btn) { btn.disabled = true; btn.textContent = 'Abriendo Bold…'; }
   try {
     const qs = new URLSearchParams({ plan: 'genesis:' + pl, empresa: ctx.colegio_id, meses: String(m), org: (ctx.colegios?.nombre || '').slice(0, 40), volver: location.origin + '/' });
     const r = await fetch('https://skynetgenesis.com/bold-firma.php?' + qs.toString(), { cache: 'no-store' }), d = await r.json();
-    if (!r.ok || !d.ok) throw new Error(d.error || 'firma');
+    if (!r.ok || !d.ok) { if (/plan/i.test(d.error || '')) return toast('Su plan aún no se puede pagar en línea. Escríbanos por WhatsApp al 304 437 5758 y lo activamos.'); throw new Error(d.error || 'firma'); }
     if (!window.BoldCheckout) await new Promise((ok, ko) => { const sc = document.createElement('script'); sc.src = 'https://checkout.bold.co/library/boldPaymentButton.js'; sc.onload = ok; sc.onerror = ko; document.head.appendChild(sc); });
     new window.BoldCheckout({ orderId: d.orderId, currency: d.currency, amount: String(d.amount), apiKey: d.apiKey, integritySignature: d.signature, description: d.description, redirectionUrl: d.redirectionUrl }).open();
   } catch { toast('No se pudo abrir el pago con Bold. Intente de nuevo o escríbanos por WhatsApp.'); }
@@ -2329,14 +2335,14 @@ let platComps = [], platCfg = {};
 async function prepPlataforma() { plat = await q(db.rpc('plataforma_resumen')); pruebas = await q(db.rpc('plataforma_pruebas_lista')).catch(() => []) || []; platComps = await q(db.from('plataforma_comprobantes').select('id,colegio_id,meses,valor,referencia,enviado_por,creado_en').eq('estado', 'Pendiente').order('creado_en')).catch(() => []); platCfg = (await q(db.from('plataforma_config').select('*').eq('id', 1)).catch(() => []))[0] || {}; visitas = await q(db.from('demo_visitas').select('*').order('fecha', { ascending: false }).range(0, 99)).catch(() => []); }
 function vPlataforma() {
   const total = plat.filter(c => c.activo && !c.demo).reduce((s, c) => s + c.valor_mensual, 0);
-  return head('Colegios', 'Alta de colegios, estudiantes activos y valor mensual de cada suscripción.', `<button class="btn" type="button" onclick="formColegio()">Nuevo colegio</button>`) +
+  return head('Colegios', 'Alta de colegios, estudiantes activos y valor mensual de cada suscripción.', `<button class="btn ghost" type="button" onclick="verCuentas()">🔐 Cuentas y accesos</button><button class="btn" type="button" onclick="formColegio()">Nuevo colegio</button>`) +
     `<div class="stats"><div class="stat"><div class="n">${plat.filter(c => c.activo).length}</div><div class="l">Colegios activos</div></div>
       <div class="stat"><div class="n">${plat.reduce((s, c) => s + c.estudiantes_activos, 0)}</div><div class="l">Estudiantes activos</div></div>
       <div class="stat"><div class="n">${cop(total)}</div><div class="l">Facturación mensual estimada</div></div></div>
     <div class="panel">${plat.length ? `<div class="tbl"><table><thead><tr><th>Colegio</th><th>Ciudad</th><th>Año</th><th>Estudiantes / plan</th><th>Valor mensual</th><th>Desde</th><th>Pagado hasta</th><th>Estado de pago</th><th>Acceso</th><th></th></tr></thead><tbody>
-      ${plat.map(c => `<tr class="${c.activo ? '' : 'dim'}"><td><strong>${esc(c.nombre)}</strong></td><td>${esc(c.ciudad || '')}</td><td>${c.anio}</td><td>${c.estudiantes_activos} de ${c.plan_max ?? '—'}${c.demo ? ' <span class="tag">Demo</span>' : ''}</td><td>${c.demo ? '<span class="muted">Sin cobro</span>' : cop(c.valor_mensual)}</td><td>${fmtF(c.creado_en)}</td>
-        <td>${c.demo ? '<span class="muted">No aplica</span>' : `${fmtF(c.pagado_hasta)} <button class="linkbtn" type="button" onclick="formPagadoHasta('${c.colegio_id}')">Cambiar</button>`}</td><td>${c.demo ? '' : estadoCobroTag(c)}${c.comprobante_id ? ` <button class="btn sm" type="button" onclick="revisarCompPlat('${c.comprobante_id}')">Revisar comprobante</button>` : ''}</td>
-        <td>${c.activo ? 'Activo' : 'Suspendido'}</td><td style="white-space:nowrap"><button class="btn sm" type="button" onclick="formPagoSusc('${c.colegio_id}')">Registrar pago</button> <button class="btn ghost sm" type="button" onclick="formPlanColegio('${c.colegio_id}')">Plan</button> <button class="btn ghost sm" type="button" onclick="toggleColegio('${c.colegio_id}',${!c.activo})">${c.activo ? 'Suspender' : 'Reactivar'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Aún no hay colegios. Cree el primero.</div>'}</div>
+      ${plat.map(c => `<tr class="${c.activo ? '' : 'dim'}"><td><strong>${esc(c.nombre)}</strong></td><td>${esc(c.ciudad || '')}</td><td>${c.anio}</td><td>${c.estudiantes_activos}${c.interna ? '' : ` de ${c.plan_max ?? '—'}`}${c.demo ? ' <span class="tag">Demo</span>' : ''}${c.interna ? ` <span class="tag ok-tag" title="${esc(c.interna_motivo || '')}">Interna</span>` : ''}</td><td>${c.demo || c.interna ? '<span class="muted">Sin cobro</span>' : cop(c.valor_mensual)}</td><td>${fmtF(c.creado_en)}</td>
+        <td>${c.demo ? '<span class="muted">No aplica</span>' : c.interna ? '<span class="muted">Permanente</span>' : `${fmtF(c.pagado_hasta)} <button class="linkbtn" type="button" onclick="formPagadoHasta('${c.colegio_id}')">Cambiar</button>`}</td><td>${c.demo ? '' : c.interna ? '<span class="tag">Activa</span>' : estadoCobroTag(c)}${c.comprobante_id ? ` <button class="btn sm" type="button" onclick="revisarCompPlat('${c.comprobante_id}')">Revisar comprobante</button>` : ''}</td>
+        <td>${c.activo ? 'Activo' : 'Suspendido'}</td><td style="white-space:nowrap">${c.interna ? '' : `<button class="btn sm" type="button" onclick="formPagoSusc('${c.colegio_id}')">Registrar pago</button> <button class="btn ghost sm" type="button" onclick="formPlanColegio('${c.colegio_id}')">Plan</button> `}${c.demo ? '' : `<button class="btn ghost sm" type="button" onclick="marcarInterna('${c.colegio_id}',${!c.interna})">${c.interna ? 'Quitar interna' : 'Hacer interna'}</button> `}<button class="btn ghost sm" type="button" onclick="toggleColegio('${c.colegio_id}',${!c.activo})">${c.activo ? 'Suspender' : 'Reactivar'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Aún no hay colegios. Cree el primero.</div>'}</div>
     ${panelPruebasPlat()}${panelCompsPlat()}${panelCfgPlat()}
     <div class="panel"><h2>Personas que probaron la demostración</h2>${visitas.length ? `<div class="tbl"><table><thead><tr><th>Fecha</th><th>Nombre</th><th>Correo</th><th>Perfil</th></tr></thead><tbody>${visitas.map(v => `<tr><td>${fechaHora(v.fecha)}</td><td>${esc(v.nombre || '')}</td><td>${esc(v.email || '')}</td><td>${{ coordinador: 'Directivo', docente: 'Docente', acudiente: 'Acudiente' }[v.rol] || esc(v.rol)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún nadie ha probado la demostración. Comparta el enlace de Colegio-IA y pídales que pulsen "Probar la demostración".</p>'}</div>
     <p class="muted">Planes: hasta 100 estudiantes $120.000; hasta 250, $220.000; hasta 500, $350.000; hasta 1.000, $550.000 al mes; más de 1.000, $40.000 adicionales por cada 100. Cada colegio puede matricular hasta el tope de su plan. Cada mes se paga por anticipado: si el mes no se ha pagado, el día 5 se cierra el acceso del colegio hasta confirmar el pago. Al registrar un pago o cambiar la fecha de «Pagado hasta», el acceso se restablece de inmediato.</p>`;
@@ -5392,3 +5398,119 @@ async function generarAcuerdo() {
     <div class="firmas-c">${firmaContrato('EL COLEGIO', rep, repDoc ? `C.C. No. ${repDoc}` : '', false)}${firmaContrato('DEUDOR(A)', a1?.nombres, docAcud(a1), true)}${firmaContrato('DEUDOR(A)', a2?.nombres, docAcud(a2), true)}</div></section>`;
   showDocs(html, 'Acuerdo de pago', nomArchivo('Acuerdo de pago', e));
 }
+
+/* =====================================================================
+   Cumpleaños (SQL 034): solo directivos (rector, coordinación y secretaría). Ventana una vez al día al entrar
+   y recuadro en el Inicio: los de hoy y los de los próximos 7 días (estudiantes, directivos y docentes).
+   ===================================================================== */
+const diaMes = f => { const d = new Date(String(f).slice(0, 10) + 'T12:00:00'); return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'long' }); };
+async function cargarCumples() {
+  if (!isDir()) { S.cumples = []; return; }
+  S.cumples = await q(db.rpc('cumpleanos', { p_colegio: ctx.colegio_id, p_dias: 7 })).catch(() => []) || [];
+}
+const cuandoCumple = x => x.dias === 0 ? 'Hoy' : x.dias === 1 ? 'Mañana' : `${diaMes(x.fecha)} (en ${x.dias} días)`;
+function felicitar(x) {
+  if (x.tipo !== 'estudiante' || !x.telefono) return '';
+  const a = (x.acudiente || '').split(' ')[0];
+  const txt = `Hola${a ? ', ' + a : ''}. Toda la familia de ${S.k.nombre} le desea un muy feliz cumpleaños a ${x.nombre}. ¡Que tenga un día maravilloso!`;
+  return waBtn(x.telefono, txt, 'Felicitar por WhatsApp');
+}
+function filaCumple(x) {
+  const edad = x.edad > 0 ? ` · cumple ${x.edad} ${x.edad === 1 ? 'año' : 'años'}` : '';
+  return `<li class="cumple-it"><span><strong>${esc(x.nombre)}</strong> <span class="tag">${x.tipo === 'estudiante' ? 'Estudiante' : esc(x.detalle)}</span><br>
+    <span class="muted">${x.tipo === 'estudiante' ? esc(x.detalle) + ' · ' : ''}${cuandoCumple(x)}${edad}</span></span>${x.dias === 0 ? felicitar(x) : ''}</li>`;
+}
+function listaCumples() {
+  const l = S.cumples || [], h = l.filter(x => x.dias === 0), p = l.filter(x => x.dias > 0);
+  return `${h.length ? `<h3 class="cumple-h">🎂 Hoy cumplen años</h3><ul class="list">${h.map(filaCumple).join('')}</ul>` : '<p class="muted">Hoy nadie cumple años.</p>'}
+    ${p.length ? `<h3 class="cumple-h">Próximos 7 días</h3><ul class="list">${p.map(filaCumple).join('')}</ul>` : ''}`;
+}
+function panelCumples() {
+  if (!isDir() || !(S.cumples || []).length) return '';
+  return `<section class="panel cumple-panel"><h2>🎂 Cumpleaños</h2>${listaCumples()}
+    <p class="muted" style="margin-top:8px">Los de los estudiantes salen de la ficha de matrícula; los de directivos y docentes, de Usuarios y accesos.</p></section>`;
+}
+async function cumpleDiario(n) {
+  const k = 'cumple:' + ctx.id;
+  if (store.get(k) === hoy()) return;
+  // si se entró por el Inicio, prepInicio ya los cargó; si no, se consultan aquí (sin pisar otro colegio)
+  const l = view === 'inicio' && S.cumples ? S.cumples : await q(db.rpc('cumpleanos', { p_colegio: ctx.colegio_id, p_dias: 7 })).catch(() => []) || [];
+  if (n !== cargaN || modo !== 'colegio' || !l.length) return;
+  S.cumples = l;
+  if (!$('#modal').hidden) return;   // otra ventana abierta: se mostrará la próxima vez que entre hoy
+  store.set(k, hoy());
+  const nh = S.cumples.filter(x => x.dias === 0).length;
+  openModal(nh ? `🎂 ${nh === 1 ? 'Hoy hay un cumpleaños' : `Hoy hay ${nh} cumpleaños`}` : '🎂 Cumpleaños de la semana', `${listaCumples()}
+    <div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Entendido</button></div>`);
+}
+function formFnacMiembro(id) {
+  const m = S.miembros.find(x => x.id === id); if (!m) return;
+  openModal(`Fecha de nacimiento: ${m.nombre}`, `<p class="muted">Se usa para el recordatorio de cumpleaños que ven los directivos al entrar.</p>
+    <div class="formgrid">${fIn('mFnac', 'Fecha de nacimiento', m.fnac || '', 'type="date" min="1920-01-01" max="2015-12-31"')}</div>
+    <div class="modal-foot">${m.fnac ? `<button class="btn ghost" type="button" onclick="guardarFnacMiembro('${id}', true)">Quitar fecha</button>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarFnacMiembro('${id}')">Guardar</button></div>`);
+}
+async function guardarFnacMiembro(id, quitar) {
+  const f = quitar ? null : vv('mFnac');
+  if (!quitar && !f) return toast('Elija la fecha de nacimiento');
+  if (f && (f < '1920-01-01' || f > '2015-12-31')) return toast('Revise la fecha de nacimiento');
+  const r = await guard(() => uno(db.from('miembros').update({ fnac: f }).eq('id', id).select().single()), quitar ? 'Fecha quitada' : 'Fecha de nacimiento guardada');
+  if (r) { Object.assign(S.miembros.find(x => x.id === id), r); closeModal(); await cargarCumples(); render(); }
+}
+
+/* =====================================================================
+   Superadministrador: instituciones internas y «Cuentas y accesos» (SQL 034)
+   ===================================================================== */
+async function marcarInterna(id, interna) {
+  const c = plat.find(x => x.colegio_id === id); if (!c) return;
+  const motivo = await pedirTexto(interna
+    ? `${c.nombre} quedará activo de forma permanente: sin prueba, sin cobros y sin límite de estudiantes. Úselo solo para instituciones propias. Escriba el motivo (queda registrado):`
+    : `${c.nombre} dejará de ser interna: queda al día hasta el fin de este mes y desde el próximo mes paga su plan. Escriba el motivo (queda registrado):`, 'Motivo');
+  if (!motivo) return;
+  const ok = await guard(async () => { await q(db.rpc('plataforma_interna', { p_colegio: id, p_interna: interna, p_motivo: motivo })); return true; }, interna ? 'Institución marcada como interna' : 'La institución dejó de ser interna');
+  if (ok) { await guard(prepPlataforma); render(); }
+}
+let cuentas = [];
+const ROL_CUENTA = { rector: 'Rector(a)', coordinador: 'Coordinación', secretaria: 'Secretaría', tesoreria: 'Tesorería', docente: 'Docente', acudiente: 'Acudiente', estudiante: 'Estudiante' };
+async function verCuentas() {
+  const r = await guard(() => all(() => db.rpc('plataforma_cuentas'))); if (!r) return;
+  cuentas = r; dibujarCuentas();
+}
+function dibujarCuentas() {
+  const qq = (sel.cq || '').toLowerCase().trim();
+  const l = cuentas.filter(c => !qq || `${c.colegio} ${c.nombre} ${c.email} ${c.estudiante || ''}`.toLowerCase().includes(qq));
+  openModal('🔐 Cuentas y accesos', `<p class="muted">Todas las cuentas de todos los colegios (sin el de demostración). Las contraseñas se guardan cifradas: nadie puede verlas, ni siquiera el Superadministrador (Ley 1581 de 2012). Si alguien no puede entrar, el colegio le genera un código nuevo en Usuarios y accesos.</p>
+    <div class="toolbar"><label class="field"><span>Buscar</span><input type="search" id="cuQ" value="${esc(sel.cq || '')}" placeholder="Colegio, nombre o correo" oninput="sel.cq=this.value;clearTimeout(window._cuT);window._cuT=setTimeout(dibujarCuentasLista,250)"></label>
+      <button class="btn ghost sm" type="button" onclick="descargarCuentas()">Descargar CSV</button><span class="muted" id="cuN">${l.length} de ${cuentas.length} cuentas</span></div>
+    <div class="tbl" id="cuTbl">${tablaCuentas(l)}</div>`);
+}
+function dibujarCuentasLista() {
+  const qq = (sel.cq || '').toLowerCase().trim();
+  const l = cuentas.filter(c => !qq || `${c.colegio} ${c.nombre} ${c.email} ${c.estudiante || ''}`.toLowerCase().includes(qq));
+  $('#cuTbl').innerHTML = tablaCuentas(l); $('#cuN').textContent = `${l.length} de ${cuentas.length} cuentas`;
+}
+function tablaCuentas(l) {
+  return l.length ? `<table><thead><tr><th>Colegio</th><th>Persona</th><th>Correo</th><th>Perfil</th><th>Contraseña</th><th>Último ingreso</th><th>Estado</th><th></th></tr></thead><tbody>
+    ${l.slice(0, 400).map(c => `<tr class="${c.activo ? '' : 'dim'}"><td>${esc(c.colegio)}</td><td><strong>${esc(c.nombre)}</strong>${c.estudiante ? `<br><span class="muted">${esc(c.estudiante)}</span>` : ''}</td><td>${esc(c.email)}</td>
+      <td>${ROL_CUENTA[c.rol] || esc(c.rol)}</td><td>${c.cuenta_creada ? 'Creada' : '<span class="tag t2">Invitación pendiente</span>'}</td><td>${c.ultimo_acceso ? fechaHora(c.ultimo_acceso) : '—'}</td>
+      <td>${c.activo ? '<span class="tag">Activa</span>' : `<span class="tag t3">Bloqueada</span>${c.bloqueo_motivo ? `<br><span class="muted">${esc(c.bloqueo_motivo)}</span>` : ''}`}</td>
+      <td><button class="btn ghost sm" type="button" onclick="bloquearCuenta('${c.miembro_id}', ${c.activo})">${c.activo ? 'Bloquear' : 'Activar'}</button></td></tr>`).join('')}</tbody></table>
+    ${l.length > 400 ? '<p class="muted">Se muestran las primeras 400: use el buscador o descargue el CSV.</p>' : ''}` : '<p class="muted">No hay cuentas con ese filtro.</p>';
+}
+async function bloquearCuenta(id, bloquear) {
+  const c = cuentas.find(x => x.miembro_id === id); if (!c) return;
+  const motivo = bloquear ? await pedirTexto(`Motivo para bloquear a ${c.nombre} (${c.colegio}). No podrá entrar a ese colegio hasta que se active:`, 'Motivo') : 'Activada por el Superadministrador';
+  if (!motivo) return dibujarCuentas();
+  const ok = await guard(async () => { await q(db.rpc('plataforma_bloquear', { p_miembro: id, p_bloquear: bloquear, p_motivo: motivo })); return true; }, bloquear ? 'Cuenta bloqueada' : 'Cuenta activada');
+  if (ok) { Object.assign(c, { activo: !bloquear, bloqueo_motivo: bloquear ? motivo : null }); }
+  dibujarCuentas();
+}
+function descargarCuentas() {
+  const cab = ['Colegio', 'Persona', 'Estudiante', 'Correo', 'Perfil', 'Contraseña', 'Último ingreso', 'Estado', 'Motivo del bloqueo'];
+  const csv = [cab, ...cuentas.map(c => [c.colegio, c.nombre, c.estudiante || '', c.email, ROL_CUENTA[c.rol] || c.rol, c.cuenta_creada ? 'Creada' : 'Invitación pendiente',
+    c.ultimo_acceso ? fechaHora(c.ultimo_acceso) : '', c.activo ? 'Activa' : 'Bloqueada', c.bloqueo_motivo || ''])]
+    .map(r => r.map(v => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return `"${t.replace(/"/g, '""')}"`; }).join(';')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `Cuentas Colegio-IA ${hoy()}.csv`; document.body.appendChild(a); a.click(); a.remove();
+  toast('Archivo descargado');
+}
+Object.assign(window, { formFnacMiembro, guardarFnacMiembro, marcarInterna, verCuentas, dibujarCuentasLista, bloquearCuenta, descargarCuentas });
