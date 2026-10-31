@@ -489,3 +489,7 @@ tr.h-desc td{background:#FFF7E6;color:#9A6200;text-align:center;font-weight:600;
 .fc{display:flex;gap:8px;align-items:flex-end}.fc-l{flex:0 0 auto}.fc-h{width:62px;height:76px;border:1px solid #777;border-radius:4px;font-size:9px;color:#666;display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px}
 .fc-t{flex:1;border-top:1px solid #111;padding-top:4px;line-height:1.35}
 @media print{.contrato{font-size:10pt;line-height:1.35}.contrato table{font-size:9pt}.firmas-c{break-inside:avoid;page-break-inside:avoid}}
+/* Cumpleaños (directivos) */
+.cumple-h{margin:10px 0 4px;color:#0B4F8A;font-size:1rem}
+.cumple-it{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.cumple-panel{border-left:4px solid #14A38B}
