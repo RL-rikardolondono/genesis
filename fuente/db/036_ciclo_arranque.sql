@@ -155,4 +155,8 @@ begin
   end if;
 end $$;
 
+-- Funciones internas: nadie las ejecuta directamente (las usan plan_cambio y bold_pago_aprobado, que son security definer)
+revoke all on function priv.plan_dif(uuid, int) from public, anonymous, authenticated;
+revoke all on function priv.bold_cambio_plan(text, int, text, text) from public, anonymous, authenticated;
+
 notify pgrst, 'reload schema';
