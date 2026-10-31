@@ -44,8 +44,8 @@ function pedirEnlace() {
 
 function nuevaClave(token) {
   caja('<h2>Nueva contraseña</h2>' +
-    '<form id="fNue"><label class="field"><span>Contraseña nueva (mínimo 8 caracteres)</span><input id="n1" type="password" minlength="8" autocomplete="new-password" required></label>' +
-    '<label class="field"><span>Repita la contraseña</span><input id="n2" type="password" minlength="8" autocomplete="new-password" required></label>' +
+    '<form id="fNue"><label class="field"><span>Contraseña nueva (mínimo 8 caracteres)</span><input id="n1" type="text" minlength="8" autocomplete="new-password" autocapitalize="off" spellcheck="false" required></label>' +
+    '<label class="field"><span>Repita la contraseña</span><input id="n2" type="text" minlength="8" autocomplete="new-password" autocapitalize="off" spellcheck="false" required></label>' +
     '<p class="err" id="nErr" role="alert"></p><button class="btn" type="submit">Guardar contraseña</button></form>');
   document.getElementById('n1').focus();
   document.getElementById('fNue').onsubmit = async function (e) {
@@ -73,15 +73,16 @@ if (parametros.get('token')) {
   history.replaceState(null, '', VOLVER);
   caja('<h2>Enlace vencido</h2><p>El enlace para cambiar la contraseña ya no es válido. Pida uno nuevo.</p><button class="btn" type="button" id="bOtra">Pedir otro enlace</button>');
   document.getElementById('bOtra').onclick = pedirEnlace;
-} else {
-  // Agrega "¿Olvidó su contraseña?" a la pantalla de inicio de sesión
-  new MutationObserver(function () {
-    var f = document.querySelector('#auth form');
-    if (!f || !document.getElementById('lPass') || document.getElementById('lOlv')) return;
-    var p = document.createElement('p');
-    p.id = 'lOlv'; p.style.margin = '0';
-    p.innerHTML = '<button class="linkbtn" type="button">¿Olvidó su contraseña?</button>';
-    p.querySelector('button').onclick = pedirEnlace;
-    f.appendChild(p);
-  }).observe(document.getElementById('auth'), { childList: true, subtree: true });
 }
+// Agrega "¿Olvidó su contraseña?" a la pantalla de inicio de sesión (siempre, también después de usar un enlace)
+function ponerOlvido() {
+  var f = document.querySelector('#auth form');
+  if (!f || !document.getElementById('lPass') || document.getElementById('lOlv')) return;
+  var p = document.createElement('p');
+  p.id = 'lOlv'; p.style.margin = '0';
+  p.innerHTML = '<button class="linkbtn" type="button">¿Olvidó su contraseña?</button>';
+  p.querySelector('button').onclick = pedirEnlace;
+  f.appendChild(p);
+}
+new MutationObserver(ponerOlvido).observe(document.getElementById('auth'), { childList: true, subtree: true });
+ponerOlvido();

@@ -272,7 +272,7 @@ function authScreen(extra) {
   if (authMode === 'login') body = `<h2>Iniciar sesión</h2>
     <form onsubmit="event.preventDefault();doLogin()">
       <label class="field"><span>Correo electrónico</span><input id="lEmail" type="email" autocomplete="username" required></label>
-      <label class="field"><span>Contraseña</span><span class="pw"><input id="lPass" type="password" autocomplete="current-password" required>${ojo('lPass')}</span></label>
+      <label class="field"><span>Contraseña</span><span class="pw"><input id="lPass" type="text" autocomplete="current-password" autocapitalize="off" spellcheck="false" required>${ojo('lPass')}</span></label>
       <p class="err" id="aErr" role="alert"></p>
       <button class="btn" type="submit">Entrar</button>
     </form>
@@ -286,8 +286,8 @@ function authScreen(extra) {
     <form onsubmit="event.preventDefault();doRegistro()">
       <label class="field"><span>Nombre y apellido</span><input id="rNom" autocomplete="name" required placeholder="Ejemplo: María Gómez"></label>
       <label class="field"><span>Correo electrónico</span><input id="rEmail" type="email" autocomplete="username" required></label>
-      <label class="field"><span>Contraseña (mínimo 10 caracteres, con letras y números)</span><span class="pw"><input id="rPass" type="password" minlength="10" autocomplete="new-password" required>${ojo('rPass')}</span></label>
-      <label class="field"><span>Repita la contraseña</span><span class="pw"><input id="rPass2" type="password" minlength="10" autocomplete="new-password" required>${ojo('rPass2')}</span></label>
+      <label class="field"><span>Contraseña (mínimo 10 caracteres, con letras y números)</span><span class="pw"><input id="rPass" type="text" minlength="10" autocomplete="new-password" autocapitalize="off" spellcheck="false" required>${ojo('rPass')}</span></label>
+      <label class="field"><span>Repita la contraseña</span><span class="pw"><input id="rPass2" type="text" minlength="10" autocomplete="new-password" autocapitalize="off" spellcheck="false" required>${ojo('rPass2')}</span></label>
       <p class="err" id="aErr" role="alert"></p>
       <button class="btn" type="submit">Crear cuenta</button>
     </form>
@@ -363,7 +363,8 @@ function errClave(c, email) {
   if (email && t.includes(email.split('@')[0].toLowerCase())) return 'La contraseña no debe contener su correo';
   return '';
 }
-const ojo = id => `<button type="button" class="ojo" aria-label="Mostrar u ocultar la contraseña" onclick="const i=document.getElementById('${id}');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>`;
+// La contraseña se ve mientras se escribe (pedido del dueño, 30 oct 2026); el botón la oculta si hay alguien al lado. El campo empieza visible salvo que se pida oculto.
+const ojo = (id, oculto) => `<button type="button" class="ojo" aria-label="Mostrar u ocultar la contraseña" title="Mostrar u ocultar la contraseña" onclick="const i=document.getElementById('${id}');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">${oculto ? '👁' : '🙈'}</button>`;
 async function doRegistro() {
   authErr('');
   const eN = errNombre($('#rNom').value); if (eN) return authErr(eN);
@@ -4816,7 +4817,7 @@ function formBoldColegio() {
       <li>Busque la sección de <strong>integraciones</strong> y el <strong>Botón de pagos</strong>: allí están la <strong>llave de identidad</strong> y la <strong>llave secreta</strong>.</li>
       <li>Copie cada una y péguela aquí.</li></ol>
     <div class="formgrid">${fIn('bkId', 'Llave de identidad', '', 'autocomplete="off" spellcheck="false"')}
-      <label class="field"><span>Llave secreta</span><span class="pw"><input id="bkSe" type="password" autocomplete="new-password" spellcheck="false">${ojo('bkSe')}</span></label></div>
+      <label class="field"><span>Llave secreta</span><span class="pw"><input id="bkSe" type="password" autocomplete="new-password" spellcheck="false">${ojo('bkSe', true)}</span></label></div>
     <p class="muted">La llave secreta queda guardada de forma protegida: nadie la vuelve a ver en la pantalla, ni siquiera el rector.</p>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="bkBtn" onclick="guardarBoldColegio()">Conectar</button></div>`);
 }
