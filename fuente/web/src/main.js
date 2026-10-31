@@ -15,6 +15,9 @@ const MES_N = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', '
 const mesTxt = f => { if (!f) return ''; const [y, m] = String(f).slice(0, 7).split('-'); return `${MES_N[+m - 1]} de ${y}`; };
 const opt = (v, l, s) => `<option value="${esc(v)}" ${String(v) === String(s) ? 'selected' : ''}>${esc(l)}</option>`;
 const head = (t, sub, extra) => `<div class="head"><div><h1>${t}</h1>${sub ? `<p class="muted">${sub}</p>` : ''}</div>${extra || ''}</div>`;
+// Saludo según la hora de Colombia y franja de bienvenida del Inicio (Estilo Vivo)
+const saludo = () => { const h = +new Intl.DateTimeFormat('es-CO', { hour: 'numeric', hourCycle: 'h23', timeZone: 'America/Bogota' }).format(new Date()); return h < 12 ? 'Buenos días' : h < 19 ? 'Buenas tardes' : 'Buenas noches'; };
+const hola = (t, sub) => `<div class="hola"><div><h1>${t}</h1>${sub ? `<p>${sub}</p>` : ''}</div></div>`;
 const store = {
   get(k) { try { return localStorage.getItem('micolegia:' + k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem('micolegia:' + k, v); } catch { } },
@@ -724,16 +727,16 @@ function vInicio() {
   const pa = S.k.periodo_actual;
   if (isTes()) {
     const c = cartera || [], venc = c.reduce((a, x) => a + +x.saldo_vencido, 0), pag = c.reduce((a, x) => a + +x.pagado, 0);
-    return head(`Buen día, ${esc(ctx.nombre.split(' ')[0])}`, `${esc(S.k.nombre)}. Cartera del año ${S.k.anio}.`) +
+    return hola(`${saludo()}, ${esc(ctx.nombre.split(' ')[0])}`, `${esc(S.k.nombre)}. Cartera del año ${S.k.anio}.`) +
       `<div class="stats"><div class="stat"><div class="n">${cop(pag)}</div><div class="l">Recaudado en el año</div></div>
        <div class="stat"><div class="n">${cop(venc)}</div><div class="l">Saldo vencido</div></div>
        <div class="stat"><div class="n">${c.filter(x => +x.saldo_vencido > 0).length}</div><div class="l">Estudiantes en mora</div></div></div>
        <div class="toolbar"><button class="btn" type="button" onclick="go('pagos')">Ir a pagos y cartera</button><button class="btn ghost" type="button" onclick="go('pedidos')">Tienda y pedidos${S.nov?.pedidosStaff ? ` (${S.nov.pedidosStaff} por atender)` : ''}</button></div>`;
   }
-  if (isFam() && !alDia()) return head(`Hola, ${esc((ctx.nombre || '').split(' ')[0])}`, esc(S.k.nombre)) + avisoRestringido() + redesHTML();
+  if (isFam() && !alDia()) return hola(`${saludo()}, ${esc((ctx.nombre || '').split(' ')[0])}`, esc(S.k.nombre)) + avisoRestringido() + redesHTML();
   if (isDir()) {
     const r = resumen || {}; const pct = r.esperadas ? Math.round(r.registradas / r.esperadas * 100) : 0;
-    return head(`Buen día, ${esc(ctx.nombre.split(' ')[0])}`, `${esc(S.k.nombre)}. Año lectivo ${S.k.anio}, periodo ${pa} en curso.`) +
+    return hola(`${saludo()}, ${esc(ctx.nombre.split(' ')[0])}`, `${esc(S.k.nombre)}. Año lectivo ${S.k.anio}, periodo ${pa} en curso.`) +
       `<div class="stats">
         <div class="stat"><div class="n">${r.activos ?? 0}</div><div class="l">Estudiantes activos</div></div>
         <div class="stat"><div class="n">${r.grupos ?? 0}</div><div class="l">Grupos</div></div>
@@ -751,7 +754,7 @@ function vInicio() {
   }
   if (isDoc()) {
     const gs = gruposVis();
-    return head(`Hola, ${esc(ctx.nombre.split(' ')[0])}`, `Periodo ${pa} en curso. ${gs.length ? 'Estos son sus grupos.' : ''}`) + avisoCierre() +
+    return hola(`${saludo()}, ${esc(ctx.nombre.split(' ')[0])}`, `Periodo ${pa} en curso. ${gs.length ? 'Estos son sus grupos.' : ''}`) + avisoCierre() +
       (gs.length ? `<div class="cols">${gs.map(g => {
         const es = estsDe(g.id), as = asigsVis(g); let t = 0, r = 0; es.forEach(e => as.forEach(a => { t++; if (nota(e.id, a.id, pa) != null) r++; })); const pc = t ? Math.round(r / t * 100) : 0;
         return `<section class="panel"><h2>${esc(g.nombre)}</h2><p class="muted">${es.length} estudiantes, ${as.length} ${g.nivel === 'preescolar' ? 'dimensiones' : 'asignaturas'}</p>
@@ -764,7 +767,7 @@ function vInicio() {
   const g = grupo(e.grupo_id);
   if (!g) return head(`Hola`, '') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
   const pr = promedio(e.id), pe = perdidas(e.id);
-  return head(ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)}` : `Hola, ${esc(e.nombres)}`, `${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + avisoCuota() + hoyFamilia() + campusInicioHTML() +
+  return hola(ctx.rol === 'acudiente' ? `${saludo()}, ${esc((ctx.nombre || '').split(' ')[0])}` : `${saludo()}, ${esc(e.nombres)}`, `${ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)} · ` : ''}${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + avisoCuota() + juegoInicioHTML() + hoyFamilia() + campusInicioHTML() +
     `<div class="stats">
       <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : N(pr)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado' + (pr == null ? '' : ', ' + desem(pr))}</div></div>
       <div class="stat"><div class="n">${pe.length}</div><div class="l">Asignaturas en bajo</div></div>
@@ -4167,6 +4170,31 @@ function rango(t) {
   return { n: RANGOS[i][1], ico: RANGOS[i][2], sig: sig ? sig[1] : null, sigIco: sig ? sig[2] : '', faltan: sig ? sig[0] - t : 0, pct: sig ? Math.round((t - RANGOS[i][0]) / (sig[0] - RANGOS[i][0]) * 100) : 100 };
 }
 const MOTIVO_G = { entrada: 'Entró al campus', racha: 'Cinco días seguidos', recurso: 'Abrió un recurso', tarea: 'Entregó una tarea', cuestionario: 'Respondió un cuestionario', excelente: 'Calificación excelente', felicitacion: 'Felicitación del observador', positiva: 'Anotación positiva', participacion: 'Participación en clase' };
+// Tablero de gemas como el del portal de AcademIA (pedido del dueño, 21 oct 2026): rango, gemas de hoy, racha e insignias
+const INSIGNIAS = [
+  ['primer', 'Primer paso', 'Entró al campus por primera vez', '🚪', (d, c) => (c.entrada || 0) >= 1],
+  ['racha3', 'En marcha', '3 días seguidos entrando', '🔥', d => d.racha_max >= 3],
+  ['racha7', 'Imparable', '7 días seguidos entrando', '⚡', d => d.racha_max >= 7],
+  ['racha30', 'Constancia de hierro', '30 días seguidos entrando', '🛡️', d => d.racha_max >= 30],
+  ['lector', 'Explorador', 'Abrió 10 recursos del campus', '📖', (d, c) => (c.recurso || 0) >= 10],
+  ['tarea', 'Tarea cumplida', 'Entregó su primera tarea', '📤', (d, c) => (c.tarea || 0) >= 1],
+  ['tareas10', 'Responsable', 'Entregó 10 tareas', '🎒', (d, c) => (c.tarea || 0) >= 10],
+  ['cuest', 'Pensador', 'Respondió su primer cuestionario', '📝', (d, c) => (c.cuestionario || 0) >= 1],
+  ['excelente', 'Excelencia', 'Sacó 92 o más en un cuestionario', '🌟', (d, c) => (c.excelente || 0) >= 1],
+  ['estrella', 'Estrella del salón', 'Recibió una felicitación, una anotación positiva o un reconocimiento por participar', '⭐', (d, c) => (c.felicitacion || 0) + (c.positiva || 0) + (c.participacion || 0) >= 1],
+  ['mil', 'Coleccionista', 'Juntó 1.000 gemas', '💎', d => d.total >= 1000],
+];
+function juegoHTML(d, abierto) {
+  if (!d) return '';
+  const r = rango(d.total), c = d.cnt || {}, ins = INSIGNIAS.map(x => ({ x, ok: !!x[4](d, c) })), gan = ins.filter(i => i.ok).length, rac = d.racha || 0;
+  return `<section class="panel juego"><div class="jg-top"><div class="jg-rango"><span class="jg-ico" aria-hidden="true">${r.ico}</span><div><small>${isEst() ? 'Su rango' : 'Rango'}</small><b>${esc(r.n)}</b></div></div>
+      <div class="jg-gemas"><small>Gemas</small><b>💎 ${Number(d.total).toLocaleString('es-CO')}</b>${d.hoy ? `<span class="jg-hoy">+${d.hoy} hoy</span>` : ''}</div>
+      <div class="jg-racha" title="Días seguidos entrando al campus"><small>Racha</small><b>🔥 ${rac} día${rac === 1 ? '' : 's'}</b></div>
+      ${d.de ? `<div class="jg-puesto"><small>Puesto</small><b>${d.puesto}° de ${d.de}</b></div>` : ''}</div>
+    ${r.sig ? `<div class="jg-prog"><span class="jg-bar"><i style="width:${Math.max(2, r.pct)}%"></i></span><small>${r.faltan.toLocaleString('es-CO')} gemas para ${r.sigIco} ${r.sig}</small></div>` : '<div class="jg-prog"><small>¡Llegó al rango más alto!</small></div>'}
+    <details class="jg-mas"${abierto ? ' open' : ''}><summary>Insignias (${gan} de ${INSIGNIAS.length}) · toque para ver cómo ganarlas</summary>
+      <div class="jg-logros">${ins.map(({ x, ok }) => `<div class="jg-logro${ok ? ' on' : ''}" title="${esc(x[2])}"><span aria-hidden="true">${x[3]}</span><b>${esc(x[1])}</b><small>${ok ? '✓ ' : ''}${esc(x[2])}</small></div>`).join('')}</div></details></section>`;
+}
 const fechaHoraTxt = f => f ? new Date(f).toLocaleString('es-CO', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'America/Bogota' }) : '';
 const aLocal = f => { if (!f) return ''; const d = new Date(new Date(f).getTime() - 5 * 3600e3); return d.toISOString().slice(0, 16); };   // hora de Colombia para el campo de fecha
 const deLocal = v => v ? v + ':00-05:00' : null;
@@ -4656,8 +4684,7 @@ function vGemas() {
   if (isFam()) {
     const d = CAM.gem || { total: 0, semana: 0, top: [], ultimas: [] }, r = rango(d.total), e = est(propio());
     return head(isEst() ? 'Mis gemas' : `Gemas de ${esc(e?.nombres || '')}`, 'Las gemas premian la constancia y la participación en el campus virtual.') +
-      `<div class="gem-hero"><div class="gem-ico">${r.ico}</div><div><div class="gem-n">${d.total.toLocaleString('es-CO')} gemas</div><div class="gem-r">Rango <strong>${r.n}</strong>${r.sig ? ` · le faltan ${r.faltan} para ${r.sigIco} ${r.sig}` : ' · ¡el rango más alto!'}</div>
-        <div class="bar gem-bar"><i style="width:${r.pct}%"></i></div><div class="muted">Esta semana: +${d.semana} · Puesto ${d.puesto} de ${d.de} en el curso</div></div></div>
+      `${juegoHTML(d, true)}
       <div class="cols"><section class="panel"><h2>🏆 Top del curso</h2><ol class="gem-top">${d.top.map((x, k) => `<li class="${x.yo ? 'yo' : ''}"><span class="gem-pos">${['🥇', '🥈', '🥉'][k] || k + 1}</span><span>${esc(x.n)}${x.yo ? ' (' + (isEst() ? 'usted' : esc(e?.nombres || '')) + ')' : ''}</span><span class="gem-v">${rango(x.g).ico} ${x.g}</span></li>`).join('')}</ol></section>
         <section class="panel"><h2>Últimas gemas</h2>${d.ultimas.length ? `<ul class="list">${d.ultimas.map(x => `<li>+${x.c} 💎 ${esc(MOTIVO_G[x.m] || x.m)} <span class="muted">· ${fechaHoraTxt(x.f)}</span></li>`).join('')}</ul>` : '<p class="muted">Aún no hay gemas. ¡Entre al campus y empiece a ganarlas!</p>'}</section></div>${como}`;
   }
@@ -4678,13 +4705,15 @@ async function darParticipacion(eid, btn) {
   if (n) { CAM.gemG = await q(db.rpc('gemas_grupo', { p_grupo: sel.gg })).catch(() => CAM.gemG); render(); }
 }
 // Tarjeta del campus y gemas en el inicio de la familia y del estudiante
+function juegoInicioHTML() {
+  const e = est(propio()); if (!e || !campusGrado(grupo(e.grupo_id)) || !gemasOn() || !CAM.gem) return '';
+  return juegoHTML(CAM.gem) + `<div class="jg-ver"><button class="linkbtn" type="button" onclick="go('gemas')">Ver ${isEst() ? 'mis gemas' : 'sus gemas'} y el top del curso →</button></div>`;
+}
 function campusInicioHTML() {
   const e = est(propio()); if (!e || !campusGrado(grupo(e.grupo_id))) return '';
-  const pend = CAM.pend.filter(i => !vencido(i)), r = CAM.gem ? rango(CAM.gem.total) : null;
-  return `<div class="cols"><section class="panel cam-ini"><h2>💻 Campus virtual</h2>${pend.length ? `<p><strong>${pend.length}</strong> ${pend.length === 1 ? 'actividad pendiente' : 'actividades pendientes'}:</p><ul class="list cam-list">${pend.slice(0, 3).map(i => itemFamHTML(i, true)).join('')}</ul>` : '<p class="muted">¡Al día! No hay tareas ni cuestionarios por hacer.</p>'}
-      <div class="toolbar"><button class="btn sm" type="button" onclick="go('campus')">Entrar al campus</button></div></section>
-    ${gemasOn() && r ? `<section class="panel gem-mini"><h2>💎 Gemas</h2><div class="gem-hero sm"><div class="gem-ico">${r.ico}</div><div><div class="gem-n">${CAM.gem.total.toLocaleString('es-CO')}</div><div class="gem-r">Rango <strong>${r.n}</strong> · puesto ${CAM.gem.puesto} de ${CAM.gem.de}</div><div class="bar gem-bar"><i style="width:${r.pct}%"></i></div></div></div>
-      <div class="toolbar"><button class="btn ghost sm" type="button" onclick="go('gemas')">Ver top del curso</button></div></section>` : ''}</div>`;
+  const pend = CAM.pend.filter(i => !vencido(i));
+  return `<section class="panel cam-ini"><h2>💻 Campus virtual</h2>${pend.length ? `<p><strong>${pend.length}</strong> ${pend.length === 1 ? 'actividad pendiente' : 'actividades pendientes'}:</p><ul class="list cam-list">${pend.slice(0, 3).map(i => itemFamHTML(i, true)).join('')}</ul>` : '<p class="muted">¡Al día! No hay tareas ni cuestionarios por hacer.</p>'}
+      <div class="toolbar"><button class="btn sm" type="button" onclick="go('campus')">Entrar al campus</button></div></section>`;
 }
 async function prepCampusInicio() {
   const e = est(propio()); if (!e || !campusGrado(grupo(e.grupo_id)) || !alDia()) return;
