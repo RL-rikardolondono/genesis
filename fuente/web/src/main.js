@@ -154,8 +154,14 @@ const waBtn = (tel, txt, l = 'Enviar por WhatsApp') => `<a class="btn wa" href="
 const estsDe = gid => S.ests.filter(e => e.grupo_id === gid && e.estado === 'Activo').sort((a, b) => a.apellidos.localeCompare(b.apellidos, 'es'));
 const periodos = () => S.k.periodos || [];
 // v0.23: un curso de ciclos semestral (CLEI 5 y 6) usa solo sus periodos (1-2 o 3-4)
-const perG = g => g?.periodos?.length ? periodos().filter(p => g.periodos.includes(p.n)) : periodos();
+// v0.23.1: los cursos de ciclos tienen su propio calendario (colegios.periodos_ciclos y periodo_actual_ciclos)
+const calCiclos = () => S.k.periodos_ciclos?.length ? S.k.periodos_ciclos : null;
+const calG = g => g && g.nivel === 'ciclos' && calCiclos() ? calCiclos() : periodos();
+const paG = g => g && g.nivel === 'ciclos' && calCiclos() ? (S.k.periodo_actual_ciclos || 1) : S.k.periodo_actual;
+const perG = g => { const c = calG(g); return g?.periodos?.length ? c.filter(p => g.periodos.includes(p.n)) : c; };
 const perEst = e => perG(grupo(est(e)?.grupo_id));
+// Calendarios que ve cada usuario: la familia, el de su curso; el personal, el del colegio y (si hay) el de los ciclos
+const calsVis = () => { if (isFam()) { const g = grupo(est(propio())?.grupo_id); return [[perG(g), '']]; } return calCiclos() ? [[periodos(), ''], [calCiclos(), ' (ciclos)']] : [[periodos(), '']]; };
 const escala = () => S.k.escala || [];
 function gruposVis() {
   if (isDir()) return S.grupos;
@@ -1176,10 +1182,10 @@ async function prepGrupoSel() {
   await cargarGrupo(sel.g);
 }
 async function cambiarGrupo(g) { sel.g = g; sel.a = ''; $('#view').innerHTML = '<div class="loading">Cargando…</div>'; await guard(() => cargarGrupo(g)); render(); }
-const perOpts = s => perG(view === 'boletines' && propio() ? grupo(est(propio())?.grupo_id) : grupo(sel.g)).map(p => opt(p.n, 'Periodo ' + p.n, s)).join('');
+const perOpts = (s, g) => perG(g !== undefined ? g : view === 'boletines' && propio() ? grupo(est(propio())?.grupo_id) : grupo(sel.g)).map(p => opt(p.n, 'Periodo ' + p.n, s)).join('');
 function sinGrupos() { return `<div class="panel empty">${isDir() ? 'Aún no hay cursos. Créelos en Parametrización.' : 'No tiene grupos asignados.'}</div>`; }
-const cierreDe = p => periodos().find(x => x.n === +p)?.cierre || '';
-const cerrado = p => !isDir() && !!cierreDe(p) && hoy() > cierreDe(p);
+const cierreDe = (p, g) => calG(g !== undefined ? g : grupo(sel.g)).find(x => x.n === +p)?.cierre || '';
+const cerrado = (p, g) => !isDir() && !!cierreDe(p, g) && hoy() > cierreDe(p, g);
 const selGrupoHTML = gs => `<label class="field"><span>Grupo</span><select onchange="cambiarGrupo(this.value)">${gs.map(x => opt(x.id, x.nombre, sel.g)).join('')}</select></label>`;
 const actsDe = (g, a, p) => S.acts.filter(x => x.grupo_id === g && x.asignatura_id === a && x.periodo === +p).sort((x, y) => x.orden - y.orden || String(x.creado_en).localeCompare(String(y.creado_en)));
 function calcActs(eid, acts) {
@@ -1189,11 +1195,11 @@ function calcActs(eid, acts) {
   return n ? Math.round(t / n) : null;
 }
 // v0.23: si el curso es de ciclos semestral, el periodo elegido debe ser uno de los suyos
-function ajustarPer(g, campo = 'p') { const ps = g?.periodos; if (ps?.length && !ps.includes(+sel[campo])) sel[campo] = ps.includes(S.k.periodo_actual) ? S.k.periodo_actual : (S.k.periodo_actual > Math.max(...ps) ? Math.max(...ps) : Math.min(...ps)); }
+function ajustarPer(g, campo = 'p') { if (!g) return; const ps = perG(g).map(p => p.n), pa = paG(g); if (ps.length && !ps.includes(+sel[campo])) sel[campo] = ps.includes(pa) ? pa : (pa > Math.max(...ps) ? Math.max(...ps) : Math.min(...ps)); }
 function vNotas() {
   ajustarPer(grupo(sel.g));
   const gs = gruposVis(); if (!gs.length) return head('Calificaciones') + sinGrupos();
-  const g = grupo(sel.g); if (!sel.p) sel.p = S.k.periodo_actual;
+  const g = grupo(sel.g); if (!sel.p) { sel.p = paG(g); ajustarPer(g); }
   if (isDoc() && !S.misGrupos.includes(g.id)) {
     return head('Calificaciones', 'Usted es director(a) de este grupo: puede consultar todas las calificaciones. Cada docente registra las de su asignatura.') +
       `<div class="panel"><div class="toolbar">${selGrupoHTML(gs)}<label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label></div>${planillaHTML(g, sel.p)}</div>`;
@@ -1476,7 +1482,7 @@ function constancia(eid) {
 }
 function certificado(eid) {
   const e = est(eid), g = grupo(e.grupo_id); if (!g) return constancia(eid);
-  const as = asigsDe(g), pre = g.nivel === 'preescolar', pa = S.k.periodo_actual;
+  const as = asigsDe(g), pre = g.nivel === 'preescolar', pa = paG(g);
   return `<section class="doc">${docHead('Constancia de estudio con calificaciones', `Año lectivo ${S.k.anio}`)}${fotoDoc(eid)}
   <p style="margin-top:14px">El suscrito rector(a) de <strong>${esc(S.k.nombre)}</strong> hace constar que <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, ${e.estado === 'Activo' ? 'cursa' : 'cursó'} el grado <strong>${esc(g.nombre)}</strong> en el año lectivo ${S.k.anio}, con las siguientes valoraciones acumuladas a la fecha:</p>
   <table><thead><tr><th>${pre ? 'Dimensión' : 'Asignatura'}</th><th>IH</th>${pre ? '' : perG(g).filter(p => p.n <= pa).map(p => `<th>P${p.n}</th>`).join('')}<th>Valoración</th><th>Desempeño</th></tr></thead><tbody>
@@ -1502,7 +1508,7 @@ function boletinHTML(eid, per) {
   ${firmas(['Rector(a)', S.k.rector_nombre], ['Director(a) de grupo', g.director_nombre])}</section>`;
 }
 function vBoletines() {
-  if (!sel.p) sel.p = S.k.periodo_actual;
+  if (!sel.p) sel.p = paG(propio() ? grupo(est(propio())?.grupo_id) : grupo(sel.g));
   if (propio()) ajustarPer(grupo(est(propio())?.grupo_id)); else if (sel.g) ajustarPer(grupo(sel.g));
   if (propio()) {
     const eid = propio(); if (!est(eid) || !grupo(est(eid).grupo_id)) return head('Boletín') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
@@ -1545,7 +1551,7 @@ async function prepConfig() {
   if (sel.ptab === 'costos') await cargarCostos();
   if (sel.ptab === 'cierre') await prepCierre();
   if (sel.ptab === 'grupos' && isDir()) await cargarMiembros();
-  if (sel.ptab === 'logros') { if (!sel.lg || !grupo(sel.lg)) sel.lg = S.grupos[0]?.id || ''; if (!sel.lp) sel.lp = S.k.periodo_actual; if (sel.lg) await cargarGrupo(sel.lg, true); }
+  if (sel.ptab === 'logros') { if (!sel.lg || !grupo(sel.lg)) sel.lg = S.grupos[0]?.id || ''; if (!sel.lp) sel.lp = paG(grupo(sel.lg)); ajustarPer(grupo(sel.lg), 'lp'); if (sel.lg) await cargarGrupo(sel.lg, true); }
 }
 async function cargarCostos() {
   const a = S.k.anio;
@@ -1586,19 +1592,19 @@ async function guardarPermisos() {
 /* ---------- Logros del colegio por curso, asignatura y periodo ---------- */
 function paramLogros() {
   if (!S.grupos.length) return '<div class="panel empty">Primero cree los cursos.</div>';
-  const g = grupo(sel.lg) || S.grupos[0], p = sel.lp || S.k.periodo_actual, pre = g.nivel === 'preescolar';
+  const g = grupo(sel.lg) || S.grupos[0], p = sel.lp || paG(g), pre = g.nivel === 'preescolar';
   const otros = S.grupos.filter(x => x.grado === g.grado && x.id !== g.id);
   return `<div class="panel"><h2>Logros del periodo</h2>
     <p class="muted">Escriba los logros que el colegio espera en cada ${pre ? 'dimensión' : 'asignatura'}. Un logro por línea. Aparecen en el boletín de cada estudiante; los docentes también pueden ajustarlos desde Calificaciones.</p>
     <div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.lg=this.value;irPtab('logros')">${S.grupos.map(x => opt(x.id, x.nombre, g.id)).join('')}</select></label>
-      <label class="field"><span>Periodo</span><select onchange="sel.lp=+this.value;render()">${perOpts(p)}</select></label></div>
+      <label class="field"><span>Periodo</span><select onchange="sel.lp=+this.value;render()">${perOpts(p, g)}</select></label></div>
     <div class="formgrid">${asigsDe(g).map(a => `<label class="field full"><span>${esc(a.nombre)}</span><textarea class="lgTxt" data-a="${a.id}" placeholder="Ejemplo: Reconoce y escribe números hasta 1.000.">${esc(S.logros[`${g.id}|${a.id}|${p}`] || '')}</textarea></label>`).join('')}</div>
     ${otros.length ? `<label class="chk" style="margin-top:10px"><input type="checkbox" id="lgOtros"> Aplicar también a ${otros.map(x => esc(x.nombre)).join(', ')}</label>` : ''}
     <div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarLogros()">Guardar logros del periodo ${p}</button></div></div>`;
 }
 async function guardarLogros() {
-  const g = grupo(sel.lg) || S.grupos[0], p = sel.lp || S.k.periodo_actual;
-  if (cerrado(p)) return toast(`El periodo ${p} ya está cerrado (cierre: ${fechaLarga(cierreDe(p))}). Solo coordinación o rectoría pueden cambiar sus logros`);
+  const g = grupo(sel.lg) || S.grupos[0], p = sel.lp || paG(g);
+  if (cerrado(p, g)) return toast(`El periodo ${p} ya está cerrado (cierre: ${fechaLarga(cierreDe(p, g))}). Solo coordinación o rectoría pueden cambiar sus logros`);
   const destinos = [g, ...($('#lgOtros')?.checked ? S.grupos.filter(x => x.grado === g.grado && x.id !== g.id) : [])];
   const items = [...document.querySelectorAll('.lgTxt')].map(t => ({ a: t.dataset.a, txt: t.value.trim() }));
   const ok = await guard(async () => {
@@ -1681,23 +1687,24 @@ function subirLogo(input) {
 }
 async function quitarLogo() { await guardarColegio({ logo: null }, 'Logo eliminado'); }
 
-const filaPer = (p, dis) => `<div class="toolbar perRow" data-n="${p.n}" style="margin-bottom:6px"><strong style="min-width:80px">Periodo ${p.n}</strong>
-  <label class="field"><span>Porcentaje (%)</span><input type="number" id="pw${p.n}" min="0" max="100" value="${p.peso}" ${dis}></label>
-  <label class="field"><span>Inicia</span><input type="date" id="pi${p.n}" value="${p.inicio || ''}" ${dis}></label>
-  <label class="field"><span>Termina</span><input type="date" id="pf${p.n}" value="${p.fin || ''}" ${dis}></label>
-  <label class="field"><span>Cierre de calificaciones</span><input type="date" id="pc${p.n}" value="${p.cierre || ''}" ${dis}></label></div>`;
+const filaPer = (p, dis, x = '') => `<div class="toolbar perRow" data-n="${p.n}" style="margin-bottom:6px"><strong style="min-width:80px">Periodo ${p.n}</strong>
+  <label class="field"><span>Porcentaje (%)</span><input type="number" id="${x}pw${p.n}" min="0" max="100" value="${p.peso}" ${dis}></label>
+  <label class="field"><span>Inicia</span><input type="date" id="${x}pi${p.n}" value="${p.inicio || ''}" ${dis}></label>
+  <label class="field"><span>Termina</span><input type="date" id="${x}pf${p.n}" value="${p.fin || ''}" ${dis}></label>
+  <label class="field"><span>Cierre de calificaciones</span><input type="date" id="${x}pc${p.n}" value="${p.cierre || ''}" ${dis}></label></div>`;
 function paramPeriodos() {
   const k = S.k, r = esRector(), ps = periodos(), es = escala();
   const dis = r ? '' : 'disabled';
   return (r ? '' : '<div class="note">Solo el rector o la rectora pueden cambiar el SIEE.</div>') +
     `<div class="panel"><h2>Periodos y calendario académico</h2><p class="muted">El año lectivo va de enero a diciembre. Elija cuántos periodos tiene, el porcentaje de cada uno (deben sumar 100%) y sus fechas. Después de la fecha de <strong>cierre de calificaciones</strong> los docentes ya no pueden modificar las calificaciones de ese periodo; los directivos sí.</p>
       <div class="toolbar"><label class="field"><span>Número de periodos</span><select id="nPer" ${dis} onchange="cambiarNumPeriodos(+this.value)">${[1, 2, 3, 4, 5, 6].map(n => opt(n, n, ps.length)).join('')}</select></label>
-      <label class="field"><span>Periodo en curso</span><select id="pAct" ${dis}>${perOpts(k.periodo_actual)}</select></label></div>
+      <label class="field"><span>Periodo en curso</span><select id="pAct" ${dis}>${ps.map(p => opt(p.n, 'Periodo ' + p.n, k.periodo_actual)).join('')}</select></label></div>
       <div id="perBox">${ps.map(p => filaPer(p, dis)).join('')}</div>
       <p class="muted" id="perNota">${r ? 'Esta sección y la escala se guardan juntas con el botón <strong>Guardar periodos y escala</strong>, al final de la escala.' : ''}</p></div>
     <div class="panel"><h2>Escala de valoración</h2><div class="toolbar">${es.map((s, i) => `<label class="field"><span>${esc(s.d)} desde</span><input ${NOTA_ATTR} id="es${i}" value="${N(s.min)}" ${dis}></label>`).join('')}
       <label class="field"><span>Asignaturas en bajo para no promover</span><input type="number" min="1" max="10" id="mxP" value="${k.max_perdidas}" ${dis}></label></div>
       ${r ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarPeriodos()">Guardar periodos y escala</button></div>' : ''}</div>
+    ${periodosCiclosHTML(r, dis)}
     <div class="panel"><h2>Asistencia</h2><label class="chk"><input type="checkbox" id="asPC" ${k.asistencia_por_clase ? 'checked' : ''} ${dis} onchange="setPorClase(this.checked)"> Tomar asistencia por clase (cada docente en su asignatura). Si no se marca, la asistencia es diaria por grupo.</label></div>`;
 }
 function cambiarNumPeriodos(n) {
@@ -1706,6 +1713,24 @@ function cambiarNumPeriodos(n) {
   $('#perBox').innerHTML = Array.from({ length: n }, (_, i) => filaPer({ ...(old[i] || {}), n: i + 1, peso: base + (i === n - 1 ? resto : 0) }, '')).join('');
   $('#pAct').innerHTML = Array.from({ length: n }, (_, i) => opt(i + 1, 'Periodo ' + (i + 1), pa)).join('');
   const nt = $('#perNota'); if (nt) nt.innerHTML = `Se repartió el 100% en ${n} periodo(s)${resto ? ` (${base}% cada uno y el último ${base + resto}%, para completar 100)` : ` de ${base}% cada uno`}. Puede cambiar los porcentajes y las fechas. <strong>Aún no se ha guardado:</strong> use el botón Guardar periodos y escala.`;
+}
+// v0.23.1: calendario propio de los cursos por ciclos (CLEI): 4 periodos; CLEI 5 y 6 usan 1-2 (primer semestre) y 3-4 (segundo)
+function periodosCiclosHTML(r, dis) {
+  const pc = calCiclos(); if (!pc && !S.grupos.some(esCiclo)) return '';
+  const ps = pc || [1, 2, 3, 4].map(n => ({ n, peso: 25 }));
+  return `<div class="panel"><h2>Periodos de los ciclos (CLEI)</h2><p class="muted">Los cursos de bachillerato por ciclos tienen su propio calendario de 4 periodos, aparte del resto del colegio. CLEI 3 y 4 usan los 4; CLEI 5 y 6 son semestrales: el primer semestre usa los periodos 1 y 2, y el segundo, los periodos 3 y 4.${pc ? '' : ' <strong>Aún no se ha guardado:</strong> por ahora los ciclos usan los periodos del colegio.'}</p>
+    <div class="toolbar"><label class="field"><span>Periodo en curso de los ciclos</span><select id="cpAct" ${dis}>${ps.map(p => opt(p.n, 'Periodo ' + p.n, S.k.periodo_actual_ciclos || 1)).join('')}</select></label></div>
+    <div id="cperBox">${ps.map(p => filaPer(p, dis, 'c')).join('')}</div>
+    ${r ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarPeriodosCiclos()">Guardar periodos de los ciclos</button></div>' : ''}</div>`;
+}
+async function guardarPeriodosCiclos() {
+  const n = 4, pw = Array.from({ length: n }, (_, i) => +$('#cpw' + (i + 1)).value || 0);
+  if (pw.reduce((a, b) => a + b, 0) !== 100) return toast('Los porcentajes de los periodos de los ciclos deben sumar 100');
+  const fechas = Array.from({ length: n }, (_, i) => ({ inicio: $('#cpi' + (i + 1)).value || '', fin: $('#cpf' + (i + 1)).value || '', cierre: $('#cpc' + (i + 1)).value || '' }));
+  if (fechas.some(f => f.inicio && f.fin && f.fin < f.inicio)) return toast('La fecha de terminación no puede ser anterior a la de inicio');
+  const pa = Math.min(+$('#cpAct').value || 1, n);
+  await guardarColegio({ periodos_ciclos: pw.map((peso, i) => ({ n: i + 1, peso, ...fechas[i] })), periodo_actual_ciclos: pa },
+    `Periodos de los ciclos guardados (${pw.map((x, i) => `P${i + 1} ${x}%`).join(', ')}), periodo en curso ${pa}`);
 }
 async function guardarPeriodos() {
   if (+$('#nPer').value !== periodos().length && !(await confirmar(`Va a cambiar el número de periodos de ${periodos().length} a ${$('#nPer').value}. Esto cambia el boletín y los promedios del año; las calificaciones ya registradas de periodos que desaparezcan dejarán de contar. ¿Continuar?`, 'Sí, cambiar periodos'))) return;
@@ -2600,7 +2625,7 @@ function leerImagen(file, max = 1100) {
 }
 const diasEntre = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5);
 function avisoCierre() {
-  const pa = S.k.periodo_actual, ci = cierreDe(pa); if (!ci) return '';
+  const pa = S.k.periodo_actual, ci = cierreDe(pa, null); if (!ci) return '';
   const d = diasEntre(hoy(), ci);
   if (d >= 0) return `<div class="note">Cierre de calificaciones del periodo ${pa}: <strong>${fechaLarga(ci)}</strong> (${d === 0 ? 'es hoy' : d === 1 ? 'falta 1 día' : `faltan ${d} días`}).${isDir() ? ' <button class="linkbtn" type="button" onclick="sel.atab=\'avance\';go(\'academico\')">Ver avance por docente</button>' : ''}</div>`;
   return isDir() ? `<div class="note">El periodo ${pa} cerró el ${fechaLarga(ci)}. Cuando termine de revisar, cambie el periodo en curso en <button class="linkbtn" type="button" onclick="irPtab('periodos')">Parametrización</button>.</div>` : `<div class="note">El periodo ${pa} cerró el ${fechaLarga(ci)}.</div>`;
@@ -2616,7 +2641,7 @@ function detalleFallas(eid) {
 }
 function detalleAsig(aid) {
   const e = est(propio()), g = grupo(e.grupo_id), a = S.asigs.find(x => x.id === aid), pre = g.nivel === 'preescolar';
-  const html = periodos().filter(p => p.n <= S.k.periodo_actual).map(p => {
+  const html = perG(g).filter(p => p.n <= paG(g)).map(p => {
     const v = nota(e.id, aid, p.n), acts = actsDe(g.id, aid, p.n), r = S.rec[`${e.id}|${aid}|${p.n}`], lo = S.logros[`${g.id}|${aid}|${p.n}`];
     return `<div class="item" style="margin-bottom:10px"><h3>Periodo ${p.n}: ${pre ? (v == null ? 'Sin valorar' : desem(v)) : chip(v)}</h3>
       ${lo ? `<div class="meta">Logros</div>${logroLista(lo)}` : ''}
@@ -2655,11 +2680,11 @@ const puedeComunicar = () => isDir() || isDoc();
 function agendaHTML() {
   const h = hoy(), items = [];
   (S.coms || []).forEach(c => { if (c.fecha_evento && c.fecha_evento.slice(0, 10) >= h && (!isFam() || comsMios().includes(c))) items.push({ f: c.fecha_evento.slice(0, 10), t: `${c.tipo}: ${c.titulo}`, h: fechaHora(c.fecha_evento) }); });
-  periodos().forEach(p => {
-    if (p.cierre && p.cierre >= h && !isFam()) items.push({ f: p.cierre, t: `Cierre de calificaciones del periodo ${p.n}` });
-    if (p.fin && p.fin >= h) items.push({ f: p.fin, t: `Termina el periodo ${p.n}` });
-    if (p.inicio && p.inicio >= h) items.push({ f: p.inicio, t: `Inicia el periodo ${p.n}` });
-  });
+  calsVis().forEach(([ps, l]) => ps.forEach(p => {
+    if (p.cierre && p.cierre >= h && !isFam()) items.push({ f: p.cierre, t: `Cierre de calificaciones del periodo ${p.n}${l}` });
+    if (p.fin && p.fin >= h) items.push({ f: p.fin, t: `Termina el periodo ${p.n}${l}` });
+    if (p.inicio && p.inicio >= h) items.push({ f: p.inicio, t: `Inicia el periodo ${p.n}${l}` });
+  }));
   items.sort((a, b) => a.f.localeCompare(b.f));
   return items.length ? `<section class="panel"><h2>Próximas fechas</h2><ul class="list">${items.slice(0, 8).map(x => `<li><strong>${x.h || fechaLarga(x.f)}</strong> · ${esc(x.t)}</li>`).join('')}</ul></section>` : '';
 }
@@ -2938,11 +2963,11 @@ async function prepCronograma() { await cargarComs(); }
 function eventosCrono() {
   const items = [], vis = isFam() ? comsMios() : (S.coms || []).filter(c => isDir() || isTes() || c.destino === 'todos' || gruposVis().some(g => g.id === c.grupo_id || g.id === est(c.estudiante_id)?.grupo_id));
   vis.forEach(c => { if (c.fecha_evento) items.push({ id: c.id, mio: isDir() || c.creado_por === me.id, f: new Date(c.fecha_evento).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }), hora: new Date(c.fecha_evento).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }), t: c.titulo, tipo: c.tipo, d: c.destino === 'todos' ? '' : destinoTxt(c) }); });
-  periodos().forEach(p => {
-    if (p.inicio) items.push({ f: p.inicio, t: `Inicia el periodo ${p.n}`, tipo: 'Académico' });
-    if (p.fin) items.push({ f: p.fin, t: `Termina el periodo ${p.n}`, tipo: 'Académico' });
-    if (p.cierre && !isFam()) items.push({ f: p.cierre, t: `Cierre de calificaciones del periodo ${p.n}`, tipo: 'Académico' });
-  });
+  calsVis().forEach(([ps, l]) => ps.forEach(p => {
+    if (p.inicio) items.push({ f: p.inicio, t: `Inicia el periodo ${p.n}${l}`, tipo: 'Académico' });
+    if (p.fin) items.push({ f: p.fin, t: `Termina el periodo ${p.n}${l}`, tipo: 'Académico' });
+    if (p.cierre && !isFam()) items.push({ f: p.cierre, t: `Cierre de calificaciones del periodo ${p.n}${l}`, tipo: 'Académico' });
+  }));
   return items.sort((a, b) => a.f.localeCompare(b.f) || (a.hora || '').localeCompare(b.hora || ''));
 }
 function vCronograma() {
@@ -3634,12 +3659,12 @@ async function certAnio(eid, anio, grado) {
     const h = hs.find(x => grado == null || x.grado === grado) || hs[hs.length - 1];
     const ns = await q(db.from('notas').select('asignatura_id,periodo,valor').eq('estudiante_id', eid).eq('anio', anio));
     const rc = await q(db.from('recuperaciones').select('asignatura_id,periodo,nota').eq('estudiante_id', eid).eq('anio', anio)).catch(() => []);
-    const [cfg] = await q(db.from('anios_cerrados').select('periodos,escala').eq('colegio_id', ctx.colegio_id).eq('anio', anio)).catch(() => []);
+    const [cfg] = await q(db.from('anios_cerrados').select('periodos,escala,periodos_ciclos').eq('colegio_id', ctx.colegio_id).eq('anio', anio)).catch(() => []);
     return { h, ns, rc, cfg };
   });
   if (!r?.h) return;
   // periodos y escala tal como estaban ese año (si el colegio los cambió después, el certificado no cambia)
-  const { h, ns, rc } = r, e = est(eid), pre = h.nivel === 'preescolar', pers = (r.cfg?.periodos?.length ? r.cfg.periodos : periodos()).filter(p => !h.periodos?.length || h.periodos.includes(p.n)), escAnio = r.cfg?.escala?.length ? r.cfg.escala : escala();
+  const { h, ns, rc } = r, e = est(eid), pre = h.nivel === 'preescolar', pers = (h.nivel === 'ciclos' && (r.cfg ? r.cfg.periodos_ciclos?.length : calCiclos()) ? (r.cfg ? r.cfg.periodos_ciclos : calCiclos()) : r.cfg?.periodos?.length ? r.cfg.periodos : periodos()).filter(p => !h.periodos?.length || h.periodos.includes(p.n)), escAnio = r.cfg?.escala?.length ? r.cfg.escala : escala();
   const as = S.asigs.filter(a => a.nivel === h.nivel).sort((a, b) => a.orden - b.orden);
   const def = aid => { let s = 0, w = 0; pers.forEach(p => { const n = ns.find(x => x.asignatura_id === aid && x.periodo === p.n), x = rc.find(y => y.asignatura_id === aid && y.periodo === p.n); let v = n ? +n.valor : null; if (x?.nota != null && (v == null || +x.nota > v)) v = +x.nota; if (v != null) { s += v * p.peso; w += p.peso; } }); return w ? Math.round(s / w) : null; };
   const filas = as.map(a => ({ a, v: def(a.id) })).filter(x => x.v != null);
@@ -3716,7 +3741,7 @@ function acEstadisticas() {
       ${pares.filter(p => p.bajo).slice(0, 15).map(p => `<tr><td>${esc(p.g.nombre)}</td><td>${esc(p.a.nombre)}</td><td>${N(p.prom)}</td><td>${p.bajo} de ${p.n} (${p.pct}%)</td><td>${bar(p.pct)}</td></tr>`).join('') || '<tr><td colspan="5">Ninguna asignatura tiene estudiantes en bajo en este periodo.</td></tr>'}</tbody></table></div></section>`;
 }
 function acAvance() {
-  const ns = new Set(acad.notas.map(n => `${n.estudiante_id}|${n.asignatura_id}`)), ci = cierreDe(acad.p);
+  const ns = new Set(acad.notas.map(n => `${n.estudiante_id}|${n.asignatura_id}`)), ci = cierreDe(acad.p, null);
   const docs = (S.miembros || []).filter(m => m.rol === 'docente' && m.activo).map(m => {
     let esp = 0, reg = 0; const falt = [];
     (S.dg || []).filter(d => d.miembro_id === m.id).forEach(d => {
@@ -3733,7 +3758,7 @@ function acAvance() {
       <td>${x.falt.length ? `<button class="btn ghost sm" type="button" onclick="recordarDoc('${x.m.id}')">Copiar recordatorio</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No hay docentes registrados.</p>'}</div>`;
 }
 async function recordarDoc(mid) {
-  const m = S.miembros.find(x => x.id === mid), ci = cierreDe(acad.p);
+  const m = S.miembros.find(x => x.id === mid), ci = cierreDe(acad.p, null);
   const t = `Hola, ${m.nombre.split(' ')[0]}. Le recordamos registrar en Colegio-IA las calificaciones pendientes del periodo ${acad.p}${ci ? ` antes del ${fechaLarga(ci)}` : ''}: ${location.origin + location.pathname}. Gracias.`;
   try { await navigator.clipboard.writeText(t); toast('Recordatorio copiado. Péguelo en WhatsApp o en un correo'); } catch { openModal('Recordatorio', `<textarea id="cpT" style="width:100%;min-height:120px">${esc(t)}</textarea><div class="modal-foot"><button class="btn" type="button" onclick="copiar('#cpT')">Copiar</button></div>`); }
 }
@@ -4305,11 +4330,11 @@ async function cargarCampusStaff() {
   if (sel.ctab === 'calif') CAM.notas = ids.length ? await all(() => db.from('campus_entregas').select('item_id,estudiante_id,nota,estado').in('item_id', ids).order('id')) : [];
 }
 async function prepCampus() {
-  if (isFam()) { await cargarCampusFam(); if (!sel.cp) sel.cp = S.k.periodo_actual; return; }
+  if (isFam()) { await cargarCampusFam(); if (!sel.cp) sel.cp = paG(grupo(est(propio())?.grupo_id)); return; }
   const gs = gruposVis().filter(campusGrado); if (!gs.length) return;
   if (!sel.cg || !gs.find(g => g.id === sel.cg)) sel.cg = gs[0].id;
   const as = asigsVis(grupo(sel.cg)); if (!as.find(a => a.id === sel.ca)) sel.ca = as[0]?.id || '';
-  if (!sel.cp) sel.cp = S.k.periodo_actual;
+  if (!sel.cp) sel.cp = paG(grupo(sel.cg)); ajustarPer(grupo(sel.cg), 'cp');
   await cargarCampusStaff();
 }
 async function campusSel(k, v) { sel[k] = k === 'cp' ? +v : v; if (k === 'cg') sel.ca = ''; $('#view').innerHTML = '<div class="loading">Cargando…</div>'; await guard(prepCampus); render(); }
@@ -4350,7 +4375,7 @@ function vCampusFam() {
     <div class="cursos-grid">${as.map(a => { const c = (CAM.cursos || []).find(x => x.asignatura_id === a.id), np = CAM.pend.filter(i => !vencido(i) && CAM.uns.find(u => u.id === i.unidad_id)?.asignatura_id === a.id).length;
       return `<button type="button" class="curso-card" aria-pressed="${sel.cfa === a.id}" onclick="sel.cfa=sel.cfa==='${a.id}'?'todas':'${a.id}';render()">${portadaCurso(a, c)}<span class="cc-t"><strong>${esc(a.nombre)}</strong><br><span class="muted">${esc(g.nombre)}${np ? ` · ${np} pendiente${np > 1 ? 's' : ''}` : ''}</span></span></button>`; }).join('')}</div>
     <div class="panel"><div class="toolbar"><label class="field"><span>Asignatura</span><select onchange="sel.cfa=this.value;render()">${opt('todas', 'Todas las asignaturas', sel.cfa)}${as.map(a => opt(a.id, a.nombre, sel.cfa)).join('')}</select></label>
-      <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp)}</select></label>${temaSelector()}</div>
+      <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp, grupo(est(propio())?.grupo_id))}</select></label>${temaSelector()}</div>
       ${sel.cfa !== 'todas' && (CAM.cursos || []).find(x => x.asignatura_id === sel.cfa)?.descripcion ? `<p class="muted">${esc(CAM.cursos.find(x => x.asignatura_id === sel.cfa).descripcion)}</p>` : ''}
       ${uns.length ? uns.map(u => { const its = CAM.its.filter(i => i.unidad_id === u.id), a = S.asigs.find(x => x.id === u.asignatura_id);
         return `<section class="cam-unidad">${u.banner ? `<img class="banner-u" src="${u.banner}" alt="">` : ''}<h3><span class="tag">${esc(a?.nombre || '')}</span> ${esc(u.titulo)}</h3>${u.descripcion ? `<p class="muted">${esc(u.descripcion)}</p>` : ''}
@@ -4458,7 +4483,7 @@ function vCampusStaff() {
   return head('Campus virtual', 'Arme cada unidad con recursos, videos, clases en vivo, tareas y cuestionarios. Las calificaciones de tareas y cuestionarios pasan solas a Calificaciones como actividades del periodo.') +
     `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="campusSel('cg',this.value)">${gs.map(x => opt(x.id, x.nombre, sel.cg)).join('')}</select></label>
       <label class="field"><span>${g.nivel === 'preescolar' ? 'Dimensión' : 'Asignatura'}</span><select onchange="campusSel('ca',this.value)">${as.map(x => opt(x.id, x.nombre, sel.ca)).join('')}</select></label>
-      <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp)}</select></label>
+      <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp, grupo(sel.cg))}</select></label>
       ${edita && sel.ctab !== 'part' && sel.ctab !== 'calif' ? `<button class="btn" type="button" style="margin-left:auto" onclick="formUnidad()">+ Nueva unidad</button>` : ''}</div>
       ${a ? cursoCabecera(g, a, edita) : ''}
       <div class="tabs" role="tablist">${[['cont', 'Contenidos'], ['part', 'Participantes'], ['calif', 'Calificador']].map(([k, l]) => `<button type="button" role="tab" aria-selected="${(sel.ctab || 'cont') === k}" onclick="campusTab('${k}')">${l}</button>`).join('')}</div>
@@ -4509,7 +4534,7 @@ async function copiarUnidad(uid) {
   const u = CAM.uns.find(x => x.id === uid), gs = gruposVis().filter(g => g.id !== sel.cg && campusGrado(g) && asigsDe(g).some(a => a.id === sel.ca));
   if (!gs.length) return toast('No hay otro curso con esta asignatura y el campus activo');
   openModal('Copiar unidad a otro curso', `<p>Se copia "${esc(u.titulo)}" con sus contenidos y las preguntas de sus cuestionarios (sin entregas). Después revise las fechas.</p>
-    <div class="formgrid"><label class="field"><span>Curso</span><select id="cpG">${gs.map(g => opt(g.id, g.nombre)).join('')}</select></label><label class="field"><span>Periodo</span><select id="cpP">${perOpts(sel.cp)}</select></label></div>
+    <div class="formgrid"><label class="field"><span>Curso</span><select id="cpG">${gs.map(g => opt(g.id, g.nombre)).join('')}</select></label><label class="field"><span>Periodo</span><select id="cpP">${perOpts(sel.cp, grupo(sel.cg))}</select></label></div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="cpBtn" onclick="hacerCopiaUnidad('${uid}')">Copiar</button></div>`);
 }
 async function hacerCopiaUnidad(uid) {
@@ -5018,7 +5043,7 @@ Object.assign(window, { formBoldColegio, guardarBoldColegio, quitarBoldColegio, 
   formUsuario, formGruposDoc, guardarGruposDoc, cambiarGrupo, setNota, setNotaPre, setAsis, setObs,
   imprimirBoletin, boletinesGrupo, formGrupo, guardarGrupo, borrarGrupo, editAsig, nuevaAsig, borrarAsig,
   formColegio, crearColegio, toggleColegio, irColegio,
-  accionEst, agregarAcud, guardarRetiro, libroMatricula, irPtab, guardarInst, subirLogo, quitarLogo, cambiarNumPeriodos, guardarPeriodos,
+  accionEst, agregarAcud, guardarRetiro, libroMatricula, irPtab, guardarInst, subirLogo, quitarLogo, cambiarNumPeriodos, guardarPeriodos, guardarPeriodosCiclos,
   guardarResolucion, formConcepto, guardarConcepto, setCierre, confirmarCierre, abrirCuenta, registrarPago, anularPago, reciboPago,
   imprimirCartera, guardarMediosPago, cambiarAnioCartera, cambiarPerfilDemo, pagarSuscripcion, pagarBoldSusc, copiarTexto, reciboSusc, revisarCompPlat, decidirCompPlat, formPagadoHasta, guardarPagadoHasta, guardarCfgPlat, abrirPiar, guardarPiar, piarHTML, formRetiro,
 });
@@ -5060,7 +5085,7 @@ function vDocumentos() {
   const fila = ([t, l, d]) => {
     const p = docPrecio(t);
     if (t === 'retiro' && e.estado === 'Activo') return '';
-    const accion = t === 'boletin' ? `<select id="dsP" aria-label="Periodo">${perOpts(Math.max(1, S.k.periodo_actual - 1))}</select> <button class="btn sm" type="button" onclick="pedirDoc('boletin')">Pedir</button>`
+    const accion = t === 'boletin' ? `<select id="dsP" aria-label="Periodo">${perOpts(Math.max(1, paG(grupo(e.grupo_id)) - 1), grupo(e.grupo_id))}</select> <button class="btn sm" type="button" onclick="pedirDoc('boletin')">Pedir</button>`
       : t === 'anteriores' ? (docHist.length ? `<select id="dsA" aria-label="Año">${docHist.map(h => opt(h.anio, h.anio)).join('')}</select> <button class="btn sm" type="button" onclick="pedirDoc('anteriores')">Pedir</button>` : '<span class="muted">Aún no hay años anteriores</span>')
       : `<button class="btn sm" type="button" onclick="pedirDoc('${t}')">${p ? 'Pedir' : 'Descargar'}</button>`;
     return `<tr><td><strong>${l}</strong><br><span class="muted">${d}</span></td><td style="white-space:nowrap">${p ? cop(p) : 'Gratis'}</td><td style="white-space:nowrap">${accion}</td></tr>`;
@@ -5808,6 +5833,7 @@ async function guardarCiclo() {
   if (doc) await guard(() => uno(db.from('grupos').update({ director_nombre: doc.nombre, director_miembro_id: doc.id }).eq('id', r.id).select().single()).then(x => Object.assign(r, x)));
   S.grupos.push(r); S.grupos.sort((a, b) => a.grado - b.grado || a.nombre.localeCompare(b.nombre, 'es'));
   if (!S.asigs.some(a => a.nivel === 'ciclos')) S.asigs = await all(() => db.from('asignaturas').select('*').eq('colegio_id', ctx.colegio_id).order('nivel').order('orden'));
+  if (!calCiclos()) S.k = await q(db.from('colegios').select('*').eq('id', ctx.colegio_id).single()).catch(() => S.k);   // el primer curso crea el calendario de los ciclos
   closeModal(); render();
 }
 // Cursos de ciclos del primer semestre (periodos 1 y 2) que aún tienen estudiantes: se cierran a mitad de año
