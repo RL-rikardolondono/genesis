@@ -562,3 +562,9 @@ body{background:linear-gradient(180deg,#EEF5FB 0,var(--paper) 320px) no-repeat,v
 .chks{display:flex;flex-wrap:wrap;gap:6px 14px}
 .ml-paso.hecho h2{color:#0E8571}
 .ml-aviso{border-left:4px solid #14A38B}
+/* v0.25: documentos verificables, diploma y libro */
+.verif{margin-top:14px;padding:8px 12px;border:1px dashed #0B4F8A;border-radius:8px;font-size:.85rem;color:#1C2B39;background:#F4F8FB}
+.verif-res{padding:12px 14px;border-radius:12px;margin:10px 0;font-size:1.05rem}.verif-res.ok{background:#E3F6F2;color:#0E8571}.verif-res.bad{background:#FDE8E8;color:#A12A2A}
+.doc.diploma{border:6px double #0B4F8A;padding:28px}
+.libro-t{font-size:.78rem}.libro-t td,.libro-t th{padding:3px 4px;text-align:center}.libro-t td:nth-child(2){text-align:left}
+.verif-pedir{margin-top:10px}.verif-pedir summary{cursor:pointer;color:#0B4F8A}
