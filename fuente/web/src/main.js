@@ -106,7 +106,7 @@ const ROL_DESC = { rector: 'Ve y administra todo: matrícula, calificaciones, pa
   estudiante: 'Su campus virtual (clases, tareas y cuestionarios), gemas, horario, comunicados y calificaciones.' };
 const ROL_TXT = { rector: 'Rector(a)', coordinador: 'Coordinador(a)', secretaria: 'Secretaría', tesoreria: 'Tesorería', docente: 'Docente', acudiente: 'Acudiente', estudiante: 'Estudiante' };
 const PAGOS_ROLES = ['rector', 'secretaria', 'tesoreria'];
-const NIVELES = { preescolar: 'Preescolar', primaria: 'Primaria', secundaria: 'Básica secundaria', media: 'Media' };
+const NIVELES = { preescolar: 'Preescolar', primaria: 'Primaria', secundaria: 'Básica secundaria', media: 'Media', ciclos: 'Bachillerato por ciclos (CLEI)' };
 const PRE_VAL = { Superior: 96, Alto: 85, 'Básico': 70, Bajo: 50 };
 const DESC = { Superior: 'Alcanza de manera excepcional los logros propuestos para la dimensión.', Alto: 'Alcanza satisfactoriamente los logros propuestos.', 'Básico': 'Alcanza los logros mínimos con apoyo ocasional.', Bajo: 'Requiere acompañamiento para alcanzar los logros propuestos.' };
 
@@ -153,6 +153,9 @@ function waLink(tel, txt) { let d = String(tel || '').replace(/\D/g, ''); if (d.
 const waBtn = (tel, txt, l = 'Enviar por WhatsApp') => `<a class="btn wa" href="${esc(waLink(tel, txt))}" target="_blank" rel="noopener">${l}</a>`;
 const estsDe = gid => S.ests.filter(e => e.grupo_id === gid && e.estado === 'Activo').sort((a, b) => a.apellidos.localeCompare(b.apellidos, 'es'));
 const periodos = () => S.k.periodos || [];
+// v0.23: un curso de ciclos semestral (CLEI 5 y 6) usa solo sus periodos (1-2 o 3-4)
+const perG = g => g?.periodos?.length ? periodos().filter(p => g.periodos.includes(p.n)) : periodos();
+const perEst = e => perG(grupo(est(e)?.grupo_id));
 const escala = () => S.k.escala || [];
 function gruposVis() {
   if (isDir()) return S.grupos;
@@ -165,7 +168,7 @@ const propio = () => isFam() ? ctx.estudiante_id : null;
 function notaRaw(e, a, p) { const v = S.notas[`${e}|${a}|${p}`]; return v == null ? null : +v; }
 // Nota efectiva: si hay recuperación con nota, vale la mayor (Decreto 1290)
 function nota(e, a, p) { const v = notaRaw(e, a, p), r = S.rec[`${e}|${a}|${p}`]; return r?.nota != null && (v == null || +r.nota > v) ? +r.nota : v; }
-function defin(e, a, hasta) { let s = 0, w = 0; periodos().forEach(p => { if (hasta && p.n > hasta) return; const v = nota(e, a, p.n); if (v != null) { s += v * p.peso; w += p.peso; } }); return w ? Math.round(s / w) : null; }
+function defin(e, a, hasta) { let s = 0, w = 0; perEst(e).forEach(p => { if (hasta && p.n > hasta) return; const v = nota(e, a, p.n); if (v != null) { s += v * p.peso; w += p.peso; } }); return w ? Math.round(s / w) : null; }
 function desem(v, esc) { if (v == null) return ''; const r = Math.round(+v); const x = [...(esc || escala())].sort((a, b) => b.min - a.min).find(s => r >= +s.min); return x ? x.d : 'Bajo'; }
 // Escala de 0 a 100 en números enteros (decisión de Ricardo, 18 oct 2026)
 const N = v => v == null ? '' : String(Math.round(+v));
@@ -1173,7 +1176,7 @@ async function prepGrupoSel() {
   await cargarGrupo(sel.g);
 }
 async function cambiarGrupo(g) { sel.g = g; sel.a = ''; $('#view').innerHTML = '<div class="loading">Cargando…</div>'; await guard(() => cargarGrupo(g)); render(); }
-const perOpts = s => periodos().map(p => opt(p.n, 'Periodo ' + p.n, s)).join('');
+const perOpts = s => perG(view === 'boletines' && propio() ? grupo(est(propio())?.grupo_id) : grupo(sel.g)).map(p => opt(p.n, 'Periodo ' + p.n, s)).join('');
 function sinGrupos() { return `<div class="panel empty">${isDir() ? 'Aún no hay cursos. Créelos en Parametrización.' : 'No tiene grupos asignados.'}</div>`; }
 const cierreDe = p => periodos().find(x => x.n === +p)?.cierre || '';
 const cerrado = p => !isDir() && !!cierreDe(p) && hoy() > cierreDe(p);
@@ -1185,7 +1188,10 @@ function calcActs(eid, acts) {
   acts.forEach(a => { const v = S.nact[`${a.id}|${eid}`]; if (v == null) return; t += +v; n++; });
   return n ? Math.round(t / n) : null;
 }
+// v0.23: si el curso es de ciclos semestral, el periodo elegido debe ser uno de los suyos
+function ajustarPer(g, campo = 'p') { const ps = g?.periodos; if (ps?.length && !ps.includes(+sel[campo])) sel[campo] = ps.includes(S.k.periodo_actual) ? S.k.periodo_actual : (S.k.periodo_actual > Math.max(...ps) ? Math.max(...ps) : Math.min(...ps)); }
 function vNotas() {
+  ajustarPer(grupo(sel.g));
   const gs = gruposVis(); if (!gs.length) return head('Calificaciones') + sinGrupos();
   const g = grupo(sel.g); if (!sel.p) sel.p = S.k.periodo_actual;
   if (isDoc() && !S.misGrupos.includes(g.id)) {
@@ -1209,7 +1215,7 @@ function vNotas() {
     ${es.map(e => `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td>${acts.map(a => { const v = S.nact[`${a.id}|${e.id}`]; return `<td><input class="actnota" ${NOTA_ATTR} value="${N(v)}" aria-label="${esc(a.nombre)} de ${esc(nom(e))}" onchange="setNotaAct('${a.id}','${e.id}',this)" ${a.campus ? 'disabled title="Se califica en el campus virtual"' : dis}></td>`; }).join('')}
       <td id="pn-${e.id}">${chip(notaRaw(e.id, sel.a, sel.p))}</td><td id="ac-${e.id}">${chip(defin(e.id, sel.a))}</td><td id="st-${e.id}">${estadoCal(e.id)}</td><td>${recBtn(e.id)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   } else {
-    const ps = periodos(), txt = x => x == null ? '—' : pre ? desem(x) : N(x);
+    const ps = perG(grupo(sel.g)), txt = x => x == null ? '—' : pre ? desem(x) : N(x);
     tabla = `<div class="tbl"><table class="califs"><thead><tr><th>Estudiante</th>${ps.map(p => `<th class="num ${p.n === sel.p ? 'actual' : ''}">${p.n === sel.p ? `Periodo ${p.n}<br><small>calificando</small>` : `P${p.n}`}</th>`).join('')}<th class="num">${pre ? '' : 'Acumulado'}</th><th>Estado</th>${pre ? '' : '<th></th>'}</tr></thead><tbody>
     ${es.map(e => {
       const v = notaRaw(e.id, sel.a, sel.p);
@@ -1473,8 +1479,8 @@ function certificado(eid) {
   const as = asigsDe(g), pre = g.nivel === 'preescolar', pa = S.k.periodo_actual;
   return `<section class="doc">${docHead('Constancia de estudio con calificaciones', `Año lectivo ${S.k.anio}`)}${fotoDoc(eid)}
   <p style="margin-top:14px">El suscrito rector(a) de <strong>${esc(S.k.nombre)}</strong> hace constar que <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, ${e.estado === 'Activo' ? 'cursa' : 'cursó'} el grado <strong>${esc(g.nombre)}</strong> en el año lectivo ${S.k.anio}, con las siguientes valoraciones acumuladas a la fecha:</p>
-  <table><thead><tr><th>${pre ? 'Dimensión' : 'Asignatura'}</th><th>IH</th>${pre ? '' : periodos().filter(p => p.n <= pa).map(p => `<th>P${p.n}</th>`).join('')}<th>Valoración</th><th>Desempeño</th></tr></thead><tbody>
-  ${as.map(a => { const v = defin(eid, a.id); return `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : periodos().filter(p => p.n <= pa).map(p => { const x = nota(eid, a.id, p.n); return `<td>${x == null ? '—' : N(x)}</td>`; }).join('')}<td>${v == null || pre ? '—' : N(v)}</td><td>${v == null ? 'Sin valorar' : desem(v)}</td></tr>`; }).join('')}</tbody></table>
+  <table><thead><tr><th>${pre ? 'Dimensión' : 'Asignatura'}</th><th>IH</th>${pre ? '' : perG(g).filter(p => p.n <= pa).map(p => `<th>P${p.n}</th>`).join('')}<th>Valoración</th><th>Desempeño</th></tr></thead><tbody>
+  ${as.map(a => { const v = defin(eid, a.id); return `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : perG(g).filter(p => p.n <= pa).map(p => { const x = nota(eid, a.id, p.n); return `<td>${x == null ? '—' : N(x)}</td>`; }).join('')}<td>${v == null || pre ? '—' : N(v)}</td><td>${v == null ? 'Sin valorar' : desem(v)}</td></tr>`; }).join('')}</tbody></table>
   <p class="dnote">Escala institucional: ${escala().map(s => `${s.d} de ${N(s.min)} a ${N(s.max)}`).join(', ')}. Decreto 1290 de 2009.</p>
   <p>Se expide a solicitud del interesado en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
   ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`;
@@ -1482,10 +1488,10 @@ function certificado(eid) {
 
 function boletinHTML(eid, per) {
   const e = est(eid), g = grupo(e.grupo_id); if (!g) return '';
-  const as = asigsDe(g), pre = g.nivel === 'preescolar', ps = periodos().filter(p => p.n <= per), pr = promedio(eid, per);
+  const as = asigsDe(g), pre = g.nivel === 'preescolar', ps = perG(g).filter(p => p.n <= per), pr = promedio(eid, per);
   const body = pre ? `<table><thead><tr><th>Dimensión</th><th>Desempeño</th><th>Descripción</th></tr></thead><tbody>${as.map(a => { const v = nota(eid, a.id, per), d = desem(v); const lo = S.logros[`${g.id}|${a.id}|${per}`]; return `<tr><td>${esc(a.nombre)}</td><td>${v == null ? 'Sin valorar' : d}</td><td>${lo ? logroLista(lo) + (v == null ? '' : `<span class="logro">${DESC[d] || ''}</span>`) : (v == null ? '' : DESC[d] || '')}</td></tr>`; }).join('')}</tbody></table>`
     : `<table><thead><tr><th>Asignatura</th><th>IH</th>${ps.map(p => `<th>P${p.n}</th>`).join('')}<th>Acum.</th><th>Desempeño</th></tr></thead><tbody>${as.map(a => { const d = defin(eid, a.id, per), lo = S.logros[`${g.id}|${a.id}|${per}`]; return `<tr><td>${esc(a.nombre)}${logroLista(lo)}</td><td>${a.ih}</td>${ps.map(p => { const v = nota(eid, a.id, p.n), r = S.rec[`${eid}|${a.id}|${p.n}`]; return `<td>${v == null ? '—' : N(v)}${r?.nota != null && v === +r.nota ? '<sup>R</sup>' : ''}</td>`; }).join('')}<td><strong>${d == null ? '—' : N(d)}</strong></td><td>${d == null ? '' : desem(d)}</td></tr>`; }).join('')}</tbody></table>`;
-  return `<section class="doc">${docHead('Informe académico', `Periodo ${per} de ${periodos().length}, año ${S.k.anio}`)}
+  return `<section class="doc">${docHead('Informe académico', esCiclo(g) && g.periodos?.length ? `${esc(gradoTxt(g.grado))}, ${semTxt(g)}: periodo ${per} · año ${S.k.anio}` : `Periodo ${per} de ${periodos().length}, año ${S.k.anio}`)}
   ${fotoDoc(eid)}<div class="dgrid"><div><span>Estudiante</span>${esc(nom(e))}</div><div><span>Documento</span>${e.tipo_doc} ${esc(e.doc)}</div><div><span>Grado y grupo</span>${esc(g.nombre)}</div>
   <div><span>Director(a) de grupo</span>${esc(g.director_nombre || '')}</div><div><span>${porClase() ? 'Fallas (horas de clase)' : 'Fallas a la fecha'}</span>${fallas(eid)}</div>${pre ? '' : `<div><span>Promedio acumulado</span>${pr == null ? '—' : N(pr) + ' ' + desem(pr)}</div>`}</div>
   ${body}
@@ -1497,6 +1503,7 @@ function boletinHTML(eid, per) {
 }
 function vBoletines() {
   if (!sel.p) sel.p = S.k.periodo_actual;
+  if (propio()) ajustarPer(grupo(est(propio())?.grupo_id)); else if (sel.g) ajustarPer(grupo(sel.g));
   if (propio()) {
     const eid = propio(); if (!est(eid) || !grupo(est(eid).grupo_id)) return head('Boletín') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
     return head('Boletín', 'Consulte e imprima el informe de cada periodo.', `<div class="toolbar" style="margin:0"><label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label>${docPagado(eid, 'boletin', sel.p) ? `<button class="btn" type="button" onclick="imprimirBoletin('${eid}')">Imprimir</button>` : ''}</div>`) +
@@ -1715,7 +1722,7 @@ async function guardarPeriodos() {
 }
 function paramGrupos() {
   return `<div class="panel"><div class="head" style="margin-bottom:10px"><h2 style="margin:0">Cursos</h2><button class="btn sm" type="button" onclick="formGrupo()">Nuevo curso</button></div>
-      ${S.grupos.length ? `<div class="tbl"><table><thead><tr><th>Curso</th><th>Grado</th><th>Nivel</th><th>Director(a)</th><th>Estudiantes</th><th></th></tr></thead><tbody>${S.grupos.map(g => `<tr><td><strong>${esc(g.nombre)}</strong></td><td>${gradoTxt(g.grado)}</td><td>${NIVELES[g.nivel]}</td><td>${esc(g.director_nombre || '—')}</td><td>${estsDe(g.id).length}</td><td style="white-space:nowrap"><button class="btn ghost sm" type="button" onclick="formGrupo('${g.id}')">Editar</button> <button class="btn ghost sm" type="button" onclick="borrarGrupo('${g.id}')">Eliminar</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no hay cursos.</p>'}</div>`;
+      ${S.grupos.length ? `<div class="tbl"><table><thead><tr><th>Curso</th><th>Grado</th><th>Nivel</th><th>Director(a)</th><th>Estudiantes</th><th></th></tr></thead><tbody>${S.grupos.map(g => `<tr><td><strong>${esc(g.nombre)}</strong></td><td>${gradoTxt(g.grado)}${esCiclo(g) && g.periodos?.length ? `<br><span class="muted">${semTxt(g)}</span>` : ''}</td><td>${NIVELES[g.nivel]}</td><td>${esc(g.director_nombre || '—')}</td><td>${estsDe(g.id).length}</td><td style="white-space:nowrap"><button class="btn ghost sm" type="button" onclick="formGrupo('${g.id}')">Editar</button> <button class="btn ghost sm" type="button" onclick="borrarGrupo('${g.id}')">Eliminar</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no hay cursos.</p>'}</div>`;
 }
 
 /* ---------- Costos del año ---------- */
@@ -1779,7 +1786,7 @@ async function guardarResolucion() {
 }
 function formConcepto(id) {
   const x = id ? conceptos.find(c => c.id === id) : { nombre: '', tipo: 'otro', periodicidad: 'unico', valor: 0, valores_grado: {}, mes_cobro: 2, meses: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11], activo: true };
-  const grados = GRADOS_TODOS;
+  const grados = GRADOS_TODOS_FN();
   openModal(id ? 'Editar concepto' : 'Nuevo concepto', `<div class="formgrid">
     ${fIn('kNom', 'Nombre', x.nombre)}
     <label class="field"><span>Tipo</span><select id="kTipo">${Object.entries(TIPOS_COSTO).map(([v, l]) => opt(v, l, x.tipo)).join('')}</select></label>
@@ -1807,10 +1814,13 @@ let cierre = [];
 async function prepCierre() {
   for (const g of S.grupos) await cargarGrupo(g.id);
   cierre = S.ests.filter(e => e.estado === 'Activo').map(e => {
-    const g = grupo(e.grupo_id), sig = S.grupos.filter(x => x.grado === (g?.grado ?? 0) + 1);
+    const g = grupo(e.grupo_id);
+    // v0.23: en ciclos, CLEI 4 pasa al CLEI 5 del primer semestre; CLEI 5 del segundo semestre pasa al CLEI 6 del primer semestre
+    const sig = S.grupos.filter(x => x.grado === (g?.grado ?? 0) + 1).sort((a, b) => (b.periodos?.includes(1) ? 1 : 0) - (a.periodos?.includes(1) ? 1 : 0));
     // v0.22: el último grado que ofrece el colegio (Quinto en un colegio de primaria, Transición en un jardín) termina el nivel y egresa
-    const ultimo = g && g.grado === Math.max(...S.grupos.map(x => x.grado)) && !sig.length;
-    const res = g?.grado === 11 || ultimo ? (g?.nivel !== 'preescolar' && perdidas(e.id).length > S.k.max_perdidas ? 'No promovido' : 'Graduado')
+    const mismoTramo = S.grupos.filter(x => esCiclo(x) === esCiclo(g));
+    const ultimo = g && g.grado === Math.max(...mismoTramo.map(x => x.grado)) && !sig.length;
+    const res = g?.grado === 11 || g?.grado === 26 || ultimo ? (g?.nivel !== 'preescolar' && perdidas(e.id).length > S.k.max_perdidas ? 'No promovido' : 'Graduado')
       : (g?.nivel !== 'preescolar' && perdidas(e.id).length > S.k.max_perdidas ? 'No promovido' : 'Promovido');
     return { id: e.id, resultado: res, destino: res === 'Promovido' ? (sig[0]?.id || '') : res === 'No promovido' ? e.grupo_id : '' };
   });
@@ -1819,10 +1829,10 @@ function paramCierre() {
   if (!esRector()) return '<div class="panel">Solo el rector o la rectora pueden cerrar el año lectivo.</div>';
   const porG = S.grupos.map(g => ({ g, es: estsDe(g.id) })).filter(x => x.es.length);
   const sinCurso = sinCursoSiguiente();
-  return (sinCurso.length ? `<div class="note bloqueo"><strong>Hay ${sinCurso.length} estudiante(s) promovido(s) sin curso del grado siguiente</strong> (${[...new Set(sinCurso.map(c => grupo(est(c.id)?.grupo_id)?.nombre))].map(esc).join(', ')}). Si cierra así, seguirían en el mismo curso. Cree primero el curso del grado siguiente en <button class="linkbtn" type="button" onclick="irPtab('grupos')">Cursos</button> o elija el curso de destino en la tabla.</div>` : '') + `<div class="note">Al cerrar el año ${S.k.anio}: cada estudiante queda en su nuevo curso, el sistema guarda su resultado en el historial, el año pasa a ${S.k.anio + 1} y se copian los costos como punto de partida. Esta acción no se puede deshacer. Revise la propuesta: el sistema sugiere "No promovido" cuando hay más de ${S.k.max_perdidas} asignaturas en bajo.</div>
+  return cierreSemestreHTML() + (sinCurso.length ? `<div class="note bloqueo"><strong>Hay ${sinCurso.length} estudiante(s) promovido(s) sin curso del grado siguiente</strong> (${[...new Set(sinCurso.map(c => grupo(est(c.id)?.grupo_id)?.nombre))].map(esc).join(', ')}). Si cierra así, seguirían en el mismo curso. Cree primero el curso del grado siguiente en <button class="linkbtn" type="button" onclick="irPtab('grupos')">Cursos</button> o elija el curso de destino en la tabla.</div>` : '') + `<div class="note">Al cerrar el año ${S.k.anio}: cada estudiante queda en su nuevo curso, el sistema guarda su resultado en el historial, el año pasa a ${S.k.anio + 1} y se copian los costos como punto de partida. Esta acción no se puede deshacer. Revise la propuesta: el sistema sugiere "No promovido" cuando hay más de ${S.k.max_perdidas} asignaturas en bajo.</div>
   ${porG.map(({ g, es }) => `<div class="panel"><h2>${esc(g.nombre)}</h2><div class="tbl"><table><thead><tr><th>Estudiante</th><th>En bajo</th><th>Resultado</th><th>Curso ${S.k.anio + 1}</th></tr></thead><tbody>
     ${es.map(e => { const c = cierre.find(x => x.id === e.id) || { resultado: 'Promovido', destino: '' }; return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td><td>${perdidas(e.id).length}</td>
-      <td><select onchange="setCierre('${e.id}','resultado',this.value)">${['Promovido', 'No promovido', 'Graduado'].map(r => opt(r, r === 'Graduado' ? (g.grado === 11 ? 'Graduado (bachiller)' : 'Termina el nivel y egresa') : r, c.resultado)).join('')}</select></td>
+      <td><select onchange="setCierre('${e.id}','resultado',this.value)">${['Promovido', 'No promovido', 'Graduado'].map(r => opt(r, r === 'Graduado' ? (g.grado === 11 || g.grado === 26 ? 'Graduado (bachiller)' : 'Termina el nivel y egresa') : r, c.resultado)).join('')}</select></td>
       <td>${c.resultado === 'Graduado' ? '<span class="muted">Egresa</span>' : `<select onchange="setCierre('${e.id}','destino',this.value)"><option value="">Mismo curso</option>${S.grupos.map(x => opt(x.id, x.nombre, c.destino)).join('')}</select>`}</td></tr>`; }).join('')}
   </tbody></table></div></div>`).join('')}
   ${porG.length ? `<div class="toolbar"><button class="btn warn" type="button" onclick="confirmarCierre()">Cerrar el año ${S.k.anio}</button></div>` : '<div class="panel empty">No hay estudiantes activos.</div>'}`;
@@ -1841,13 +1851,19 @@ async function confirmarCierre() {
   if (r) { sel.ptab = 'inst'; cierre = []; try { sessionStorage.setItem('genesis:ir', 'inicio'); } catch {} toast(`Año cerrado. Bienvenido al año ${r.nuevo_anio}`); await entrarContexto(ctx.id); }
 }
 
-const GRADOS = { '-2': 'Prejardín', '-1': 'Jardín', '0': 'Transición', 1: 'Primero', 2: 'Segundo', 3: 'Tercero', 4: 'Cuarto', 5: 'Quinto', 6: 'Sexto', 7: 'Séptimo', 8: 'Octavo', 9: 'Noveno', 10: 'Décimo', 11: 'Undécimo' };
+const GRADOS = { '-2': 'Prejardín', '-1': 'Jardín', '0': 'Transición', 1: 'Primero', 2: 'Segundo', 3: 'Tercero', 4: 'Cuarto', 5: 'Quinto', 6: 'Sexto', 7: 'Séptimo', 8: 'Octavo', 9: 'Noveno', 10: 'Décimo', 11: 'Undécimo',
+  // v0.23: bachillerato por ciclos (Decreto 3011 de 1997); grado 20 + ciclo, como los códigos de ciclos del SIMAT
+  23: 'CLEI 3 (6.º y 7.º)', 24: 'CLEI 4 (8.º y 9.º)', 25: 'CLEI 5 (10.º)', 26: 'CLEI 6 (11.º)' };
 const gradoTxt = g => GRADOS[g] ?? g;
 // Revisión 20 oct: en las listas de grados aparecen todos (de prejardín a undécimo); los que aún no tienen curso se marcan
-const GRADOS_TODOS = [-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+const GRADOS_BASE = [-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+// los ciclos aparecen en las listas solo si el colegio tiene cursos de ciclos
+const GRADOS_TODOS_FN = () => [...GRADOS_BASE, ...[23, 24, 25, 26].filter(g => S.grupos.some(x => x.grado === g))];
 const conCurso = g => S.grupos.some(x => x.grado === g);
 const gradoEtq = g => `${esc(gradoTxt(g))}${conCurso(g) ? '' : ' <span class="muted">(sin curso)</span>'}`;
-const nivelDe = g => g <= 0 ? 'preescolar' : g <= 5 ? 'primaria' : g <= 9 ? 'secundaria' : 'media';
+const nivelDe = g => g >= 21 ? 'ciclos' : g <= 0 ? 'preescolar' : g <= 5 ? 'primaria' : g <= 9 ? 'secundaria' : 'media';
+const esCiclo = g => g?.nivel === 'ciclos';
+const semTxt = g => esCiclo(g) && g.periodos?.length ? (g.periodos.includes(1) ? 'primer semestre (periodos 1 y 2)' : 'segundo semestre (periodos 3 y 4)') : '';
 // Listas preestablecidas: dimensiones de preescolar y áreas obligatorias de la Ley 115 de 1994 (art. 23 y 31)
 const PRESET_ASIG = {
   preescolar: ['Dimensión comunicativa', 'Dimensión cognitiva', 'Dimensión corporal', 'Dimensión socioafectiva', 'Dimensión estética', 'Dimensión ética', 'Dimensión espiritual'],
@@ -1855,7 +1871,8 @@ const PRESET_ASIG = {
 };
 PRESET_ASIG.secundaria = PRESET_ASIG.primaria;
 PRESET_ASIG.media = [...PRESET_ASIG.primaria, 'Química', 'Física', 'Filosofía', 'Ciencias económicas y políticas'];
-const GRADOS_NIVEL = { preescolar: [-2, -1, 0], primaria: [1, 2, 3, 4, 5], secundaria: [6, 7, 8, 9], media: [10, 11] };
+PRESET_ASIG.ciclos = PRESET_ASIG.media;
+const GRADOS_NIVEL = { preescolar: [-2, -1, 0], primaria: [1, 2, 3, 4, 5], secundaria: [6, 7, 8, 9], media: [10, 11], ciclos: [23, 24, 25, 26] };
 const gradosTxt = a => a.grados?.length ? a.grados.slice().sort((x, y) => x - y).map(gradoTxt).join(', ') : 'Todos los grados del nivel';
 function planHTML(n) {
   const as = S.asigs.filter(a => a.nivel === n).sort((a, b) => a.orden - b.orden), tipo = n === 'preescolar' ? 'dimensión' : 'asignatura';
@@ -1874,7 +1891,7 @@ function planHTML(n) {
 function planTabs() {
   const n = sel.nivel || 'primaria';
   return `<div class="panel"><h2>Plan de estudios</h2><p class="muted">Asignaturas (o dimensiones en preescolar) por nivel, con sus horas semanales. Puede indicar en qué grados se dicta cada una: por ejemplo, una asignatura solo para Quinto.</p>
-    <div class="tabs" role="tablist">${Object.entries(NIVELES).map(([k, l]) => `<button type="button" role="tab" aria-selected="${n === k}" onclick="sel.nivel='${k}';render()">${l}</button>`).join('')}</div>${planHTML(n)}</div>`;
+    <div class="tabs" role="tablist">${Object.entries(NIVELES).filter(([k]) => k !== 'ciclos' || S.grupos.some(esCiclo) || S.asigs.some(a => a.nivel === 'ciclos')).map(([k, l]) => `<button type="button" role="tab" aria-selected="${n === k}" onclick="sel.nivel='${k}';render()">${l}</button>`).join('')}</div>${planHTML(n)}</div>`;
 }
 // Avisos de sensatez: nombres que no corresponden al nivel
 function rarezaAsig(n, nombre) {
@@ -1902,16 +1919,20 @@ function docentesSel(g) {
 }
 function formGrupo(id) {
   const g = id ? grupo(id) : { nombre: '', grado: 1, director_nombre: '' };
+  const fijo = id && esCiclo(g);
   openModal(id ? 'Editar grupo' : 'Nuevo grupo', `<div class="formgrid">
-    <label class="field"><span>Grado</span><select id="gGr">${Object.entries(GRADOS).sort((a, b) => a[0] - b[0]).map(([v, l]) => opt(v, l, g.grado)).join('')}</select></label>
+    ${fijo ? `<div class="field full"><span>Ciclo</span><strong>${esc(gradoTxt(g.grado))}</strong>${g.periodos?.length ? ` · ${semTxt(g)}` : ''}</div>`
+      : `<label class="field"><span>Grado o ciclo</span><select id="gGr" onchange="gSemBox.hidden=!(+this.value>=25)">${Object.entries(GRADOS).sort((a, b) => a[0] - b[0]).map(([v, l]) => opt(v, +v >= 21 ? `Ciclos · ${l}` : l, g.grado)).join('')}</select></label>
+    <label class="field" id="gSemBox" hidden><span>Semestre del ciclo</span><select id="gSem"><option value="1">Primer semestre (periodos 1 y 2)</option><option value="2">Segundo semestre (periodos 3 y 4)</option></select></label>`}
     <label class="field"><span>Nombre del grupo</span><input id="gNom" value="${esc(g.nombre)}" placeholder="Por ejemplo: Tercero A"></label>
     ${docentesSel(g)}</div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarGrupo('${id || ''}')">Guardar</button></div>`);
 }
 async function guardarGrupo(id) {
-  const grado = +$('#gGr').value;
+  if (!id && +$('#gGr').value >= 21) return guardarCiclo();
+  const grado = id && esCiclo(grupo(id)) ? grupo(id).grado : +$('#gGr').value;
   const dm = $('#gDirM')?.value || null, doc = (S.miembros || []).find(m => m.id === dm);
-  const d = { grado, nivel: nivelDe(grado), nombre: $('#gNom').value.trim() || gradoTxt(grado), director_nombre: doc ? doc.nombre : (id ? grupo(id)?.director_nombre || '' : ''), director_miembro_id: doc ? doc.id : null };
+  const d = { grado, nivel: nivelDe(grado), nombre: $('#gNom').value.trim() || (grado >= 21 ? 'CLEI ' + (grado - 20) : gradoTxt(grado)), director_nombre: doc ? doc.nombre : (id ? grupo(id)?.director_nombre || '' : ''), director_miembro_id: doc ? doc.id : null };
   if (!/[a-záéíóúñ]/i.test(d.nombre)) return toast('Escriba el nombre del curso, por ejemplo Séptimo A');
   const r = await guard(() => id ? uno(db.from('grupos').update(d).eq('id', id).select().single()) : q(db.from('grupos').insert({ ...d, colegio_id: ctx.colegio_id }).select().single()), 'Grupo guardado');
   if (!r) return;
@@ -3603,12 +3624,14 @@ function pazYSalvo(eid) {
 async function certAnteriores(eid) {
   const h = await guard(() => q(db.from('historial').select('*').eq('estudiante_id', eid).order('anio')));
   if (!h) return;
-  openModal(`Años anteriores: ${nom(est(eid))}`, h.length ? `<ul class="list">${h.map(x => `<li style="display:flex;justify-content:space-between;gap:10px;align-items:center"><span><strong>${x.anio}</strong> · ${esc(x.grupo_nombre || gradoTxt(x.grado))} · ${x.resultado}</span><button class="btn sm" type="button" onclick="certAnio('${eid}',${x.anio})">Certificado</button></li>`).join('')}</ul>`
+  openModal(`Años anteriores: ${nom(est(eid))}`, h.length ? `<ul class="list">${h.map(x => `<li style="display:flex;justify-content:space-between;gap:10px;align-items:center"><span><strong>${x.anio}</strong> · ${esc(x.grupo_nombre || gradoTxt(x.grado))} · ${x.resultado}</span><button class="btn sm" type="button" onclick="certAnio('${eid}',${x.anio},${x.grado ?? 'null'})">Certificado</button></li>`).join('')}</ul>`
     : '<p class="muted">Aún no hay años anteriores registrados. Se registran automáticamente al hacer el cierre de año en Parametrización.</p>');
 }
-async function certAnio(eid, anio) {
+async function certAnio(eid, anio, grado) {
   const r = await guard(async () => {
-    const [h] = await q(db.from('historial').select('*').eq('estudiante_id', eid).eq('anio', anio));
+    // v0.23: en ciclos un estudiante puede terminar dos ciclos el mismo año (CLEI 5 y CLEI 6): se elige el del certificado
+    const hs = await q(db.from('historial').select('*').eq('estudiante_id', eid).eq('anio', anio).order('grado'));
+    const h = hs.find(x => grado == null || x.grado === grado) || hs[hs.length - 1];
     const ns = await q(db.from('notas').select('asignatura_id,periodo,valor').eq('estudiante_id', eid).eq('anio', anio));
     const rc = await q(db.from('recuperaciones').select('asignatura_id,periodo,nota').eq('estudiante_id', eid).eq('anio', anio)).catch(() => []);
     const [cfg] = await q(db.from('anios_cerrados').select('periodos,escala').eq('colegio_id', ctx.colegio_id).eq('anio', anio)).catch(() => []);
@@ -3616,7 +3639,7 @@ async function certAnio(eid, anio) {
   });
   if (!r?.h) return;
   // periodos y escala tal como estaban ese año (si el colegio los cambió después, el certificado no cambia)
-  const { h, ns, rc } = r, e = est(eid), pre = h.nivel === 'preescolar', pers = r.cfg?.periodos?.length ? r.cfg.periodos : periodos(), escAnio = r.cfg?.escala?.length ? r.cfg.escala : escala();
+  const { h, ns, rc } = r, e = est(eid), pre = h.nivel === 'preescolar', pers = (r.cfg?.periodos?.length ? r.cfg.periodos : periodos()).filter(p => !h.periodos?.length || h.periodos.includes(p.n)), escAnio = r.cfg?.escala?.length ? r.cfg.escala : escala();
   const as = S.asigs.filter(a => a.nivel === h.nivel).sort((a, b) => a.orden - b.orden);
   const def = aid => { let s = 0, w = 0; pers.forEach(p => { const n = ns.find(x => x.asignatura_id === aid && x.periodo === p.n), x = rc.find(y => y.asignatura_id === aid && y.periodo === p.n); let v = n ? +n.valor : null; if (x?.nota != null && (v == null || +x.nota > v)) v = +x.nota; if (v != null) { s += v * p.peso; w += p.peso; } }); return w ? Math.round(s / w) : null; };
   const filas = as.map(a => ({ a, v: def(a.id) })).filter(x => x.v != null);
@@ -3979,7 +4002,7 @@ function previaImg(input, id) {
 }
 function formProducto(id) {
   const p = productos.find(x => x.id === id) || { categoria: 'Uniformes', activo: true, grados: [], orden: productos.length + 1 };
-  const grados = GRADOS_TODOS;
+  const grados = GRADOS_TODOS_FN();
   openModal(id ? 'Editar artículo' : 'Agregar artículo', `<div class="formgrid">
     <label class="field"><span>Categoría</span><select id="prCat">${CATS.map(c => opt(c, c, p.categoria)).join('')}</select></label>
     ${fIn('prNom', 'Nombre', p.nombre, 'maxlength="120"')}${fIn('prPre', 'Precio (pesos)', p.precio || '', 'type="number" min="1"')}
@@ -4771,7 +4794,7 @@ async function prepCampusInicio() {
 }
 // ---------- Parametrización: campus y gemas ----------
 function paramCampus() {
-  const k = S.k, r = isDir(), dis = r ? '' : 'disabled', grados = GRADOS_TODOS, sg = k.campus_grados || [];
+  const k = S.k, r = isDir(), dis = r ? '' : 'disabled', grados = GRADOS_TODOS_FN(), sg = k.campus_grados || [];
   return `<div class="panel"><h2>Campus virtual</h2><p class="muted">Cada docente arma sus unidades con recursos, videos, clases en vivo, tareas y cuestionarios. Los estudiantes y sus familias entran desde Colegio-IA; quien tiene pagos pendientes no puede usarlo.</p>
     <label class="chk"><input type="checkbox" id="cAct" ${k.campus_activo ? 'checked' : ''} ${dis}> Campus virtual activo</label>
     <p style="margin:12px 0 4px"><strong>Grados con campus</strong> <span class="muted">(si no marca ninguno, funciona en todos)</span></p>
@@ -5773,3 +5796,49 @@ function panelCambiosPlat() {
     <div class="tbl"><table><thead><tr><th>Fecha</th><th>Colegio</th><th>Cambio</th><th>Pagó</th><th>Origen</th><th>Estado</th></tr></thead><tbody>
     ${cambiosPlan.map(c => `<tr><td>${fmtF(c.creado_en)}</td><td>${esc(nom(c.colegio_id))}</td><td>${c.plan_antes} → ${c.plan_nuevo}</td><td>${cop(c.valor)}${c.meses ? ` (${c.meses} ${c.meses === 1 ? 'mes' : 'meses'})` : ''}</td><td>${esc(c.origen)}${c.referencia ? `<br><span class="muted">${esc(c.referencia)}</span>` : ''}</td><td>${c.estado === 'revisar' ? '<span class="tag t3">Por revisar</span>' : '<span class="tag ok-tag">Aplicado</span>'}</td></tr>`).join('')}</tbody></table></div></div>`;
 }
+
+/* =====================================================================
+   v0.23 · Bachillerato por ciclos (CLEI 3 a 6): crear cursos de ciclos y cerrar el semestre
+   ===================================================================== */
+async function guardarCiclo() {
+  const grado = +$('#gGr').value, ciclo = grado - 20, sem = ciclo >= 5 ? +$('#gSem').value : null;
+  const r = await guard(() => q(db.rpc('crear_ciclo', { p_colegio: ctx.colegio_id, p_ciclo: ciclo, p_semestre: sem, p_nombre: $('#gNom').value.trim() })), 'Curso de ciclos creado');
+  if (!r) return;
+  const dm = $('#gDirM')?.value || null, doc = (S.miembros || []).find(m => m.id === dm);
+  if (doc) await guard(() => uno(db.from('grupos').update({ director_nombre: doc.nombre, director_miembro_id: doc.id }).eq('id', r.id).select().single()).then(x => Object.assign(r, x)));
+  S.grupos.push(r); S.grupos.sort((a, b) => a.grado - b.grado || a.nombre.localeCompare(b.nombre, 'es'));
+  if (!S.asigs.some(a => a.nivel === 'ciclos')) S.asigs = await all(() => db.from('asignaturas').select('*').eq('colegio_id', ctx.colegio_id).order('nivel').order('orden'));
+  closeModal(); render();
+}
+// Cursos de ciclos del primer semestre (periodos 1 y 2) que aún tienen estudiantes: se cierran a mitad de año
+const gruposSemestre = () => S.grupos.filter(g => esCiclo(g) && g.periodos?.length && g.periodos.every(p => p <= 2) && estsDe(g.id).length);
+let semDec = {};
+function propuestaSem(e) {
+  const g = grupo(e.grupo_id), pierde = perdidas(e.id).length > S.k.max_perdidas;
+  if (semDec[e.id]) return semDec[e.id];
+  const sig = S.grupos.find(x => x.grado === g.grado + 1 && x.periodos?.some(p => p >= 3)), mismo = S.grupos.find(x => x.grado === g.grado && x.periodos?.some(p => p >= 3));
+  return semDec[e.id] = pierde ? { resultado: 'No promovido', destino: mismo?.id || '' } : g.grado === 26 ? { resultado: 'Graduado', destino: '' } : { resultado: 'Promovido', destino: sig?.id || '' };
+}
+function cierreSemestreHTML() {
+  const gs = gruposSemestre(); if (!gs.length) return '';
+  return `<div class="panel"><h2>Cierre de semestre · bachillerato por ciclos</h2>
+    <p>Los cursos de CLEI 5 y CLEI 6 del <strong>primer semestre</strong> terminan con el periodo 2. Al cerrar el semestre, cada estudiante queda en el historial con su ciclo y pasa al curso del segundo semestre (CLEI 5 → CLEI 6); quien termina CLEI 6 se gradúa de bachiller. El año lectivo no cambia.</p>
+    ${gs.map(g => `<h3>${esc(g.nombre)} <span class="muted">${esc(gradoTxt(g.grado))}</span></h3><div class="tbl"><table><thead><tr><th>Estudiante</th><th>En bajo</th><th>Resultado</th><th>Curso del segundo semestre</th></tr></thead><tbody>
+      ${estsDe(g.id).map(e => { const c = propuestaSem(e); return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}</td><td>${perdidas(e.id).length}</td>
+        <td><select onchange="semDec['${e.id}'].resultado=this.value;render()">${['Promovido', 'No promovido', 'Graduado'].map(r => opt(r, r === 'Graduado' ? 'Graduado (bachiller)' : r, c.resultado)).join('')}</select></td>
+        <td>${c.resultado === 'Graduado' ? '<span class="muted">Egresa</span>' : `<select onchange="semDec['${e.id}'].destino=this.value"><option value="">Mismo curso</option>${S.grupos.filter(esCiclo).map(x => opt(x.id, `${x.nombre}${x.periodos?.length ? ' · ' + (x.periodos.includes(1) ? 'sem. 1' : 'sem. 2') : ''}`, c.destino)).join('')}</select>`}</td></tr>`; }).join('')}
+      </tbody></table></div><div class="toolbar"><button class="btn warn" type="button" onclick="cerrarSemestre('${g.id}')">Cerrar el semestre de ${esc(g.nombre)}</button></div>`).join('')}</div>`;
+}
+async function cerrarSemestre(gid) {
+  const g = grupo(gid), es = estsDe(gid);
+  const sin = es.filter(e => { const c = propuestaSem(e); return c.resultado !== 'Graduado' && !c.destino; }).length;
+  if (sin && !await confirmar(`${sin} estudiante(s) quedarían en el mismo curso del primer semestre. Cree antes el curso del segundo semestre en Cursos, o elíjalo en la tabla. ¿Cerrar de todas formas?`)) return;
+  if (!await confirmar(`Se cerrará el semestre de ${g.nombre} para ${es.length} estudiantes. Esto no se puede deshacer. ¿Continuar?`)) return;
+  const dec = es.map(e => { const c = propuestaSem(e); return { estudiante_id: e.id, resultado: c.resultado, grupo_destino: c.resultado === 'Graduado' ? '' : c.destino || '' }; });
+  const r = await guard(() => q(db.rpc('cerrar_semestre', { p_colegio: ctx.colegio_id, p_grupo: gid, p_decisiones: dec })));
+  if (!r) return;
+  for (const k in semDec) delete semDec[k]; toast(`Semestre cerrado: ${r.procesados} estudiantes`);
+  S.ests = await all(() => db.from('estudiantes').select('*').eq('colegio_id', ctx.colegio_id).order('apellidos').order('nombres').order('id'));
+  await prepCierre(); render();
+}
+Object.assign(window, { guardarCiclo, cerrarSemestre, semDec });
