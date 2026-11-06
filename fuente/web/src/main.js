@@ -282,7 +282,8 @@ function authScreen(extra) {
   document.body.classList.add('is-auth');
   $('#app').hidden = true; $('#auth').hidden = false;
   let body = '';
-  if (authMode === 'login') body = `<h2>Iniciar sesión</h2>
+  if (authMode === 'admision') body = `<div id="admBox"><p class="muted">Cargando la solicitud de admisión…</p></div>`;
+  if (authMode === 'login') body = `${admAviso()}<h2>Iniciar sesión</h2>
     <form onsubmit="event.preventDefault();doLogin()">
       <label class="field"><span>Correo electrónico</span><input id="lEmail" type="email" autocomplete="username" required></label>
       <label class="field"><span>Contraseña</span><span class="pw"><input id="lPass" type="text" autocomplete="current-password" autocapitalize="off" spellcheck="false" required>${ojo('lPass')}</span></label>
@@ -294,7 +295,7 @@ function authScreen(extra) {
     <div class="demo-box reg-box"><strong>¿Es directivo de un colegio?</strong><br><span class="muted">Registre su colegio y úselo 15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button> <button class="linkbtn" type="button" onclick="verPlanes()">Ver planes y precios</button></div>`;
   if (authMode === 'colegio') body = `<h2>Registre su colegio · 15 días gratis</h2>${formRegistroHTML()}
     <p class="muted" style="margin-top:14px">Sesión: ${esc(me?.email || '')}. <button class="linkbtn" type="button" onclick="doLogout()">Cerrar sesión</button></p>`;
-  if (authMode === 'registro') body = `<h2>${store.get('regcol') ? 'Paso 1 de 2: cree su cuenta' : store.get('demo') ? 'Cree su cuenta para probar Colegio-IA' : 'Crear cuenta'}</h2>
+  if (authMode === 'registro') body = `${admAviso()}<h2>${store.get('regcol') ? 'Paso 1 de 2: cree su cuenta' : store.get('demo') ? 'Cree su cuenta para probar Colegio-IA' : 'Crear cuenta'}</h2>
     <p class="muted">${store.get('regcol') ? 'Use su correo y una contraseña. En el paso 2 escribe los datos del colegio y empieza su prueba gratis de 15 días.' : store.get('demo') ? 'Use su correo y una contraseña. No necesita código: después elige con qué perfil entrar al colegio de demostración.' : 'Use el mismo correo que registró el colegio. Después escribirá su código de activación.'}</p>
     <form onsubmit="event.preventDefault();doRegistro()">
       <label class="field"><span>Nombre y apellido</span><input id="rNom" autocomplete="name" required placeholder="Ejemplo: María Gómez"></label>
@@ -313,6 +314,7 @@ function authScreen(extra) {
   else if (authMode === 'activar') body = `<h2>Active su acceso</h2>
     <p>Hola${me?.name ? ', ' + esc(me.name.split(' ')[0]) : ''}. Escriba el código de activación que le entregó el colegio.</p>
     ${extra || ''}
+    <div id="misAdm"></div>
     <form onsubmit="event.preventDefault();doActivar()">
       <label class="field"><span>Código de activación</span><input id="aCod" autocomplete="one-time-code" style="text-transform:uppercase;letter-spacing:.1em" required></label>
       <p class="err" id="aErr" role="alert"></p>
@@ -324,7 +326,9 @@ function authScreen(extra) {
       ${ctxs.length ? `<button class="linkbtn" type="button" onclick="volverApp()">Volver</button> ·` : ''}
       ${superadmin ? `<button class="linkbtn" type="button" onclick="irPlataforma()">Superadministrador</button> ·` : ''}
       <button class="linkbtn" type="button" onclick="doLogout()">Cerrar sesión</button></p>`;
-  $('#auth').innerHTML = `<div class="auth-box">${brand}${body}<div class="auth-sg">${sgFirma()}</div></div>`;
+  $('#auth').innerHTML = `<div class="auth-box${authMode === 'admision' ? ' adm-box' : ''}">${brand}${body}<div class="auth-sg">${sgFirma()}</div></div>`;
+  if (authMode === 'admision') return cargarAdmision();
+  if (authMode === 'activar') cargarMisAdm();
   const f = $('#auth input'); if (f) f.focus();
 }
 function setAuth(m) { authMode = m; authScreen(); }
@@ -417,6 +421,7 @@ async function arrancar() {
     .select('id,rol,colegio_id,estudiante_id,nombre,activo,colegios(nombre,ciudad),estudiantes(nombres,apellidos)')
     .eq('user_id', me.id).eq('activo', true).order('id')))) || [];
   ctxs = ctxs.filter(m => m.colegios);
+  if (store.get('adm')) { authMode = 'admision'; return authScreen(); }   // v0.24: viene del enlace de admisiones
   if (!ctxs.length) {
     if (superadmin && authMode !== 'activar') return irPlataforma();
     authMode = store.get('regcol') ? 'colegio' : 'activar'; return authScreen();
@@ -491,6 +496,8 @@ const VIEWS = [
   { id: 'pedidos', label: 'Tienda y pedidos', ok: manejaPagos, prep: prepPedidos, fn: vPedidos, badge: () => S.nov?.pedidosStaff || 0 },
   { id: 'docsol', label: 'Documentos pedidos', ok: vePagos, prep: prepDocSol, fn: vDocSol, badge: () => S.docPorConf || 0 },
   { id: 'usuarios', label: 'Usuarios y accesos', ok: isDir, prep: cargarMiembros, fn: vUsuarios },
+  { id: 'admisiones', label: 'Admisiones y matrícula en línea', ok: () => veAdm(), prep: prepAdmisiones, fn: vAdmisiones, badge: () => S.admNuevas || 0 },
+  { id: 'matlinea', label: 'Matrícula en línea', ok: () => mlAbiertaFam(), prep: prepMlFam, fn: vMlFam },
 ];
 // Menú lateral por secciones (regla general: nada de listas largas grises)
 const MENU = [
@@ -498,11 +505,11 @@ const MENU = [
   { t: 'Académico', c: 'azul', ids: ['notas', 'asistencia', 'boletines', 'observador', 'piar', 'academico', 'horario', 'utiles'] },
   { t: 'Campus virtual', c: 'violeta', ids: ['campus', 'gemas'] },
   { t: 'Comunicación', c: 'verde', ids: ['comunicados', 'mensajes', 'citas', 'autorizaciones', 'cronograma', 'galeria'] },
-  { t: 'Estudiantes y familias', c: 'teal', ids: ['estudiantes', 'familia', 'contactos', 'excusas'] },
+  { t: 'Estudiantes y familias', c: 'teal', ids: ['estudiantes', 'admisiones', 'matlinea', 'familia', 'contactos', 'excusas'] },
   { t: 'Pagos y tienda', c: 'ambar', ids: ['pagos', 'cuenta', 'documentos', 'tienda', 'pedidos', 'docsol'] },
   { t: 'Administración', c: 'gris', ids: ['config', 'usuarios'] },
 ];
-const ICO = { documentos: '📑', docsol: '📑', campus: '💻', gemas: '💎', inicio: '🏠', notas: '✏️', asistencia: '✅', boletines: '📄', observador: '📝', piar: '🧩', academico: '📊', horario: '🕒', utiles: '🎒', comunicados: '📢', mensajes: '💬', citas: '📅', autorizaciones: '✍️', cronograma: '🗓️', galeria: '📷', estudiantes: '🎓', familia: '🪪', contactos: '📇', excusas: '📩', pagos: '💰', cuenta: '💳', tienda: '🛍️', pedidos: '📦', config: '⚙️', usuarios: '👥' };
+const ICO = { admisiones: '🎒', matlinea: '📝', documentos: '📑', docsol: '📑', campus: '💻', gemas: '💎', inicio: '🏠', notas: '✏️', asistencia: '✅', boletines: '📄', observador: '📝', piar: '🧩', academico: '📊', horario: '🕒', utiles: '🎒', comunicados: '📢', mensajes: '💬', citas: '📅', autorizaciones: '✍️', cronograma: '🗓️', galeria: '📷', estudiantes: '🎓', familia: '🪪', contactos: '📇', excusas: '📩', pagos: '💰', cuenta: '💳', tienda: '🛍️', pedidos: '📦', config: '⚙️', usuarios: '👥' };
 // Familias con pagos pendientes: solo inicio, comunicados y estado de cuenta (decisión del 18 oct 2026)
 // Revisión 20 oct: con pagos pendientes la familia solo puede ver su estado de cuenta y pagar
 const PERMITIDAS_MOROSO = ['inicio', 'cuenta'];
@@ -750,6 +757,7 @@ function arranqueHTML() {
 let resumen = null;
 async function prepInicio() {
   resumen = null;
+  if (veAdm() && S.k?.admisiones_abiertas) q(db.from('admisiones').select('id').eq('colegio_id', ctx.colegio_id).eq('estado', 'Recibida')).then(l => { if (S.admNuevas !== l.length) { S.admNuevas = l.length; if (view === 'inicio') render(); } }, () => {});
   if (isTes()) { await prepPagos(); await cargarNovedades(); return; }
   if (isDir()) {
     resumen = await q(db.rpc('resumen_colegio', { p_colegio: ctx.colegio_id }))
@@ -806,7 +814,7 @@ function vInicio() {
   const g = grupo(e.grupo_id);
   if (!g) return head(`Hola`, '') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
   const pr = promedio(e.id), pe = perdidas(e.id);
-  return hola(ctx.rol === 'acudiente' ? `${saludo()}, ${esc((ctx.nombre || '').split(' ')[0])}` : `${saludo()}, ${esc(e.nombres)}`, `${ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)} · ` : ''}${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + avisoCuota() + juegoInicioHTML() + hoyFamilia() + campusInicioHTML() +
+  return hola(ctx.rol === 'acudiente' ? `${saludo()}, ${esc((ctx.nombre || '').split(' ')[0])}` : `${saludo()}, ${esc(e.nombres)}`, `${ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)} · ` : ''}${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + avisoCuota() + mlAvisoInicio() + juegoInicioHTML() + hoyFamilia() + campusInicioHTML() +
     `<div class="stats">
       <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : N(pr)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado' + (pr == null ? '' : ', ' + desem(pr))}</div></div>
       <div class="stat"><div class="n">${pe.length}</div><div class="l">Asignaturas en bajo</div></div>
@@ -5049,6 +5057,7 @@ Object.assign(window, { formBoldColegio, guardarBoldColegio, quitarBoldColegio, 
 });
 Object.assign(window, { marcarPiar, guardarMarcaPiar, calcularHoras, imprimirHorario, bancoPreguntas, ponerTema, toast, dlgFin, previaImg, conFecha, fhTxt, guardarPermisos, permisosDefecto, pedirCambioAut, resolverCambioAut, campusTab, formCurso, guardarCurso, reiniciarCurso, copiarUnidad, hacerCopiaUnidad });
 resetS();
+admTomarEnlace();
 arrancar();
 
 /* =====================================================================
@@ -5349,14 +5358,15 @@ const fichaAcud = a => a?.nombres ? `<strong>${esc(a.nombres)}</strong>, mayor d
   : `${raya('', 260)}, mayor de edad, identificado(a) con C.C. No. ${raya('', 120)}, domiciliado(a) en ${raya('', 200)}`;
 async function generarContrato(eid) {
   const e = est(eid); if (!e) return;
-  if (!(puede('matricula') || vePagos())) return toast('No tiene permiso para generar contratos');
+  if (!(puede('matricula') || vePagos() || (isAcud() && mlAbiertaFam() && eid === propio()))) return toast('No tiene permiso para generar contratos');
   if (e.estado !== 'Activo') return toast('El contrato se genera para estudiantes activos');
   // siempre frescos y completos (Pagos y cartera carga solo algunas columnas de los acudientes)
   const ac = await q(db.from('acudientes').select('*').eq('estudiante_id', eid).order('orden')).catch(() => []);
   if (!ac.length || !ac[0].nombres || !ac[0].doc) return toast('Antes de generar el contrato registre en la ficha del estudiante al menos un acudiente con nombre y documento');
   toast('Preparando el contrato…');
   const r = await guard(async () => {
-    const [d, ca] = await Promise.all([q(db.rpc('contrato_datos', { p_est: eid })), q(db.from('costos_anio').select('*').eq('colegio_id', ctx.colegio_id).eq('anio', S.k.anio))]);
+    const d = await q(db.rpc('contrato_datos', { p_est: eid }));
+    const ca = await q(db.from('costos_anio').select('*').eq('colegio_id', ctx.colegio_id).eq('anio', d.anio || S.k.anio)).catch(() => []);
     return { d, ca: ca[0] || {} };
   });
   if (!r) return;
@@ -5868,3 +5878,282 @@ async function cerrarSemestre(gid) {
   await prepCierre(); render();
 }
 Object.assign(window, { guardarCiclo, cerrarSemestre, semDec });
+
+/* =====================================================================
+   v0.24: Admisiones (solicitud en línea de familias nuevas) y matrícula en línea (renovación)
+   ===================================================================== */
+const ADM_TD = ['RC', 'NUIP', 'TI', 'CC', 'CE', 'PPT'];
+const ADM_ESTADOS = ['Recibida', 'Entrevista', 'Admitida', 'No admitida', 'Matriculada', 'Retirada'];
+const ADM_COLOR = { Recibida: 'info', Entrevista: 'warn', Admitida: 'ok', 'No admitida': 'bad', Matriculada: 'ok', Retirada: 'muted' };
+const admChip = e => `<span class="adm-chip adm-${ADM_COLOR[e] || 'info'}">${esc(e)}</span>`;
+const fhTxt2 = t => t ? new Date(t).toLocaleString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' }) : '';
+let admInfo = null;
+// --- Familia: enlace ?admision=CODIGO ---
+function admTomarEnlace() {
+  try {
+    const u = new URL(location.href), c = u.searchParams.get('admision');
+    if (c) { store.set('adm', c.trim().toUpperCase()); u.searchParams.delete('admision'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); if (authMode === 'login') authMode = 'registro'; }
+  } catch {}
+}
+const admAviso = () => store.get('adm') ? `<div class="note adm-aviso"><strong>Solicitud de admisión.</strong> Para llenar la solicitud, cree su cuenta con su correo y una contraseña (o inicie sesión si ya tiene una). Así podrá ver después en qué va su solicitud.</div>` : '';
+async function cargarAdmision() {
+  const box = $('#admBox'); if (!box) return;
+  try { admInfo = await q(db.rpc('admision_info', { p_codigo: store.get('adm') })); }
+  catch (e) { box.innerHTML = `<p class="err">${esc(msg(e))}</p><div class="toolbar"><button class="btn ghost" type="button" onclick="salirAdmision()">Salir</button></div>`; return; }
+  // ya tiene acceso al colegio y no le queda ninguna solicitud en trámite: entra directo a la app (el enlace se puede volver a abrir)
+  if (ctxs.length && admInfo.mias?.length && admInfo.mias.every(a => ['Matriculada', 'No admitida', 'Retirada'].includes(a.estado)) && !admVisto) { admVisto = true; return salirAdmision(); }
+  admVisto = true;
+  box.innerHTML = admisionHTML();
+}
+let admVisto = false;
+function admMiasHTML(l, conColegio) {
+  if (!l?.length) return '';
+  return `<div class="panel adm-mias"><h3>Sus solicitudes</h3><ul class="list">${l.map(a => `<li><strong>${esc(a.nombre)}</strong> · ${esc(gradoTxt(a.grado))} ${a.anio}${conColegio ? ` · ${esc(a.colegio)}` : ''}<br>${admChip(a.estado)} <span class="muted">enviada el ${fmtF(a.creado_en)}</span>
+    ${a.entrevista && a.estado === 'Entrevista' ? `<br>Entrevista: <strong>${esc(fhTxt2(a.entrevista))}</strong>` : ''}${a.mensaje ? `<br><span>Mensaje del colegio: ${esc(a.mensaje)}</span>` : ''}
+    ${a.estado === 'Matriculada' ? '<br><span class="ok">¡Bienvenidos! Ya puede entrar a Colegio-IA como acudiente.</span>' : ''}
+    ${['Recibida', 'Entrevista', 'Admitida'].includes(a.estado) ? `<br><button class="linkbtn" type="button" onclick="retirarAdmision('${a.id}')">Retirar esta solicitud</button>` : ''}</li>`).join('')}</ul></div>`;
+}
+function admisionHTML() {
+  const i = admInfo, logo = i.logo ? `<img src="${i.logo}" alt="" style="max-height:64px;max-width:160px;display:block;margin:0 auto 8px">` : '';
+  const pie = `<p class="muted" style="margin-top:14px">Sesión: ${esc(me?.email || '')}. ${ctxs.length ? '<button class="linkbtn" type="button" onclick="salirAdmision()">Ir a Colegio-IA</button> · ' : ''}<button class="linkbtn" type="button" onclick="store.del(\'adm\');doLogout()">Cerrar sesión</button></p>`;
+  const top = `${logo}<h2>Admisiones ${i.anio} · ${esc(i.colegio)}</h2>${i.ciudad ? `<p class="muted">${esc(i.ciudad)}</p>` : ''}${i.texto ? `<div class="note" style="white-space:pre-line">${esc(i.texto)}</div>` : ''}`;
+  if (!i.abiertas) return top + `<div class="note">Las admisiones de este colegio están cerradas en este momento.${i.telefono ? ` Comuníquese con el colegio al ${esc(i.telefono)}.` : ''}</div>` + admMiasHTML(i.mias) + pie;
+  if (i.mias?.length && !admNueva) return top + admMiasHTML(i.mias) + `<div class="toolbar"><button class="btn" type="button" onclick="admOtra(true)">Enviar otra solicitud (otro hijo o hija)</button></div>` + pie;
+  const fi = (id, l, extra = '', v = '') => `<label class="field"><span>${l}</span><input id="${id}" value="${esc(v)}" ${extra}></label>`;
+  const td = id => `<select id="${id}">${ADM_TD.map(t => opt(t, t, '')).join('')}</select>`;
+  const acud = (n, req) => `<fieldset class="adm-acud"><legend>Acudiente ${n}${req ? '' : ' (opcional)'}</legend><div class="formgrid">
+    ${fi(`ad${n}Nom`, 'Nombres y apellidos', req ? 'required' : '')}${fi(`ad${n}Par`, 'Parentesco', 'placeholder="Madre, padre, abuela…"')}
+    <label class="field"><span>Tipo de documento</span><select id="ad${n}Td">${['CC', 'CE', 'PPT', 'TI'].map(t => opt(t, t, 'CC')).join('')}</select></label>${fi(`ad${n}Doc`, 'Número de documento', req ? 'required inputmode="numeric"' : 'inputmode="numeric"')}
+    ${fi(`ad${n}Tel`, 'Celular', (req ? 'required ' : '') + 'inputmode="tel"')}${fi(`ad${n}Email`, 'Correo', 'type="email"', n === 1 ? me?.email || '' : '')}
+    ${fi(`ad${n}Dir`, 'Dirección')}${fi(`ad${n}Ocu`, 'Ocupación')}
+    <label class="chk full"><input type="checkbox" id="ad${n}Resp" ${n === 1 ? 'checked' : ''}> Es quien responde por los pagos</label></div></fieldset>`;
+  return top + `<form onsubmit="event.preventDefault();enviarAdmision()" class="adm-form">
+    <p class="muted">Llene los datos del aspirante tal como aparecen en su documento. Los campos con * son obligatorios.</p>
+    <label class="field"><span>Grado al que aspira *</span><select id="adGr" required><option value="">Elija el grado</option>${(i.grados || []).map(g => opt(g, gradoTxt(g), '')).join('')}</select></label>
+    <fieldset><legend>Datos del aspirante</legend><div class="formgrid">
+      ${fi('adNom', 'Nombres *', 'required')}${fi('adApe', 'Apellidos *', 'required')}
+      <label class="field"><span>Tipo de documento *</span>${td('adTd')}</label>${fi('adDoc', 'Número de documento *', 'required inputmode="numeric"')}
+      ${fi('adExp', 'Lugar de expedición')}${fi('adNac', 'Fecha de nacimiento *', 'type="date" required')}${fi('adLNac', 'Lugar de nacimiento')}
+      <label class="field"><span>Sexo *</span><select id="adSexo" required><option value="">Elija</option>${opt('Femenino', 'Femenino', '')}${opt('Masculino', 'Masculino', '')}</select></label>
+      ${fi('adDir', 'Dirección de residencia *', 'required')}${fi('adBar', 'Barrio')}${fi('adMun', 'Municipio *', 'required')}${fi('adTel', 'Teléfono del aspirante')}
+      ${fi('adEps', 'EPS')}${fi('adRh', 'Grupo sanguíneo (RH)', 'placeholder="O+"')}${fi('adProc', 'Colegio de donde viene')}
+      ${fi('adCond', 'Condición especial o diagnóstico (si aplica)')}${fi('adMed', 'Recomendaciones médicas (si aplica)')}</div></fieldset>
+    ${acud(1, true)}${acud(2, false)}
+    <label class="field full"><span>¿Algo más que el colegio deba saber?</span><textarea id="adCom" maxlength="1000"></textarea></label>
+    <label class="chk"><input type="checkbox" id="adAut" required> Autorizo a ${esc(i.colegio)} a tratar estos datos para el proceso de admisión (Ley 1581 de 2012).</label>
+    <p class="err" id="aErr" role="alert"></p>
+    <div class="toolbar"><button class="btn" type="submit">Enviar solicitud</button>${i.mias?.length ? '<button class="btn ghost" type="button" onclick="admOtra(false)">Cancelar</button>' : ''}</div></form>` + pie;
+}
+let admNueva = false;
+async function enviarAdmision() {
+  authErr('');
+  const g = id => ($('#' + id)?.value || '').trim();
+  if (!g('adGr')) return authErr('Elija el grado al que aspira');
+  if (!$('#adAut').checked) return authErr('Debe autorizar el tratamiento de los datos');
+  const datos = { nombres: g('adNom'), apellidos: g('adApe'), tipo_doc: g('adTd'), doc: g('adDoc'), lugar_expedicion: g('adExp'), fnac: g('adNac'), lugar_nacimiento: g('adLNac'),
+    sexo: g('adSexo'), direccion: g('adDir'), barrio: g('adBar'), municipio: g('adMun'), telefono: g('adTel'), eps: g('adEps'), rh: g('adRh'), institucion_procedencia: g('adProc'),
+    condicion_especial: g('adCond'), recomendaciones_medicas: g('adMed') };
+  const acs = [1, 2].map(n => ({ nombres: g(`ad${n}Nom`), parentesco: g(`ad${n}Par`), tipo_doc: g(`ad${n}Td`), doc: g(`ad${n}Doc`), telefono: g(`ad${n}Tel`), email: g(`ad${n}Email`),
+    direccion: g(`ad${n}Dir`), ocupacion: g(`ad${n}Ocu`), responsable_pago: $(`#ad${n}Resp`).checked })).filter(a => a.nombres);
+  if (acs[1] && (!acs[1].doc || !acs[1].telefono)) return authErr('Del acudiente 2 escriba también el documento y el celular, o deje su nombre en blanco');
+  await busy('#admBox button[type=submit]', async () => {
+    try {
+      await q(db.rpc('admision_enviar', { p_codigo: store.get('adm'), p_grado: +g('adGr'), p_datos: datos, p_acudientes: acs, p_comentarios: g('adCom') }));
+      admNueva = false; toast('Solicitud enviada. El colegio la revisará y aquí verá en qué va.');
+      await cargarAdmision();
+    } catch (e) { authErr(msg(e)); }
+  });
+}
+async function retirarAdmision(id) {
+  if (!(await confirmar('¿Retirar esta solicitud de admisión? El colegio ya no la tendrá en cuenta.', 'Sí, retirarla'))) return;
+  try { await q(db.rpc('admision_retirar', { p_id: id })); toast('Solicitud retirada'); } catch (e) { return toast(msg(e)); }
+  if ($('#admBox')) cargarAdmision(); else cargarMisAdm();
+}
+function salirAdmision() { store.del('adm'); admNueva = false; authMode = 'login'; arrancar(); }
+async function cargarMisAdm() {
+  const box = $('#misAdm'); if (!box) return;
+  const l = await q(db.rpc('mis_admisiones')).catch(() => []);
+  box.innerHTML = admMiasHTML(l, true);
+}
+
+// --- Colegio: Admisiones y matrícula en línea ---
+let ADM = { l: [], ml: [] };
+const veAdm = () => isDir() || puede('matricula');
+async function prepAdmisiones() {
+  if (!sel.amt) sel.amt = 'sol';
+  ADM.l = await all(() => db.from('admisiones').select('*').eq('colegio_id', ctx.colegio_id).order('creado_en', { ascending: false }));
+  S.admNuevas = ADM.l.filter(a => a.estado === 'Recibida').length;
+  if (sel.amt === 'ml' && S.k.matricula_anio) {
+    ADM.ml = await all(() => db.from('matricula_linea').select('*').eq('colegio_id', ctx.colegio_id).eq('anio', S.k.matricula_anio).order('id'));
+    if (!S.acudsTodos) S.acudsTodos = null;
+  }
+}
+const admLink = () => `${location.origin}/?admision=${S.k.admision_codigo || ''}`;
+function vAdmisiones() {
+  const t = sel.amt;
+  return head('Admisiones y matrícula en línea', 'Reciba solicitudes de familias nuevas por un enlace y haga la renovación de matrícula en línea.') +
+    `<div class="tabs" role="tablist">${[['sol', `Solicitudes de admisión${S.admNuevas ? ` (${S.admNuevas} nuevas)` : ''}`], ['ml', 'Matrícula en línea']].map(([k, l]) => `<button type="button" role="tab" aria-selected="${t === k}" onclick="sel.amt='${k}';go('admisiones')">${l}</button>`).join('')}</div>` +
+    (t === 'ml' ? mlStaffHTML() : admStaffHTML());
+}
+function admStaffHTML() {
+  const k = S.k, f = sel.amf || 'abiertas', dir = esRector();
+  const l = ADM.l.filter(a => f === 'todas' || (f === 'abiertas' ? ['Recibida', 'Entrevista', 'Admitida'].includes(a.estado) : a.estado === f));
+  const grs = [...new Set(S.grupos.map(g => g.grado))].sort((a, b) => a - b), anioA = k.admision_anio || k.anio + 1;
+  const txt = `Admisiones ${anioA} en ${k.nombre}: llene la solicitud aquí ${admLink()}`;
+  return `<div class="panel"><h2>Enlace de admisiones</h2>
+    <div class="toolbar"><label class="chk"><input type="checkbox" id="amAb" ${k.admisiones_abiertas ? 'checked' : ''} ${dir ? '' : 'disabled'}> Admisiones abiertas</label>
+      <label class="field"><span>Año al que aspiran</span><select id="amAn" ${dir ? '' : 'disabled'}>${[k.anio, k.anio + 1].map(a => opt(a, a, anioA)).join('')}</select></label></div>
+    <div class="field full"><span>Grados que reciben solicitudes (si no marca ninguno, todos)</span><div class="chks">${grs.map(g => `<label class="chk"><input type="checkbox" class="amG" value="${g}" ${(k.admision_grados || []).includes(g) ? 'checked' : ''} ${dir ? '' : 'disabled'}> ${esc(gradoTxt(g))}</label>`).join('')}</div></div>
+    <label class="field full"><span>Mensaje para las familias (requisitos, fechas, costo de la inscripción…)</span><textarea id="amTx" maxlength="1500" ${dir ? '' : 'disabled'}>${esc(k.admision_texto || '')}</textarea></label>
+    ${dir ? '<div class="toolbar"><button class="btn" type="button" onclick="guardarAdmCfg()">Guardar</button></div>' : '<p class="muted">Solo el rector o la rectora abren o cierran las admisiones.</p>'}
+    ${k.admisiones_abiertas && k.admision_codigo ? `<div class="note">Comparta este enlace en WhatsApp, redes sociales y la página web del colegio: <strong>${esc(admLink())}</strong>
+      <div class="toolbar" style="margin:8px 0 0"><button class="btn ghost sm" type="button" onclick="copiarTexto('${esc(admLink())}')">Copiar enlace</button> <a class="btn wa sm" href="https://wa.me/?text=${encodeURIComponent(txt)}" target="_blank" rel="noopener">Compartir por WhatsApp</a></div></div>`
+      : '<p class="muted">Marque «Admisiones abiertas» y guarde para obtener el enlace.</p>'}</div>
+    <div class="panel"><div class="tabs" role="tablist">${[['abiertas', 'En proceso'], ['Matriculada', 'Matriculadas'], ['No admitida', 'No admitidas'], ['Retirada', 'Retiradas'], ['todas', 'Todas']].map(([x, t]) => `<button type="button" role="tab" aria-selected="${f === x}" onclick="sel.amf='${x}';render()">${t}</button>`).join('')}</div>
+    ${l.length ? `<div class="tbl"><table><thead><tr><th>Aspirante</th><th>Grado</th><th>Acudiente</th><th>Estado</th><th></th></tr></thead><tbody>${l.map(a => { const c = a.acudientes?.[0] || {}; return `<tr>
+      <td><strong>${esc(a.datos.nombres)} ${esc(a.datos.apellidos)}</strong><br><span class="muted">${esc(a.datos.tipo_doc)} ${esc(a.datos.doc)} · enviada el ${fmtF(a.creado_en)}</span></td>
+      <td>${esc(gradoTxt(a.grado))} ${a.anio}</td><td>${esc(c.nombres || '')}<br><span class="muted">${esc(c.telefono || '')}</span></td>
+      <td>${admChip(a.estado)}${a.entrevista && a.estado === 'Entrevista' ? `<br><span class="muted">${esc(fhTxt2(a.entrevista))}</span>` : ''}</td>
+      <td><button class="btn ghost sm" type="button" onclick="verAdmision('${a.id}')">Ver</button></td></tr>`; }).join('')}</tbody></table></div>` : '<p class="empty">No hay solicitudes en esta lista.</p>'}</div>`;
+}
+async function guardarAdmCfg() {
+  const gs = [...document.querySelectorAll('.amG:checked')].map(x => +x.value);
+  await guardarColegio({ admisiones_abiertas: $('#amAb').checked, admision_anio: +$('#amAn').value, admision_grados: gs.length ? gs : null, admision_texto: $('#amTx').value.trim() || null },
+    $('#amAb').checked ? 'Admisiones abiertas: comparta el enlace con las familias' : 'Admisiones cerradas');
+}
+function verAdmision(id) {
+  const a = ADM.l.find(x => x.id === id); if (!a) return;
+  const d = a.datos, ed = (isDir() || puede('matricula')) && a.estado !== 'Matriculada';
+  const fila = (l, v) => v ? `<tr><th>${l}</th><td>${esc(v)}</td></tr>` : '';
+  const gs = S.grupos.filter(g => g.grado === a.grado), cerrado = a.anio > S.k.anio;
+  const ent = a.entrevista ? new Date(new Date(a.entrevista).getTime() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : '';
+  const tel = a.acudientes?.[0]?.telefono;
+  openModal(`Solicitud de ${d.nombres} ${d.apellidos}`, `<p>${admChip(a.estado)} <span class="muted">${esc(gradoTxt(a.grado))} ${a.anio} · enviada el ${fmtF(a.creado_en)} por ${esc(a.email)}${a.actualizado_por ? ` · último cambio: ${esc(a.actualizado_por)}` : ''}</span></p>
+    <div class="tbl"><table><tbody>${fila('Documento', `${d.tipo_doc} ${d.doc}${d.lugar_expedicion ? ' de ' + d.lugar_expedicion : ''}`)}${fila('Nacimiento', `${fmtF(d.fnac)}${d.lugar_nacimiento ? ' · ' + d.lugar_nacimiento : ''}`)}${fila('Sexo', d.sexo)}
+      ${fila('Dirección', [d.direccion, d.barrio, d.municipio].filter(Boolean).join(', '))}${fila('Teléfono', d.telefono)}${fila('EPS / RH', [d.eps, d.rh].filter(Boolean).join(' · '))}
+      ${fila('Viene de', d.institucion_procedencia)}${fila('Condición especial', d.condicion_especial)}${fila('Recomendaciones médicas', d.recomendaciones_medicas)}
+      ${(a.acudientes || []).map((c, i) => fila(`Acudiente ${i + 1}`, `${c.nombres}${c.parentesco ? ' (' + c.parentesco.toLowerCase() + ')' : ''} · ${c.tipo_doc} ${c.doc} · ${c.telefono}${c.email ? ' · ' + c.email : ''}${c.responsable_pago ? ' · responde por los pagos' : ''}`)).join('')}
+      ${fila('Comentarios de la familia', a.comentarios)}</tbody></table></div>
+    ${ed ? `<div class="formgrid">
+      <label class="field"><span>Estado</span><select id="amE">${ADM_ESTADOS.filter(x => x !== 'Matriculada' && x !== 'Retirada').map(x => opt(x, x, a.estado)).join('')}</select></label>
+      <label class="field"><span>Entrevista (fecha y hora)</span><input type="datetime-local" id="amEnt" value="${ent}"></label>
+      <label class="field full"><span>Mensaje para la familia (lo ve en su solicitud)</span><textarea id="amMsg" maxlength="800">${esc(a.mensaje || '')}</textarea></label>
+      <label class="field full"><span>Notas internas (la familia no las ve)</span><textarea id="amNot" maxlength="2000">${esc(a.notas || '')}</textarea></label></div>
+      <div class="modal-foot">${tel ? `<a class="btn wa" href="${esc(waLink(tel, `Hola, le escribimos de ${S.k.nombre} sobre la solicitud de admisión de ${d.nombres}.`))}" target="_blank" rel="noopener">WhatsApp</a>` : ''}<button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button><button class="btn" type="button" onclick="guardarAdmision('${a.id}')">Guardar</button></div>
+      ${a.estado === 'Admitida' ? `<div class="panel" style="margin-top:12px"><h3>Matricular</h3>${cerrado ? `<p class="muted">La solicitud es para ${a.anio}. Se matricula cuando cierre el año ${S.k.anio} (Parametrización › Cierre de año).</p>`
+        : gs.length ? `<p class="muted">Se crea el estudiante con estos datos, sus acudientes y el acceso de la familia con el correo ${esc(a.email)} (sin código de activación).</p><div class="toolbar"><label class="field"><span>Curso</span><select id="amGr">${gs.map(g => opt(g.id, g.nombre, '')).join('')}</select></label><button class="btn" type="button" onclick="matricularAdmision('${a.id}')">Matricular</button></div>`
+        : `<p class="muted">No hay cursos de ${esc(gradoTxt(a.grado))}. Créelo en Parametrización › Cursos.</p>`}</div>` : ''}`
+      : `${a.mensaje ? `<p><strong>Mensaje para la familia:</strong> ${esc(a.mensaje)}</p>` : ''}${a.notas ? `<p><strong>Notas internas:</strong> ${esc(a.notas)}</p>` : ''}${a.estudiante_id && est(a.estudiante_id) ? `<p class="ok">Matriculado(a) en ${esc(grupo(est(a.estudiante_id).grupo_id)?.nombre || '')}.</p>` : ''}<div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button></div>`}`);
+}
+async function guardarAdmision(id) {
+  const ent = $('#amEnt').value, est2 = $('#amE').value;
+  if (est2 === 'Entrevista' && !ent) return toast('Escriba la fecha y hora de la entrevista');
+  const r = await guard(() => uno(db.from('admisiones').update({ estado: est2, entrevista: ent ? new Date(ent).toISOString() : null, mensaje: $('#amMsg').value.trim() || null, notas: $('#amNot').value.trim() || null }).eq('id', id).select().single()), 'Solicitud actualizada');
+  if (!r) return;
+  Object.assign(ADM.l.find(x => x.id === id), r); S.admNuevas = ADM.l.filter(a => a.estado === 'Recibida').length;
+  closeModal(); render(); if (r.estado === 'Admitida') verAdmision(id);
+}
+async function matricularAdmision(id) {
+  const a = ADM.l.find(x => x.id === id), g = grupo($('#amGr').value);
+  if (!(await confirmar(`¿Matricular a ${a.datos.nombres} ${a.datos.apellidos} en ${g.nombre}? Se crea el estudiante y la familia entra con su cuenta ${a.email}.`, 'Sí, matricular'))) return;
+  const r = await guard(() => q(db.rpc('admision_matricular', { p_id: id, p_grupo: g.id })), 'Estudiante matriculado. Complete en su ficha los datos que falten.');
+  if (!r) return;
+  closeModal(); S.ests = await all(() => db.from('estudiantes').select('*').eq('colegio_id', ctx.colegio_id).order('apellidos')).catch(() => S.ests);
+  await prepAdmisiones(); render();
+}
+
+// --- Matrícula en línea: colegio ---
+function mlEstado(m) { return !m ? 'Sin empezar' : m.confirmada_en ? 'Confirmada' : m.contrato_en ? 'Contrato aceptado' : m.datos_en ? 'Datos actualizados' : 'Sin empezar'; }
+function mlStaffHTML() {
+  const k = S.k, dir = isDir() || puede('matricula'), rec = esRector(), an = k.matricula_anio || k.anio + 1;
+  const act = S.ests.filter(e => e.estado === 'Activo').sort((a, b) => (grupo(a.grupo_id)?.grado ?? 0) - (grupo(b.grupo_id)?.grado ?? 0) || nom(a).localeCompare(nom(b), 'es'));
+  const m = Object.fromEntries((ADM.ml || []).map(x => [x.estudiante_id, x])), f = sel.mlf || 'todos';
+  const cnt = s => act.filter(e => mlEstado(m[e.id]) === s).length;
+  const l = act.filter(e => f === 'todos' || mlEstado(m[e.id]) === f);
+  return `<div class="panel"><h2>Matrícula en línea</h2><p class="muted">Las familias de los estudiantes activos actualizan los datos, revisan y aceptan el contrato de matrícula desde su celular, y la secretaría confirma. El pagaré se sigue firmando en físico; el pago de la matrícula se hace por Estado de cuenta.</p>
+    <div class="toolbar"><label class="chk"><input type="checkbox" id="mlAb" ${k.matricula_linea ? 'checked' : ''} ${rec ? '' : 'disabled'}> Matrícula en línea abierta</label>
+      <label class="field"><span>Año que se matricula</span><select id="mlAn" ${rec ? '' : 'disabled'}>${[k.anio, k.anio + 1].map(a => opt(a, a, an)).join('')}</select></label>
+      <label class="field"><span>Fecha límite (opcional)</span><input type="date" id="mlHa" value="${k.matricula_hasta || ''}" ${rec ? '' : 'disabled'}></label>
+      ${rec ? '<button class="btn" type="button" onclick="guardarMlCfg()">Guardar</button>' : '<span class="muted">Solo el rector o la rectora la abren o la cierran.</span>'}</div></div>
+    ${k.matricula_anio ? `<div class="panel"><div class="tabs" role="tablist">${[['todos', `Todos (${act.length})`], ['Sin empezar', `Sin empezar (${cnt('Sin empezar')})`], ['Datos actualizados', `Datos actualizados (${cnt('Datos actualizados')})`], ['Contrato aceptado', `Por confirmar (${cnt('Contrato aceptado')})`], ['Confirmada', `Confirmadas (${cnt('Confirmada')})`]].map(([x, t]) => `<button type="button" role="tab" aria-selected="${f === x}" onclick="sel.mlf='${x}';render()">${t}</button>`).join('')}</div>
+    <div class="toolbar"><button class="btn ghost sm" type="button" onclick="exportarMl()">Descargar lista (CSV)</button></div>
+    ${l.length ? `<div class="tbl"><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Datos</th><th>Contrato</th><th>Estado</th><th></th></tr></thead><tbody>${l.map(e => { const x = m[e.id], s = mlEstado(x); return `<tr>
+      <td><strong>${esc(nom(e))}</strong></td><td>${esc(grupo(e.grupo_id)?.nombre || '')}</td>
+      <td>${x?.datos_en ? `✓ ${fmtF(x.datos_en)}<br><span class="muted">${esc(x.datos_por || '')}</span>` : '<span class="muted">—</span>'}</td>
+      <td>${x?.contrato_en ? `✓ ${fmtF(x.contrato_en)}<br><span class="muted">${esc(x.firma_nombre || '')} · ${esc(x.firma_doc || '')}</span>` : '<span class="muted">—</span>'}</td>
+      <td>${s === 'Confirmada' ? `<span class="ok">Confirmada</span><br><span class="muted">${esc(x.confirmada_por || '')} · ${fmtF(x.confirmada_en)}</span>` : esc(s)}${x?.observacion ? `<br><span class="muted">${esc(x.observacion)}</span>` : ''}</td>
+      <td style="white-space:nowrap">${dir ? (s === 'Confirmada' ? `<button class="btn ghost sm" type="button" onclick="confirmarMl('${e.id}', false)">Quitar confirmación</button>` : `<button class="btn sm" type="button" onclick="confirmarMl('${e.id}', true)">Confirmar</button>`) : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="empty">No hay estudiantes en esta lista.</p>'}</div>` : ''}`;
+}
+async function guardarMlCfg() {
+  const r = await guardarColegio({ matricula_linea: $('#mlAb').checked, matricula_anio: +$('#mlAn').value, matricula_hasta: $('#mlHa').value || null },
+    $('#mlAb').checked ? 'Matrícula en línea abierta: las familias la ven en su inicio' : 'Matrícula en línea cerrada');
+  if (r) { await prepAdmisiones(); render(); }
+}
+async function confirmarMl(eid, ok) {
+  const e = est(eid), x = (ADM.ml || []).find(m => m.estudiante_id === eid);
+  let obs = '';
+  if (ok && !x?.contrato_en && !(await confirmar(`${nom(e)} aún no ha completado la matrícula en línea. ¿Confirmarla de todos modos (por ejemplo, si la hizo en la secretaría)?`, 'Sí, confirmar'))) return;
+  if (ok && !x?.contrato_en) obs = 'Confirmada en la secretaría';
+  const r = await guard(() => q(db.rpc('ml_confirmar', { p_est: eid, p_ok: ok, p_obs: obs })), ok ? 'Matrícula confirmada' : 'Confirmación quitada');
+  if (r === undefined) return;
+  await prepAdmisiones(); render();
+}
+function exportarMl() {
+  const m = Object.fromEntries((ADM.ml || []).map(x => [x.estudiante_id, x]));
+  descargarCSV(`Matrícula en línea ${S.k.matricula_anio}`, [['Estudiante', 'Documento', 'Curso', 'Estado', 'Datos actualizados', 'Contrato aceptado', 'Firmó', 'Confirmada', 'Confirmó'],
+    ...S.ests.filter(e => e.estado === 'Activo').map(e => { const x = m[e.id]; return [nom(e), e.doc, grupo(e.grupo_id)?.nombre || '', mlEstado(x), fmtF(x?.datos_en), fmtF(x?.contrato_en), x?.firma_nombre ? `${x.firma_nombre} ${x.firma_doc}` : '', fmtF(x?.confirmada_en), x?.confirmada_por || '']; })]);
+}
+
+// --- Matrícula en línea: familia ---
+let ML = { m: null, acs: [] };
+const mlAbiertaFam = () => isAcud() && S.k?.matricula_linea && S.k?.matricula_anio && (!S.k.matricula_hasta || hoy() <= S.k.matricula_hasta);
+async function prepMlFam() {
+  const eid = propio();
+  const [m, acs] = await Promise.all([q(db.from('matricula_linea').select('*').eq('estudiante_id', eid).eq('anio', S.k.matricula_anio)).catch(() => []),
+    q(db.from('acudientes').select('*').eq('estudiante_id', eid).order('orden')).catch(() => [])]);
+  ML = { m: m[0] || null, acs };
+}
+function vMlFam() {
+  const e = est(propio()), m = ML.m, k = S.k, s = mlEstado(m);
+  if (!e) return head('Matrícula en línea') + '<div class="panel empty">No se encontró el estudiante.</div>';
+  const paso = (n, t, hecho, cuerpo) => `<div class="panel ml-paso ${hecho ? 'hecho' : ''}"><h2>${hecho ? '✓' : n}. ${t}</h2>${cuerpo}</div>`;
+  const fi = (id, l, v, extra = '') => `<label class="field"><span>${l}</span><input id="${id}" value="${esc(v ?? '')}" ${extra}></label>`;
+  return head(`Matrícula en línea ${k.matricula_anio}`, `${esc(nom(e))}${k.matricula_hasta ? ` · hasta el ${fechaLarga(k.matricula_hasta)}` : ''}`) +
+    (s === 'Confirmada' ? `<div class="note"><strong>¡Matrícula confirmada por el colegio!</strong> ${esc(m.confirmada_por || '')} · ${fmtF(m.confirmada_en)}</div>` : '') +
+    paso(1, 'Revise y actualice los datos', !!m?.datos_en, `<p class="muted">Corrija lo que haya cambiado. Los nombres y el documento solo los cambia la secretaría.</p><div class="formgrid">
+      ${fi('mlDir', 'Dirección *', e.direccion)}${fi('mlBar', 'Barrio', e.barrio)}${fi('mlMun', 'Municipio *', e.municipio)}${fi('mlTel', 'Teléfono del estudiante', e.telefono)}
+      ${fi('mlEmail', 'Correo del estudiante', e.email, 'type="email"')}${fi('mlEps', 'EPS', e.eps)}${fi('mlRh', 'Grupo sanguíneo (RH)', e.rh)}${fi('mlEstr', 'Estrato', e.estrato)}
+      ${fi('mlCond', 'Condición especial o diagnóstico', e.condicion_especial)}${fi('mlMed', 'Recomendaciones médicas', e.recomendaciones_medicas)}</div>
+      ${ML.acs.map(a => `<fieldset class="adm-acud"><legend>${esc(a.nombres)}${a.parentesco ? ` (${esc(a.parentesco.toLowerCase())})` : ''}</legend><div class="formgrid" data-acud="${a.id}">
+        ${fi('mlAT' + a.id, 'Celular', a.telefono, 'class="mlAT"')}${fi('mlAE' + a.id, 'Correo', a.email, 'type="email"')}${fi('mlAD' + a.id, 'Dirección', a.direccion)}${fi('mlAO' + a.id, 'Ocupación', a.ocupacion)}</div></fieldset>`).join('')}
+      <div class="toolbar"><button class="btn" type="button" onclick="guardarMlDatos()">${m?.datos_en ? 'Guardar cambios' : 'Guardar y seguir'}</button>${m?.datos_en ? ` <span class="muted">Actualizados el ${fmtF(m.datos_en)}</span>` : ''}</div>`) +
+    paso(2, 'Revise y acepte el contrato de matrícula', !!m?.contrato_en, !m?.datos_en ? '<p class="muted">Primero guarde los datos (paso 1).</p>'
+      : m.contrato_en ? `<p>Aceptado por <strong>${esc(m.firma_nombre)}</strong> (documento ${esc(m.firma_doc)}) el ${fmtF(m.contrato_en)}. <button class="linkbtn" type="button" onclick="generarContrato('${e.id}')">Ver el contrato</button></p>`
+      : `<p><button class="btn ghost" type="button" onclick="generarContrato('${e.id}')">Ver el contrato</button></p>
+        <div class="formgrid">${fi('mlFN', 'Su nombre completo', ML.acs[0]?.nombres || '')}${fi('mlFD', 'Su número de documento', '', 'inputmode="numeric"')}</div>
+        <label class="chk"><input type="checkbox" id="mlAcepto"> He leído el contrato de matrícula y lo acepto. Entiendo que el pagaré y la carta de instrucciones se firman en físico en el colegio.</label>
+        <div class="toolbar"><button class="btn" type="button" onclick="aceptarMlContrato()">Aceptar el contrato</button></div>`) +
+    paso(3, 'Pago y confirmación del colegio', s === 'Confirmada', `<p>${s === 'Confirmada' ? 'El colegio confirmó la matrícula.' : m?.contrato_en ? 'Listo: la secretaría revisará y confirmará la matrícula.' : 'Cuando termine los pasos 1 y 2, la secretaría confirma la matrícula.'}
+      Pague la matrícula en <button class="linkbtn" type="button" onclick="go('cuenta')">Estado de cuenta</button>.</p>`);
+}
+async function guardarMlDatos() {
+  const v = id => ($('#' + id)?.value || '').trim();
+  if (!v('mlDir') || !v('mlMun')) return toast('Escriba la dirección y el municipio');
+  if (ML.acs.some(a => !v('mlAT' + a.id))) return toast('Escriba el celular de cada acudiente');
+  const datos = { direccion: v('mlDir'), barrio: v('mlBar'), municipio: v('mlMun'), telefono: v('mlTel'), email: v('mlEmail'), eps: v('mlEps'), rh: v('mlRh'), estrato: v('mlEstr'),
+    sisben: est(propio())?.sisben || '', condicion_especial: v('mlCond'), recomendaciones_medicas: v('mlMed') };
+  const acs = ML.acs.map(a => ({ id: a.id, telefono: v('mlAT' + a.id), email: v('mlAE' + a.id), direccion: v('mlAD' + a.id), ocupacion: v('mlAO' + a.id) }));
+  const r = await guard(() => q(db.rpc('ml_datos', { p_est: propio(), p_datos: datos, p_acudientes: acs })), 'Datos guardados');
+  if (r === undefined) return;
+  const e = await q(db.from('estudiantes').select('*').eq('id', propio()).single()).catch(() => null); if (e) Object.assign(est(propio()), e);
+  await prepMlFam(); render();
+}
+async function aceptarMlContrato() {
+  if (!$('#mlAcepto').checked) return toast('Marque la casilla para aceptar el contrato');
+  const r = await guard(() => q(db.rpc('ml_contrato', { p_est: propio(), p_nombre: $('#mlFN').value, p_doc: $('#mlFD').value })), 'Contrato aceptado. La secretaría confirmará la matrícula.');
+  if (r === undefined) return;
+  await prepMlFam(); render();
+}
+const mlAvisoInicio = () => mlAbiertaFam() ? `<div class="note ml-aviso"><strong>Matrícula en línea ${S.k.matricula_anio} abierta${S.k.matricula_hasta ? ` hasta el ${fechaLarga(S.k.matricula_hasta)}` : ''}.</strong> Actualice los datos y acepte el contrato desde aquí. <button class="btn sm" type="button" onclick="go('matlinea')">Hacer la matrícula</button></div>` : '';
+function admOtra(v) { admNueva = v; $('#admBox').innerHTML = admisionHTML(); }
+Object.assign(window, { enviarAdmision, retirarAdmision, salirAdmision, admOtra, guardarAdmCfg, verAdmision, guardarAdmision, matricularAdmision, guardarMlCfg, confirmarMl, exportarMl, guardarMlDatos, aceptarMlContrato });
