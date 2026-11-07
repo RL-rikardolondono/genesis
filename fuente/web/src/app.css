@@ -568,3 +568,8 @@ body{background:linear-gradient(180deg,#EEF5FB 0,var(--paper) 320px) no-repeat,v
 .doc.diploma{border:6px double #0B4F8A;padding:28px}
 .libro-t{font-size:.78rem}.libro-t td,.libro-t th{padding:3px 4px;text-align:center}.libro-t td:nth-child(2){text-align:left}
 .verif-pedir{margin-top:10px}.verif-pedir summary{cursor:pointer;color:#0B4F8A}
+/* v0.26 */
+.who-acc{margin-top:6px;font-size:.85rem}
+.verif{display:flex;gap:12px;align-items:center}.verif-qr svg{display:block;width:84px;height:84px}
+.cc-prog{display:block;height:6px;border-radius:4px;background:#DCE5EE;margin-top:6px;overflow:hidden}.cc-prog i{display:block;height:100%;background:#14A38B}
+.cc-pct{font-size:.75rem;color:#5D6B78}

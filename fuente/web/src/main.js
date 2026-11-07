@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@neondatabase/neon-js@0.7.0-beta';
-import { AUTH_URL, DATA_URL, VERSION } from './config.js';
+import { AUTH_URL, DATA_URL, VERSION, VAPID_PUB } from './config.js';
+import { qrSvg } from './qrcode.js';
 import { escribirXlsx, leerXlsx, leerCsv, fechaExcel, descargarBlob } from './xlsx.js';
 
 const db = createClient({ auth: { url: AUTH_URL }, dataApi: { url: DATA_URL } });
@@ -408,7 +409,7 @@ async function doActivar() {
     } catch (e) { authErr(msg(e)); }
   });
 }
-async function doLogout() { try { await db.auth.signOut(); } catch { } me = null; ctx = null; ctxs = []; superadmin = false; store.del('ctx'); authMode = 'login'; authScreen(); }
+async function doLogout() { try { const sb = typeof avisosSub === 'function' ? await avisosSub() : null; if (sb) { await q(db.rpc('avisos_quitar', { p_endpoint: sb.endpoint })).catch(() => {}); await sb.unsubscribe().catch(() => {}); } } catch {} try { await db.auth.signOut(); } catch { } me = null; ctx = null; ctxs = []; superadmin = false; store.del('ctx'); authMode = 'login'; authScreen(); }
 function volverApp() { authMode = 'login'; if (ctx) { mostrarApp(); render(); } }
 
 /* =====================================================================
@@ -594,6 +595,7 @@ function renderSide() {
     $('#ctxBox').innerHTML = ctxs.length > 1
       ? `<label class="role"><span class="muted" style="font-size:.85rem">Colegio y perfil</span><select class="ctx" onchange="entrarContexto(this.value)">${ctxs.map(m => opt(m.id, ctxLabel(m), ctx.id)).join('')}</select></label>`
       : `<div class="who">${S?.k?.logo ? `<img src="${S.k.logo}" alt="" style="max-height:48px;max-width:120px;display:block;margin-bottom:6px">` : ''}<strong>${esc(ctx.colegios.nombre)}</strong><br><span class="rol-chip rol-${ctx.rol}">${ROL_TXT[ctx.rol]}</span> ${esc(ctx.nombre || '')}</div>`;
+    $('#ctxBox').insertAdjacentHTML('beforeend', `<div class="who-acc"><button class="linkbtn" type="button" onclick="verManuales()">📘 Manual</button> · <button class="linkbtn" type="button" onclick="formAvisos()">🔔 Avisos</button></div>`);
     side.innerHTML = menuHTML();
   }
   $('#foot').innerHTML = `${esc(me?.email || '')}<br>
@@ -1778,7 +1780,7 @@ function panelMediosPago() {
       ${fIn('mpLlV', 'Llave Bre-B (número, celular o correo)', k.pago_llave_valor || '', ro ? 'disabled' : '')}${fIn('mpLlT', 'Titular', k.pago_llave_titular || k.nombre, ro ? 'disabled' : '')}
       <div class="field full">${chk('mpBo', `<strong>Bold (tarjeta, PSE, Nequi)</strong>: pago en línea. ${k.pago_bold_auto ? 'El Bold del colegio está conectado: el pago se registra solo.' : 'Conecte el Bold del colegio (abajo) para que el pago se registre solo; mientras tanto puede usar un enlace de pago y la familia envía el comprobante.'}`, k.pago_bold)}</div>
       ${k.pago_bold_auto ? '' : fIn('mpBoU', 'Enlace de pago de Bold del colegio (opcional si conecta las llaves)', k.pago_bold_url || '', `placeholder="https://" ${ro ? 'disabled' : ''}`)}
-      <div class="field full" style="margin-top:6px">${chk('mpRes', '<strong>Familias con pagos pendientes:</strong> mientras tengan cuotas sin pagar, solo ven comunicados, horario, excusas y estado de cuenta (no calificaciones, boletines, observador ni PIAR).', k.restringir_morosos)}</div>
+      <div class="field full" style="margin-top:6px">${chk('mpRes', '<strong>Familias con pagos pendientes:</strong> mientras tengan cuotas sin pagar, solo ven el inicio y el estado de cuenta para ponerse al día; el estudiante no puede entrar hasta que se paguen.', k.restringir_morosos)}</div>
     </div>
     ${ro ? '<p class="muted">Los cambia quien tenga el permiso "Costos y medios de pago".</p>' : '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarMediosPago()">Guardar medios de pago</button></div>'}</div>${panelBoldColegio()}`;
 }
@@ -1859,8 +1861,8 @@ async function prepCierre() {
     // v0.22: el último grado que ofrece el colegio (Quinto en un colegio de primaria, Transición en un jardín) termina el nivel y egresa
     const mismoTramo = S.grupos.filter(x => esCiclo(x) === esCiclo(g));
     const ultimo = g && g.grado === Math.max(...mismoTramo.map(x => x.grado)) && !sig.length;
-    const res = g?.grado === 11 || g?.grado === 26 || ultimo ? (g?.nivel !== 'preescolar' && perdidas(e.id).length > S.k.max_perdidas ? 'No promovido' : 'Graduado')
-      : (g?.nivel !== 'preescolar' && perdidas(e.id).length > S.k.max_perdidas ? 'No promovido' : 'Promovido');
+    const res = g?.grado === 11 || g?.grado === 26 || ultimo ? (g?.nivel !== 'preescolar' && perdidas(e.id).length >= S.k.max_perdidas ? 'No promovido' : 'Graduado')
+      : (g?.nivel !== 'preescolar' && perdidas(e.id).length >= S.k.max_perdidas ? 'No promovido' : 'Promovido');
     return { id: e.id, resultado: res, destino: res === 'Promovido' ? (sig[0]?.id || '') : res === 'No promovido' ? e.grupo_id : '' };
   });
 }
@@ -2452,7 +2454,7 @@ function vPlataforma() {
       ${plat.map(c => `<tr class="${c.activo ? '' : 'dim'}"><td><strong>${esc(c.nombre)}</strong></td><td>${esc(c.ciudad || '')}</td><td>${c.anio}</td><td>${c.estudiantes_activos}${c.interna ? '' : ` de ${c.plan_max ?? '—'}`}${c.demo ? ' <span class="tag">Demo</span>' : ''}${c.interna ? ` <span class="tag ok-tag" title="${esc(c.interna_motivo || '')}">Interna</span>` : ''}</td><td>${c.demo || c.interna ? '<span class="muted">Sin cobro</span>' : cop(c.valor_mensual)}</td><td>${fmtF(c.creado_en)}</td>
         <td>${c.demo ? '<span class="muted">No aplica</span>' : c.interna ? '<span class="muted">Permanente</span>' : `${fmtF(c.pagado_hasta)} <button class="linkbtn" type="button" onclick="formPagadoHasta('${c.colegio_id}')">Cambiar</button>`}</td><td>${c.demo ? '' : c.interna ? '<span class="tag">Activa</span>' : estadoCobroTag(c)}${c.comprobante_id ? ` <button class="btn sm" type="button" onclick="revisarCompPlat('${c.comprobante_id}')">Revisar comprobante</button>` : ''}</td>
         <td>${c.activo ? 'Activo' : 'Suspendido'}</td><td style="white-space:nowrap">${c.interna ? '' : `<button class="btn sm" type="button" onclick="formPagoSusc('${c.colegio_id}')">Registrar pago</button> <button class="btn ghost sm" type="button" onclick="formPlanColegio('${c.colegio_id}')">Plan</button> `}${c.demo ? '' : `<button class="btn ghost sm" type="button" onclick="marcarInterna('${c.colegio_id}',${!c.interna})">${c.interna ? 'Quitar interna' : 'Hacer interna'}</button> `}<button class="btn ghost sm" type="button" onclick="toggleColegio('${c.colegio_id}',${!c.activo})">${c.activo ? 'Suspender' : 'Reactivar'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Aún no hay colegios. Cree el primero.</div>'}</div>
-    ${panelCambiosPlat()}${panelPruebasPlat()}${panelCompsPlat()}${panelCfgPlat()}
+    ${panelManualesPlat()}${panelCambiosPlat()}${panelPruebasPlat()}${panelCompsPlat()}${panelCfgPlat()}
     <div class="panel"><h2>Personas que probaron la demostración</h2>${visitas.length ? `<div class="tbl"><table><thead><tr><th>Fecha</th><th>Nombre</th><th>Correo</th><th>Perfil</th></tr></thead><tbody>${visitas.map(v => `<tr><td>${fechaHora(v.fecha)}</td><td>${esc(v.nombre || '')}</td><td>${esc(v.email || '')}</td><td>${{ coordinador: 'Directivo', docente: 'Docente', acudiente: 'Acudiente' }[v.rol] || esc(v.rol)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún nadie ha probado la demostración. Comparta el enlace de Colegio-IA y pídales que pulsen "Probar la demostración".</p>'}</div>
     <p class="muted">Planes: hasta 100 estudiantes $120.000; hasta 250, $220.000; hasta 500, $350.000; hasta 1.000, $550.000 al mes; más de 1.000, $40.000 adicionales por cada 100. Cada colegio puede matricular hasta el tope de su plan. Cada mes se paga por anticipado: si el mes no se ha pagado, el día 5 se cierra el acceso del colegio hasta confirmar el pago. Al registrar un pago o cambiar la fecha de «Pagado hasta», el acceso se restablece de inmediato.</p>`;
 }
@@ -3759,7 +3761,7 @@ function acAvance() {
   const docs = (S.miembros || []).filter(m => m.rol === 'docente' && m.activo).map(m => {
     let esp = 0, reg = 0; const falt = [];
     (S.dg || []).filter(d => d.miembro_id === m.id).forEach(d => {
-      const g = grupo(d.grupo_id); if (!g) return;
+      const g = grupo(d.grupo_id); if (!g || !perG(g).some(x => x.n === +acad.p)) return;
       const as = d.asignatura_id ? asigsDe(g).filter(a => a.id === d.asignatura_id) : asigsDe(g);
       as.forEach(a => { const es = estsDe(g.id); let r = 0; es.forEach(e => { esp++; if (ns.has(`${e.id}|${a.id}`)) { reg++; r++; } }); if (r < es.length) falt.push(`${g.nombre} ${a.nombre} (${es.length - r})`); });
     });
@@ -4387,7 +4389,7 @@ function vCampusFam() {
       <section class="panel"><h2>Próximas clases en vivo</h2>${clases.length ? `<ul class="list cam-list">${clases.map(i => itemFamHTML(i, true)).join('')}</ul>` : '<p class="muted">No hay clases en vivo programadas.</p>'}</section></div>
     <h2 style="margin:14px 0 6px">${isEst() ? 'Mis cursos' : 'Cursos'}</h2>
     <div class="cursos-grid">${as.map(a => { const c = (CAM.cursos || []).find(x => x.asignatura_id === a.id), np = CAM.pend.filter(i => !vencido(i) && CAM.uns.find(u => u.id === i.unidad_id)?.asignatura_id === a.id).length;
-      return `<button type="button" class="curso-card" aria-pressed="${sel.cfa === a.id}" onclick="sel.cfa=sel.cfa==='${a.id}'?'todas':'${a.id}';render()">${portadaCurso(a, c)}<span class="cc-t"><strong>${esc(a.nombre)}</strong><br><span class="muted">${esc(g.nombre)}${np ? ` · ${np} pendiente${np > 1 ? 's' : ''}` : ''}</span></span></button>`; }).join('')}</div>
+      return `<button type="button" class="curso-card" aria-pressed="${sel.cfa === a.id}" onclick="sel.cfa=sel.cfa==='${a.id}'?'todas':'${a.id}';render()">${portadaCurso(a, c)}<span class="cc-t"><strong>${esc(a.nombre)}</strong><br><span class="muted">${esc(g.nombre)}${np ? ` · ${np} pendiente${np > 1 ? 's' : ''}` : ''}</span>${progresoHTML(a.id)}</span></button>`; }).join('')}</div>
     <div class="panel"><div class="toolbar"><label class="field"><span>Asignatura</span><select onchange="sel.cfa=this.value;render()">${opt('todas', 'Todas las asignaturas', sel.cfa)}${as.map(a => opt(a.id, a.nombre, sel.cfa)).join('')}</select></label>
       <label class="field"><span>Periodo</span><select onchange="sel.cp=+this.value;render()">${perOpts(sel.cp, grupo(est(propio())?.grupo_id))}</select></label>${temaSelector()}</div>
       ${sel.cfa !== 'todas' && (CAM.cursos || []).find(x => x.asignatura_id === sel.cfa)?.descripcion ? `<p class="muted">${esc(CAM.cursos.find(x => x.asignatura_id === sel.cfa).descripcion)}</p>` : ''}
@@ -5065,6 +5067,7 @@ Object.assign(window, { marcarPiar, guardarMarcaPiar, calcularHoras, imprimirHor
 resetS();
 admTomarEnlace();
 verifTomarEnlace();
+try { const u = new URL(location.href), ir = u.searchParams.get('ir'); if (ir && /^[a-z]+$/.test(ir)) { sessionStorage.setItem('genesis:ir', ir); u.searchParams.delete('ir'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); } } catch {}
 arrancar();
 
 /* =====================================================================
@@ -5857,7 +5860,7 @@ async function guardarCiclo() {
 const gruposSemestre = () => S.grupos.filter(g => esCiclo(g) && g.periodos?.length && g.periodos.every(p => p <= 2) && estsDe(g.id).length);
 let semDec = {};
 function propuestaSem(e) {
-  const g = grupo(e.grupo_id), pierde = perdidas(e.id).length > S.k.max_perdidas;
+  const g = grupo(e.grupo_id), pierde = perdidas(e.id).length >= S.k.max_perdidas;
   if (semDec[e.id]) return semDec[e.id];
   const sig = S.grupos.find(x => x.grado === g.grado + 1 && x.periodos?.some(p => p >= 3)), mismo = S.grupos.find(x => x.grado === g.grado && x.periodos?.some(p => p >= 3));
   return semDec[e.id] = pierde ? { resultado: 'No promovido', destino: mismo?.id || '' } : g.grado === 26 ? { resultado: 'Graduado', destino: '' } : { resultado: 'Promovido', destino: sig?.id || '' };
@@ -5921,17 +5924,17 @@ function admMiasHTML(l, conColegio) {
     ${['Recibida', 'Entrevista', 'Admitida'].includes(a.estado) ? `<br><button class="linkbtn" type="button" onclick="retirarAdmision('${a.id}')">Retirar esta solicitud</button>` : ''}</li>`).join('')}</ul></div>`;
 }
 function admisionHTML() {
-  const i = admInfo, logo = i.logo ? `<img src="${i.logo}" alt="" style="max-height:64px;max-width:160px;display:block;margin:0 auto 8px">` : '';
+  const i = admInfo, logo = i.logo ? `<img src="${esc(i.logo)}" alt="" style="max-height:64px;max-width:160px;display:block;margin:0 auto 8px">` : '';
   const pie = `<p class="muted" style="margin-top:14px">Sesión: ${esc(me?.email || '')}. ${ctxs.length ? '<button class="linkbtn" type="button" onclick="salirAdmision()">Ir a Colegio-IA</button> · ' : ''}<button class="linkbtn" type="button" onclick="store.del(\'adm\');doLogout()">Cerrar sesión</button></p>`;
   const top = `${logo}<h2>Admisiones ${i.anio} · ${esc(i.colegio)}</h2>${i.ciudad ? `<p class="muted">${esc(i.ciudad)}</p>` : ''}${i.texto ? `<div class="note" style="white-space:pre-line">${esc(i.texto)}</div>` : ''}`;
   if (!i.abiertas) return top + `<div class="note">Las admisiones de este colegio están cerradas en este momento.${i.telefono ? ` Comuníquese con el colegio al ${esc(i.telefono)}.` : ''}</div>` + admMiasHTML(i.mias) + pie;
   if (i.mias?.length && !admNueva) return top + admMiasHTML(i.mias) + `<div class="toolbar"><button class="btn" type="button" onclick="admOtra(true)">Enviar otra solicitud (otro hijo o hija)</button></div>` + pie;
   const fi = (id, l, extra = '', v = '') => `<label class="field"><span>${l}</span><input id="${id}" value="${esc(v)}" ${extra}></label>`;
   const td = id => `<select id="${id}">${ADM_TD.map(t => opt(t, t, '')).join('')}</select>`;
-  const acud = (n, req) => `<fieldset class="adm-acud"><legend>Acudiente ${n}${req ? '' : ' (opcional)'}</legend><div class="formgrid">
-    ${fi(`ad${n}Nom`, 'Nombres y apellidos', req ? 'required' : '')}${fi(`ad${n}Par`, 'Parentesco', 'placeholder="Madre, padre, abuela…"')}
-    <label class="field"><span>Tipo de documento</span><select id="ad${n}Td">${['CC', 'CE', 'PPT', 'TI'].map(t => opt(t, t, 'CC')).join('')}</select></label>${fi(`ad${n}Doc`, 'Número de documento', req ? 'required inputmode="numeric"' : 'inputmode="numeric"')}
-    ${fi(`ad${n}Tel`, 'Celular', (req ? 'required ' : '') + 'inputmode="tel"')}${fi(`ad${n}Email`, 'Correo', 'type="email"', n === 1 ? me?.email || '' : '')}
+  const acud = (n, req) => `<fieldset class="adm-acud"><legend>Acudiente ${n}${req ? ' (en bachillerato por ciclos para adultos es opcional)' : ' (opcional)'}</legend><div class="formgrid">
+    ${fi(`ad${n}Nom`, 'Nombres y apellidos')}${fi(`ad${n}Par`, 'Parentesco', 'placeholder="Madre, padre, abuela…"')}
+    <label class="field"><span>Tipo de documento</span><select id="ad${n}Td">${['CC', 'CE', 'PPT', 'TI'].map(t => opt(t, t, 'CC')).join('')}</select></label>${fi(`ad${n}Doc`, 'Número de documento', 'inputmode="numeric"')}
+    ${fi(`ad${n}Tel`, 'Celular', 'inputmode="tel"')}${fi(`ad${n}Email`, 'Correo', 'type="email"', n === 1 ? me?.email || '' : '')}
     ${fi(`ad${n}Dir`, 'Dirección')}${fi(`ad${n}Ocu`, 'Ocupación')}
     <label class="chk full"><input type="checkbox" id="ad${n}Resp" ${n === 1 ? 'checked' : ''}> Es quien responde por los pagos</label></div></fieldset>`;
   return top + `<form onsubmit="event.preventDefault();enviarAdmision()" class="adm-form">
@@ -5962,6 +5965,7 @@ async function enviarAdmision() {
     condicion_especial: g('adCond'), recomendaciones_medicas: g('adMed') };
   const acs = [1, 2].map(n => ({ nombres: g(`ad${n}Nom`), parentesco: g(`ad${n}Par`), tipo_doc: g(`ad${n}Td`), doc: g(`ad${n}Doc`), telefono: g(`ad${n}Tel`), email: g(`ad${n}Email`),
     direccion: g(`ad${n}Dir`), ocupacion: g(`ad${n}Ocu`), responsable_pago: $(`#ad${n}Resp`).checked })).filter(a => a.nombres);
+  if (+g('adGr') < 21 && (!acs[0] || !acs[0].doc || !acs[0].telefono)) return authErr('Escriba los datos del acudiente: nombre, documento y celular');
   if (acs[1] && (!acs[1].doc || !acs[1].telefono)) return authErr('Del acudiente 2 escriba también el documento y el celular, o deje su nombre en blanco');
   await busy('#admBox button[type=submit]', async () => {
     try {
@@ -6030,7 +6034,7 @@ async function guardarAdmCfg() {
 }
 function verAdmision(id) {
   const a = ADM.l.find(x => x.id === id); if (!a) return;
-  const d = a.datos, ed = (isDir() || puede('matricula')) && a.estado !== 'Matriculada';
+  const d = a.datos, ed = (isDir() || puede('matricula')) && !['Matriculada', 'Retirada'].includes(a.estado);
   const fila = (l, v) => v ? `<tr><th>${l}</th><td>${esc(v)}</td></tr>` : '';
   const gs = S.grupos.filter(g => g.grado === a.grado), cerrado = a.anio > S.k.anio;
   const ent = a.entrevista ? new Date(new Date(a.entrevista).getTime() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : '';
@@ -6175,7 +6179,9 @@ async function sellar(html, tipo, eid, anio, titulo, extra = {}) {
   const resumen = { estudiante: e ? nom(e) : '', documento: docMask(e), ...extra };
   try {
     const c = await q(db.rpc('emitir_documento', { p_colegio: ctx.colegio_id, p_est: eid || null, p_tipo: tipo, p_anio: anio || null, p_titulo: titulo, p_resumen: resumen }));
-    const blk = `<div class="verif"><strong>Código de verificación: ${esc(c)}</strong><br>Verifique este documento en ${esc(location.origin.replace(/^https?:\/\//, ''))}/?verificar=${esc(c)}</div>`;
+    const url = `${location.origin}/?verificar=${c}`;
+    let qr = ''; try { qr = qrSvg(url, { ecc: 'M', escala: 2, margen: 2, color: '#0B4F8A' }); } catch {}
+    const blk = `<div class="verif">${qr ? `<span class="verif-qr">${qr}</span>` : ''}<span><strong>Código de verificación: ${esc(c)}</strong><br>Escanee el código o entre a ${esc(location.origin.replace(/^https?:\/\//, ''))}/?verificar=${esc(c)}</span></div>`;
     return html.replace(/<\/section>/, blk + '</section>');
   } catch (err) { console.warn(err); return html; }
 }
@@ -6227,7 +6233,7 @@ function informeFinalHTML(eid) {
   ${pre ? '' : `<p class="dnote">Escala institucional: ${escala().map(s => `${s.d} de ${N(s.min)} a ${N(s.max)}`).join(', ')}. Definitiva: promedio ponderado de los periodos (Decreto 1290 de 2009).</p>`}
   ${firmas(['Rector(a)', S.k.rector_nombre], ['Director(a) de grupo', g.director_nombre])}</section>`;
 }
-const resFinal = eid => { const g = grupo(est(eid)?.grupo_id); if (!g || g.nivel === 'preescolar') return 'Promovido(a)'; const bajo = escala().slice().sort((a, b) => a.min - b.min)[0]?.d || 'Bajo'; const n = asigsDe(g).filter(a => { const v = defin(eid, a.id); return v != null && desem(v) === bajo; }).length; return n >= (S.k.max_perdidas || 1) ? `No cumple (${n} en ${bajo.toLowerCase()})` : 'Cumple'; };
+const resFinal = eid => { const g = grupo(est(eid)?.grupo_id); if (!g || g.nivel === 'preescolar') return 'Promovido(a)'; const as = asigsDe(g); if (perG(g).some(p => !as.some(a => nota(eid, a.id, p.n) != null))) return 'Parcial'; const bajo = escala().slice().sort((a, b) => a.min - b.min)[0]?.d || 'Bajo'; const n = as.filter(a => { const v = defin(eid, a.id); return v != null && desem(v) === bajo; }).length; return n >= (S.k.max_perdidas || 1) ? `No cumple (${n} en ${bajo.toLowerCase()})` : 'Cumple'; };
 async function verInformeFinal(eid) {
   const e = est(eid); await guard(async () => { await cargarGrupo(e.grupo_id); await cargarFotoEst([eid]); });
   await verDocSellado(informeFinalHTML(eid), 'Informe final', nomArchivo('Informe final', e), 'informe_final', eid, S.k.anio, { grado: grupo(e.grupo_id)?.nombre || '', resultado: resFinal(eid) });
@@ -6315,7 +6321,7 @@ function actaGradoHTML(x) {
 }
 function diplomaHTML(x) {
   const e = est(x.estudiante_id), k = S.k;
-  return `<section class="doc diploma"><div style="text-align:center">${k.logo ? `<img src="${k.logo}" alt="" style="max-height:90px">` : ''}<div class="dh-inst" style="font-size:1.4rem">${esc(k.nombre)}</div>
+  return `<section class="doc diploma"><div style="text-align:center">${k.logo ? `<img src="${esc(k.logo)}" alt="" style="max-height:90px">` : ''}<div class="dh-inst" style="font-size:1.4rem">${esc(k.nombre)}</div>
     <div class="dh-meta">${esc(k.resolucion || '')}${k.dane ? ` · DANE ${esc(k.dane)}` : ''} · ${esc(k.ciudad || '')}</div>
     <p style="margin-top:22px">Teniendo en cuenta que</p><p style="font-size:1.6rem;font-weight:700;margin:6px 0">${esc(nom(e))}</p><p>${e.tipo_doc} ${esc(e.doc)}</p>
     <p>cursó y aprobó los estudios correspondientes y cumplió los requisitos legales, le confiere el título de</p>
@@ -6433,3 +6439,76 @@ async function hacerAnularDoc(id) {
   closeModal(); await prepCertGrados(); render();
 }
 Object.assign(window, { verInformeFinal, informesFinalesGrupo, salirVerificacion, pedirVerificar, cargarVerificacion, registrarGrados, quitarGrado, actaGrado, diplomaGrado, libroActas, guardarActa, imprimirActa, libroCalif, anularDoc, hacerAnularDoc });
+
+/* =====================================================================
+   v0.26: avisos al celular, manuales del usuario y progreso del campus
+   ===================================================================== */
+const b64u = s => { const p = '='.repeat((4 - s.length % 4) % 4), r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(r, c => c.charCodeAt(0)); };
+const avisosSoportados = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+async function avisosSub() { try { const r = await navigator.serviceWorker.getRegistration(); return r ? await r.pushManager.getSubscription() : null; } catch { return null; } }
+async function formAvisos() {
+  if (!avisosSoportados()) return openModal('Avisos en este equipo', `<p>Este navegador no permite avisos.</p><p class="muted">En Android use Chrome. En iPhone, primero agregue Colegio-IA a la pantalla de inicio (Compartir › Agregar a inicio), ábrala desde ese ícono y vuelva aquí.</p><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Entendido</button></div>`);
+  const s = await avisosSub(), on = !!s && Notification.permission === 'granted';
+  openModal('Avisos en este equipo', `<p>${on ? '✓ Los avisos están <strong>activados</strong> en este equipo.' : 'Reciba un aviso en este celular o computador cuando llegue un comunicado, un mensaje, una cita o una novedad de su solicitud, aunque no tenga Colegio-IA abierto.'}</p>
+    ${Notification.permission === 'denied' ? '<div class="note">Los avisos están bloqueados para Colegio-IA en este navegador. Permítalos en la configuración del sitio (ícono del candado junto a la dirección) y vuelva a intentarlo.</div>' : ''}
+    <p class="muted">Los avisos llegan en unos minutos. Puede activarlos en cada equipo que use.</p>
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button>${on ? '<button class="btn ghost" type="button" onclick="desactivarAvisos()">Desactivar en este equipo</button><button class="btn" type="button" onclick="probarAviso()">Probar</button>' : '<button class="btn" type="button" onclick="activarAvisos()">Activar avisos</button>'}</div>`);
+}
+async function activarAvisos() {
+  try {
+    if (await Notification.requestPermission() !== 'granted') return toast('No se dio permiso para los avisos');
+    const reg = await navigator.serviceWorker.register('sw.js'); await navigator.serviceWorker.ready;
+    const s = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(VAPID_PUB) });
+    const j = s.toJSON();
+    await q(db.rpc('avisos_activar', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_equipo: navigator.userAgent.slice(0, 120) }));
+    toast('Avisos activados en este equipo'); closeModal();
+  } catch (e) { console.warn(e); toast('No se pudieron activar los avisos: ' + msg(e)); }
+}
+async function desactivarAvisos() {
+  const s = await avisosSub(); if (s) { await q(db.rpc('avisos_quitar', { p_endpoint: s.endpoint })).catch(() => {}); await s.unsubscribe().catch(() => {}); }
+  toast('Avisos desactivados en este equipo'); closeModal();
+}
+async function probarAviso() { const r = await navigator.serviceWorker.getRegistration(); if (r) r.showNotification('Colegio-IA', { body: 'Así se verán sus avisos.', icon: 'icono-192.png' }); }
+
+// Manuales del usuario (cada persona descarga solo el de su cargo)
+const MAN_ROL = { general: 'Manual general', rector: 'Rector(a)', coordinador: 'Coordinación', secretaria: 'Secretaría', tesoreria: 'Tesorería', docente: 'Docente', acudiente: 'Acudiente', estudiante: 'Estudiante' };
+async function verManuales() {
+  if (S?.k?.demo) return openModal('Manual del usuario', '<p>En la demostración los manuales no se descargan. Cuando su colegio use Colegio-IA, cada persona encuentra aquí el manual de su cargo, en PDF.</p><div class="modal-foot"><button class="btn" type="button" onclick="closeModal()">Entendido</button></div>');
+  const l = await guard(() => q(db.rpc('mis_manuales', { p_colegio: ctx.colegio_id }))); if (!l) return;
+  openModal('Manual del usuario', l.length ? `<p class="muted">Guía paso a paso en PDF para su cargo.</p><ul class="list">${l.map(m => `<li style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span><strong>${esc(m.titulo)}</strong><br><span class="muted">Versión ${esc(m.version)}</span></span><button class="btn sm" type="button" onclick="abrirManual('${m.rol}')">Abrir PDF</button></li>`).join('')}</ul>` : '<p>El manual de su cargo aún no está disponible.</p>');
+}
+async function abrirManual(rol) {
+  toast('Abriendo el manual…');
+  const r = await guard(() => q(db.rpc('manual_pdf', { p_colegio: ctx.colegio_id, p_rol: rol }))); if (!r) return;
+  const bl = new Blob([b64u(r.pdf.replace(/\+/g, '-').replace(/\//g, '_').replace(/\s/g, ''))], { type: 'application/pdf' });
+  const u = URL.createObjectURL(bl), w = window.open(u, '_blank');
+  if (!w) descargarBlob(bl, `${r.titulo}.pdf`);
+}
+// Superadministrador: subir los PDF (nombre del archivo NN-Manual-<Cargo>.pdf)
+const MAN_ARCH = { general: 'general', rector: 'rector', coordinador: 'coordinador', secretaria: 'secretaria', tesoreria: 'tesoreria', docente: 'docente', acudiente: 'acudiente', estudiante: 'estudiante' };
+function panelManualesPlat() {
+  return `<section class="panel"><h2>Manuales del usuario</h2><p class="muted">Suba los PDF (00-Manual-general.pdf, 01-Manual-Rector.pdf…). Cada persona descarga desde la app solo el de su cargo.</p>
+    <div class="toolbar"><label class="field"><span>Versión</span><input id="manV" value="${esc(VERSION.split('.').slice(0, 2).join('.'))}"></label><label class="field"><span>Archivos PDF</span><input type="file" id="manF" accept="application/pdf" multiple></label><button class="btn" type="button" onclick="subirManuales()">Subir</button></div><p class="muted" id="manR"></p></section>`;
+}
+async function subirManuales() {
+  const fs = [...($('#manF')?.files || [])]; if (!fs.length) return toast('Elija los PDF');
+  let ok = 0; const r = $('#manR');
+  for (const f of fs) {
+    const n = f.name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''), rol = Object.keys(MAN_ARCH).find(k => n.includes(k));
+    if (!rol) { r.textContent += ` ${f.name}: no se reconoce el cargo.`; continue; }
+    const b = new Uint8Array(await f.arrayBuffer()); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+    try { await q(db.rpc('subir_manual', { p_rol: rol, p_titulo: rol === 'general' ? 'Manual general de Colegio-IA' : `Manual del usuario · ${MAN_ROL[rol]}`, p_version: $('#manV').value.trim() || VERSION, p_b64: btoa(s) })); ok++; r.textContent = `Subidos ${ok} de ${fs.length}…`; }
+    catch (e) { r.textContent += ` ${f.name}: ${msg(e)}.`; }
+  }
+  toast(`${ok} ${ok === 1 ? 'manual subido' : 'manuales subidos'}`);
+}
+
+// Progreso del estudiante en cada curso del campus (contenidos vistos y actividades entregadas)
+function progresoCurso(aid) {
+  const its = CAM.its.filter(i => CAM.uns.find(u => u.id === i.unidad_id)?.asignatura_id === aid && i.tipo !== 'clase');
+  if (!its.length) return null;
+  const hechos = its.filter(i => ['tarea', 'cuestionario'].includes(i.tipo) ? !!CAM.ent[i.id] : CAM.vis.has(i.id)).length;
+  return Math.round(hechos / its.length * 100);
+}
+const progresoHTML = aid => { const p = progresoCurso(aid); return p == null ? '' : `<span class="cc-prog" title="Avance en el curso"><i style="width:${p}%"></i></span><span class="cc-pct">${p}% completado</span>`; };
+Object.assign(window, { formAvisos, activarAvisos, desactivarAvisos, probarAviso, verManuales, abrirManual, subirManuales });
