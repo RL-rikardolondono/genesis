@@ -1,0 +1,23 @@
+name: Avisos al celular (Colegio-IA)
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # cada 10 minutos
+  workflow_dispatch: {}
+concurrency: { group: avisos, cancel-in-progress: false }
+jobs:
+  enviar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-save pg@8 web-push@3
+      - run: node fuente/correos/avisos.mjs
+        env:
+          NEON_CORREO: postgresql://correo_pruebas:${{ secrets.NEON_CLAVE }}@ep-weathered-breeze-b4c82o4u.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          BREVO_REMITENTE: ${{ vars.BREVO_REMITENTE }}
+          VAPID_PUB: ${{ vars.VAPID_PUB }}
+          VAPID_PRIVADA: ${{ secrets.VAPID_PRIVADA }}
