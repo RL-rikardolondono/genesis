@@ -21,6 +21,8 @@ function revisarNit(t) {
   const r = d.reduce((a, x, i) => a + +x * P[i], 0) % 11, dv = r > 1 ? 11 - r : r;
   return dv === +m[2] ? '' : `El dígito de verificación de ese NIT no corresponde: para ${m[1]} es ${dv}. Revíselo en el RUT`;
 }
+// Primer nombre con mayúscula inicial para los saludos (los datos se guardan en mayúscula)
+const primero = t => { const w = String(t || '').trim().split(/\s+/)[0] || ''; return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase(); };
 const pl = (n, a, b) => `${n} ${+n === 1 ? a : b}`; // lo usan atributos onclick/onsubmit escritos en el HTML (p. ej. «Verificar» de la entrada)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hoy = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
@@ -58,6 +60,14 @@ function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('o
 function openModal(t, html) { $('#mt').textContent = t; $('#mb').innerHTML = html; $('#modal').hidden = false; const f = $('#mb input,#mb select,#mb textarea,#mb button'); if (f) f.focus(); }
 function closeModal() { $('#modal').hidden = true; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').hidden) closeModal(); });
+// Matrícula: al escribir la fecha de nacimiento se sugiere el tipo de documento según la edad (RC menor de 7, TI de 7 a 17, CC desde 18)
+document.addEventListener('change', e => {
+  if (e.target?.id !== 'fNac' || !e.target.value) return;
+  const td = $('#fTd'); if (!td || td.dataset.tocado) return;
+  const ed = Math.floor((Date.now() - new Date(e.target.value + 'T12:00:00')) / 31557600000);
+  const v = ed < 7 ? 'RC' : ed < 18 ? 'TI' : 'CC'; if ([...td.options].some(o => o.value === v)) td.value = v;
+});
+document.addEventListener('input', e => { if (e.target?.id === 'fTd') e.target.dataset.tocado = '1'; });
 let lastDocs = '', lastTitulo = '';
 function showDocs(html, titulo, archivo) {
   if (isDoc() && modo === 'colegio') return toast('Los documentos los generan coordinación, secretaría y rectoría');
@@ -306,14 +316,14 @@ function authScreen(extra) {
       <p class="err" id="aErr" role="alert"></p>
       <button class="btn" type="submit">Entrar</button>
     </form>
-    <p class="muted" style="margin-top:14px">¿Primera vez? El colegio le entregó un código de activación. <button class="linkbtn" type="button" onclick="setAuth('registro')">Cree su cuenta</button></p>
+    <p class="muted" style="margin-top:14px">${store.get('adm') ? '¿Primera vez? ' : '¿Primera vez? El colegio le entregó un código de activación. '}<button class="linkbtn" type="button" onclick="setAuth('registro')">Cree su cuenta</button></p>
     <details class="verif-pedir"><summary>¿Recibió un certificado de un colegio? Verifíquelo aquí</summary><form class="toolbar" onsubmit="event.preventDefault();pedirVerificar($('#vCod0').value)"><label class="field"><span>Código de verificación</span><input id="vCod0" style="text-transform:uppercase" placeholder="XXXX-XXXX-XXXX" required></label><button class="btn ghost" type="submit">Verificar</button></form></details>
     <div class="demo-box"><strong>¿Quiere conocer Colegio-IA?</strong><br><span class="muted">Pruebe gratis el colegio de demostración como directivo, docente, acudiente o estudiante.</span><br><button class="btn wa" type="button" onclick="quiereDemo()">Probar la demostración</button></div>
     <div class="demo-box reg-box"><strong>¿Es directivo de un colegio?</strong><br><span class="muted">Registre su colegio y úselo 15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button> <button class="linkbtn" type="button" onclick="verPlanes()">Ver planes y precios</button></div>`;
   if (authMode === 'colegio') body = `<h2>Registre su colegio · 15 días gratis</h2>${formRegistroHTML()}
     <p class="muted" style="margin-top:14px">Sesión: ${esc(me?.email || '')}. <button class="linkbtn" type="button" onclick="doLogout()">Cerrar sesión</button></p>`;
   if (authMode === 'registro') body = `${admAviso()}${verifAviso()}<h2>${store.get('regcol') ? 'Paso 1 de 2: cree su cuenta' : store.get('demo') ? 'Cree su cuenta para probar Colegio-IA' : 'Crear cuenta'}</h2>
-    <p class="muted">${store.get('regcol') ? 'Use su correo y una contraseña. En el paso 2 escribe los datos del colegio y empieza su prueba gratis de 15 días.' : store.get('demo') ? 'Use su correo y una contraseña. No necesita código: después elige con qué perfil entrar al colegio de demostración.' : 'Use el mismo correo que registró el colegio. Después escribirá su código de activación.'}</p>
+    <p class="muted">${store.get('regcol') ? 'Use su correo y una contraseña. En el paso 2 escribirá los datos del colegio y empieza su prueba gratis de 15 días.' : store.get('demo') ? 'Use su correo y una contraseña. No necesita código: después elige con qué perfil entrar al colegio de demostración.' : 'Use el mismo correo que registró el colegio. Después escribirá su código de activación.'}</p>
     <form onsubmit="event.preventDefault();doRegistro()">
       <label class="field"><span>Nombre y apellido</span><input id="rNom" autocomplete="name" required placeholder="Ejemplo: María Gómez"></label>
       <label class="field"><span>Correo electrónico</span><input id="rEmail" type="email" autocomplete="username" required></label>
@@ -795,16 +805,22 @@ function vInicio() {
   const pa = S.k.periodo_actual;
   if (isTes()) {
     const c = cartera || [], venc = c.reduce((a, x) => a + +x.saldo_vencido, 0), pag = c.reduce((a, x) => a + +x.pagado, 0);
-    return hola(`${saludo()}, ${esc(ctx.nombre.split(' ')[0])}`, `${esc(S.k.nombre)}. Cartera del año ${S.k.anio}.`) +
+    return hola(`${saludo()}, ${esc(primero(ctx.nombre))}`, `${esc(S.k.nombre)}. Cartera del año ${S.k.anio}.`) +
       `<div class="stats"><div class="stat"><div class="n">${cop(pag)}</div><div class="l">Recaudado en el año</div></div>
        <div class="stat"><div class="n">${cop(venc)}</div><div class="l">Saldo vencido</div></div>
        <div class="stat"><div class="n">${c.filter(x => +x.saldo_vencido > 0).length}</div><div class="l">Estudiantes en mora</div></div></div>
        <div class="toolbar"><button class="btn" type="button" onclick="go('pagos')">Ir a pagos y cartera</button><button class="btn ghost" type="button" onclick="go('pedidos')">Tienda y pedidos${S.nov?.pedidosStaff ? ` (${S.nov.pedidosStaff} por atender)` : ''}</button></div>`;
   }
-  if (isFam() && !alDia()) return hola(`${saludo()}, ${esc((ctx.nombre || '').split(' ')[0])}`, esc(S.k.nombre)) + avisoRestringido() + redesHTML();
+  if (isFam() && est(propio()) && est(propio()).estado !== 'Activo') {
+    const ee = est(propio());
+    return hola(`${saludo()}, ${esc(primero(ctx.nombre))}`, esc(S.k.nombre)) + `<div class="panel"><h2>${esc(ee.nombres)} figura como ${esc(ee.estado.toLowerCase())} en el colegio</h2>
+      <p>${ee.estado === 'Graduado' ? '¡Felicitaciones por el grado! ' : ''}La información de los años cursados sigue guardada. ${isAcud() ? 'Puede pedir constancias y certificados en <button class="linkbtn" type="button" onclick="go(\'documentos\')">Documentos</button> y consultar el estado de cuenta.' : 'Las constancias y certificados los pide su acudiente desde Colegio-IA.'}</p>
+      <p class="muted">Si cree que esto es un error, comuníquese con la secretaría del colegio${S.k?.telefono ? ` (teléfono ${esc(S.k.telefono)})` : ''}.</p></div>` + redesHTML();
+  }
+  if (isFam() && !alDia()) return hola(`${saludo()}, ${esc(primero(ctx.nombre))}`, esc(S.k.nombre)) + avisoRestringido() + redesHTML();
   if (isDir()) {
     const r = resumen || {}; const pct = r.esperadas ? Math.round(r.registradas / r.esperadas * 100) : 0;
-    return hola(`${saludo()}, ${esc(ctx.nombre.split(' ')[0])}`, `${esc(S.k.nombre)}. Año lectivo ${S.k.anio}, periodo ${pa} en curso.`) +
+    return hola(`${saludo()}, ${esc(primero(ctx.nombre))}`, `${esc(S.k.nombre)}. Año lectivo ${S.k.anio}, periodo ${pa} en curso.`) +
       `<div class="stats">
         <div class="stat"><div class="n">${r.activos ?? 0}</div><div class="l">Estudiantes activos</div></div>
         <div class="stat"><div class="n">${r.grupos ?? 0}</div><div class="l">Grupos</div></div>
@@ -822,7 +838,7 @@ function vInicio() {
   }
   if (isDoc()) {
     const gs = gruposVis();
-    return hola(`${saludo()}, ${esc(ctx.nombre.split(' ')[0])}`, `Periodo ${pa} en curso. ${gs.length ? 'Estos son sus grupos.' : ''}`) + avisoCierre() +
+    return hola(`${saludo()}, ${esc(primero(ctx.nombre))}`, `Periodo ${pa} en curso. ${gs.length ? 'Estos son sus grupos.' : ''}`) + avisoCierre() +
       (gs.length ? `<div class="cols">${gs.map(g => {
         const es = estsDe(g.id), as = asigsVis(g); let t = 0, r = 0; es.forEach(e => as.forEach(a => { t++; if (nota(e.id, a.id, pa) != null) r++; })); const pc = t ? Math.round(r / t * 100) : 0;
         return `<section class="panel"><h2>${esc(g.nombre)}</h2><p class="muted">${es.length} estudiantes, ${as.length} ${g.nivel === 'preescolar' ? 'dimensiones' : 'asignaturas'}</p>
@@ -835,7 +851,7 @@ function vInicio() {
   const g = grupo(e.grupo_id);
   if (!g) return head(`Hola`, '') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
   const pr = promedio(e.id), pe = perdidas(e.id);
-  return hola(ctx.rol === 'acudiente' ? `${saludo()}, ${esc((ctx.nombre || '').split(' ')[0])}` : `${saludo()}, ${esc(e.nombres)}`, `${ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)} · ` : ''}${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + avisoCuota() + mlAvisoInicio() + juegoInicioHTML() + hoyFamilia() + campusInicioHTML() +
+  return hola(ctx.rol === 'acudiente' ? `${saludo()}, ${esc(primero(ctx.nombre))}` : `${saludo()}, ${esc(primero(e.nombres))}`, `${ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)} · ` : ''}${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + avisoCuota() + mlAvisoInicio() + juegoInicioHTML() + hoyFamilia() + campusInicioHTML() +
     `<div class="stats">
       <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : N(pr)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado' + (pr == null ? '' : ', ' + desem(pr))}</div></div>
       <div class="stat"><div class="n">${pe.length}</div><div class="l">Asignaturas en bajo</div></div>
@@ -939,7 +955,7 @@ function formEst(id) {
       ${isDir() ? `<label class="btn ghost sm">Subir o cambiar foto<input type="file" accept="image/*" hidden onchange="elegirFotoFicha(this,'${id || ''}')"></label>` : ''}</div></div>
     <h3>Datos del estudiante</h3><div class="formgrid">
       ${fIn('fNom', 'Nombres', e.nombres)}${fIn('fApe', 'Apellidos', e.apellidos)}
-      <label class="field"><span>Tipo de documento</span><select id="fTd">${TIPOS_DOC.map(t => opt(t, t, e.tipo_doc)).join('')}</select></label>
+      <label class="field"><span>Tipo de documento</span><select id="fTd"${e.tipo_doc ? ' data-tocado="1"' : ''}>${TIPOS_DOC.map(t => opt(t, t, e.tipo_doc)).join('')}</select></label>
       ${fIn('fDoc', 'Número de documento', e.doc, 'inputmode="numeric"')}${fIn('fExp', 'Lugar de expedición', e.lugar_expedicion)}
       ${fIn('fNac', 'Fecha de nacimiento', e.fnac, 'type="date"')}${fIn('fLNac', 'Lugar de nacimiento', e.lugar_nacimiento)}
       ${fSel('fSexo', 'Sexo', LISTAS.sexo, e.sexo)}${fIn('fPais', 'País de origen', e.pais_origen)}
@@ -988,6 +1004,8 @@ function validarMatricula(d, acs) {
   OBLIG_EST.forEach(([id, k, l]) => { if (!d[k]) { f.push(l); marca($('#' + id)); } });
   if (d.doc && !/^[0-9A-Za-z]{5,15}$/.test(d.doc.replace(/[\s.]/g, ''))) { f.push('Número de documento del estudiante (solo números, sin puntos)'); marca($('#fDoc')); }
   if (d.fnac && (!fechaReal(d.fnac) || d.fnac > hoy() || d.fnac < '1990-01-01')) { f.push('Fecha de nacimiento (no puede ser futura ni anterior a 1990)'); marca($('#fNac')); }
+  if (d.nombres && d.nombres.trim().length < 2) { f.push('Nombres completos (al menos 2 letras)'); marca($('#fNom')); }
+  if (d.apellidos && d.apellidos.trim().length < 2) { f.push('Apellidos completos (al menos 2 letras)'); marca($('#fApe')); }
   if (d.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) { f.push('Correo del estudiante válido (o déjelo vacío)'); marca($('#fEmail')); }
   const filas = [...document.querySelectorAll('#acudBox .acud')];
   const usados = acs.map((a, i) => ({ a, el: filas[i] })).filter(x => x.a.nombres || x.a.doc || x.a.telefono || x.a.email || x.a.direccion || x.a.ocupacion);
@@ -1030,6 +1048,14 @@ async function guardarEst(id) {
   acs.forEach(a => { a.doc = a.doc.replace(/[\s.]/g, ''); a.email = a.email.toLowerCase(); });
   const a1 = acs.find(a => a.nombres);
   d.acudiente_nombre = a1.nombres; d.acudiente_tel = a1.telefono;
+  // aviso: una fecha de matrícula anterior genera de una vez los cobros de los meses pasados
+  const fAnt = id ? est(id)?.fecha_matricula : null;
+  if (d.fecha_matricula && d.fecha_matricula < hoy() && d.fecha_matricula !== fAnt && +d.fecha_matricula.slice(0, 4) === +S.k.anio && d.fecha_matricula.slice(5, 7) < hoy().slice(5, 7)
+      && !(await confirmar(`La fecha de matrícula ${fmtF(d.fecha_matricula)} es de un mes anterior: el estado de cuenta tendrá desde ya las cuotas de esos meses (y si quedan sin pagar, la familia puede quedar con acceso limitado). ¿Continuar?`, 'Sí, guardar con esa fecha'))) return;
+  if (d.doc && S.ests.some(x => x.id !== id && x.doc === d.doc)) {
+    const otro = S.ests.find(x => x.id !== id && x.doc === d.doc);
+    return toast(`Ya hay un estudiante con el documento ${d.doc}: ${nom(otro)} (${otro.estado})${otro.estado !== 'Activo' ? '. Búsquelo en la lista y use Acciones › Reactivar' : ''}`);
+  }
   const r = await guard(async () => {
     const e = id ? await uno(db.from('estudiantes').update(d).eq('id', id).select().single())
                  : await q(db.from('estudiantes').insert({ ...d, colegio_id: ctx.colegio_id }).select().single());
@@ -1053,8 +1079,12 @@ function formRetiro(id) {
     <div class="formgrid">${fIn('rFec', 'Fecha de retiro', hoy(), 'type="date"')}
     <label class="field"><span>Motivo</span><select id="rMot">${['Traslado a otra institución', 'Cambio de ciudad', 'Motivos económicos', 'Motivos de salud', 'Deserción', 'Decisión de la familia', 'Otro'].map(x => opt(x, x)).join('')}</select></label>
     ${fTa('rObs', 'Observaciones', '')}</div>
-    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn warn" type="button" onclick="guardarRetiro('${id}')">Registrar retiro</button></div>`);
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn warn" type="button" onclick="retiroConfirmar('${id}')">Registrar retiro</button></div>`);
 }
+async function retiroConfirmar(id) {
+  if (await confirmar('¿Registrar el retiro de este estudiante? Dejará de generar cobros desde el mes siguiente a la fecha de retiro.', 'Sí, registrar retiro')) await guardarRetiro(id);
+}
+window.retiroConfirmar = retiroConfirmar;
 async function guardarRetiro(id) {
   const obs = vv('rObs');
   const d = { estado: 'Retirado', fecha_retiro: vv('rFec') || hoy(), motivo_retiro: vv('rMot') + (obs ? `. ${obs}` : '') };
@@ -1730,7 +1760,7 @@ function paramPeriodos() {
   return (r ? '' : '<div class="note">Solo el rector o la rectora pueden cambiar el SIEE.</div>') +
     `<div class="panel"><h2>Periodos y calendario académico</h2><p class="muted">El año lectivo va de enero a diciembre. Elija cuántos periodos tiene, el porcentaje de cada uno (deben sumar 100%) y sus fechas. Después de la fecha de <strong>cierre de calificaciones</strong> los docentes ya no pueden modificar las calificaciones de ese periodo; los directivos sí.</p>
       <div class="toolbar"><label class="field"><span>Número de periodos</span><select id="nPer" ${dis} onchange="cambiarNumPeriodos(+this.value)">${[1, 2, 3, 4, 5, 6].map(n => opt(n, n, ps.length)).join('')}</select></label>
-      <label class="field"><span>Periodo en curso</span><select id="pAct" ${dis}>${ps.map(p => opt(p.n, 'Periodo ' + p.n, k.periodo_actual)).join('')}</select></label></div>
+      <label class="field"><span>Periodo en curso</span><select id="pAct" ${dis}>${ps.map(p => opt(p.n, 'Periodo ' + p.n, k.periodo_actual)).join('')}</select></label></div>${(() => { const h = hoy(), seg = ps.find(p => p.inicio && p.fin && p.inicio <= h && h <= p.fin); return seg && seg.n !== k.periodo_actual ? `<div class="note">Según las fechas, hoy corresponde el <strong>periodo ${seg.n}</strong>, pero el periodo en curso está en ${k.periodo_actual}. Cámbielo arriba y guarde. Los docentes califican hasta la fecha de cierre de cada periodo.</div>` : ''; })()}
       <div id="perBox">${ps.map(p => filaPer(p, dis)).join('')}</div>
       <p class="muted" id="perNota">${r ? 'Esta sección y la escala se guardan juntas con el botón <strong>Guardar periodos y escala</strong>, al final de la escala.' : ''}</p></div>
     <div class="panel"><h2>Escala de valoración</h2><div class="toolbar">${es.map((s, i) => `<label class="field"><span>${esc(s.d)} desde</span><input ${NOTA_ATTR} id="es${i}" value="${N(s.min)}" ${dis}></label>`).join('')}
@@ -1987,7 +2017,7 @@ function docentesSel(g) {
 function formGrupo(id) {
   const g = id ? grupo(id) : { nombre: '', grado: 1, director_nombre: '' };
   const fijo = id && esCiclo(g);
-  openModal(id ? 'Editar grupo' : 'Nuevo grupo', `<div class="formgrid">
+  openModal(id ? 'Editar curso' : 'Nuevo curso', `<div class="formgrid">
     ${fijo ? `<div class="field full"><span>Ciclo</span><strong>${esc(gradoTxt(g.grado))}</strong>${g.periodos?.length ? ` · ${semTxt(g)}` : ''}</div>`
       : `<label class="field"><span>Grado o ciclo</span><select id="gGr" onchange="gSemBox.hidden=!(+this.value>=25)">${Object.entries(GRADOS).sort((a, b) => a[0] - b[0]).map(([v, l]) => opt(v, +v >= 21 ? `Ciclos · ${l}` : l, g.grado)).join('')}</select></label>
     <label class="field" id="gSemBox" hidden><span>Semestre del ciclo</span><select id="gSem"><option value="1">Primer semestre (periodos 1 y 2)</option><option value="2">Segundo semestre (periodos 3 y 4)</option></select></label>`}
@@ -2077,7 +2107,7 @@ function vPagos() {
   const l = cartera.filter(x => (!fg || x.grupo === fg) && (!qq || x.nombre.toLowerCase().includes(qq)) && (!solo || +x.saldo_vencido > 0));
   const tot = k => cartera.reduce((a, x) => a + +x[k], 0);
   return head('Pagos y cartera', `Año ${anioCartera()}. Cada pago queda registrado con el nombre de quien lo recibió.`,
-    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarCartera()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="imprimirCartera()">Imprimir cartera</button><button class="btn ghost" type="button" onclick="modalBecas()">Becas y descuentos${becas.filter(b => b.activa).length ? ` (${becas.filter(b => b.activa).length})` : ''}</button></div>`) + panelBoldStaff() + panelComprobantes() +
+    `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarCartera()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="imprimirCartera()">Imprimir cartera</button>${puede('becas') ? `<button class="btn ghost" type="button" onclick="modalBecas()">Becas y descuentos${becas.filter(b => b.activa).length ? ` (${becas.filter(b => b.activa).length})` : ''}</button>` : ''}</div>`) + panelBoldStaff() + panelComprobantes() +
     `<div class="stats"><div class="stat"><div class="n">${cop(tot('pagado'))}</div><div class="l">Recaudado</div></div>
       <div class="stat"><div class="n">${cop(tot('saldo_vencido'))}</div><div class="l">Saldo vencido</div></div>
       <div class="stat"><div class="n">${cop(tot('saldo_total'))}</div><div class="l">Saldo total del año</div></div>
@@ -3477,7 +3507,7 @@ function imprimirHorario() {
   showDocs(`<section class="doc">${docHead('Horario de clases', mio ? esc(ctx.nombre) : esc(grupo(sel.hg)?.nombre || ''))}${gridHorario(l, celda)}</section>`, 'Horario', `Horario ${mio ? ctx.nombre : grupo(sel.hg)?.nombre || ''}`);
 }
 function editorHorario() {
-  const g = grupo(sel.hg), as = asigsDe(g), docs = (S.miembros || []).filter(m => m.rol === 'docente' && m.activo).map(m => m.nombre);
+  const g = grupo(sel.hg), as = asigsDe(g), docs = (() => { const t = (S.miembros || []).filter(m => m.rol === 'docente' && m.activo), del = t.filter(m => (S.dg || []).some(d => d.miembro_id === m.id && d.grupo_id === sel.hg)); return (del.length ? del : t).map(m => m.nombre); })();   // primero los docentes asignados al curso
   const nb = sel.hNb || Math.max(6, ...horario.map(x => x.bloque)), sab = sel.hSab ?? horario.some(x => x.dia === 6);
   const dias = [1, 2, 3, 4, 5].concat(sab ? [6] : []), hc = { inicio: '07:00', min: 45, desc_despues: 3, desc_min: 30, ...(S.k.horario_cfg || {}) };
   const c = (d, b) => horario.find(x => x.dia === d && x.bloque === b) || {};
@@ -3537,7 +3567,7 @@ function filaExc(x, staff) {
     <div class="meta">${staff ? (x.desde === x.hasta ? fechaLarga(x.desde) : `Del ${fmtF(x.desde)} al ${fmtF(x.hasta)}`) + ' · ' : ''}Enviada por ${esc(x.enviada_por || 'el colegio')} el ${fechaHora(x.creado_en)}</div>
     <p style="white-space:pre-wrap">${esc(x.motivo)}</p>
     ${x.respuesta ? `<p class="muted">Respuesta: ${esc(x.respuesta)}</p>` : ''}${x.revisada_por ? `<p class="muted">Revisó: ${esc(x.revisada_por)}</p>` : ''}
-    <div class="toolbar" style="margin:6px 0 0"><button class="btn ghost sm" type="button" onclick="verSoporte('${x.id}')">Ver soporte</button>
+    <div class="toolbar" style="margin:6px 0 0">${x.estado === 'Pendiente' ? `<button class="btn ghost sm" type="button" onclick="verSoporte('${x.id}')">Ver soporte</button>` : ''}
     ${staff && x.estado === 'Pendiente' ? `<button class="btn sm" type="button" onclick="revisarExcusa('${x.id}','Aprobada')">Aprobar</button><button class="btn ghost sm" type="button" onclick="revisarExcusa('${x.id}','Rechazada')">Rechazar</button>` : ''}</div></article>`;
 }
 function vExcusas() {
@@ -3659,6 +3689,7 @@ function panelPagarFam(venc) {
       ${llave ? `<div class="medio"><h3>Con llave Bre-B</h3><p>Llave Bre-B: <strong class="code">${esc(k.pago_llave_valor)}</strong> <button class="btn ghost sm" type="button" onclick="copiarTexto('${esc(k.pago_llave_valor)}')">Copiar</button>${k.pago_llave_titular ? `<br><span class="muted">A nombre de ${esc(k.pago_llave_titular)}</span>` : ''}</p><p class="muted">Después de pagar, oprima "Ya pagué" abajo y adjunte el comprobante.</p></div>` : ''}
       ${k.pago_efectivo ? `<div class="medio"><h3>En efectivo en el colegio</h3><p class="muted">${esc(k.pago_efectivo_texto || 'En la tesorería del colegio.')} Le entregan el recibo en el momento.</p></div>` : ''}
     </div></div>
+  ${(comps || []).some(c => c.estado === 'Pendiente') ? '<div class="note"><strong>Su comprobante está en revisión.</strong> La tesorería del colegio lo revisa; cuando confirme que el dinero llegó, el pago queda registrado. No necesita enviarlo otra vez.</div>' : ''}
   ${mediosComprobante().length ? `<div class="panel"><h2>Ya pagué</h2><p class="muted">Si pagó con ${mediosComprobante().join(' o ').toLowerCase().replace('llave bre-b', 'llave Bre-B')}, envíe aquí el comprobante. Cuando el colegio confirme que el dinero llegó, el pago queda registrado y le llega el recibo. Puede pagar una cuota completa o hacer un abono.</p>
     <div class="formgrid">${fIn('cVal', 'Valor pagado (puede ser un abono)', venc || '', 'type="number" min="1" oninput="this.dataset.manual=1"')}${fIn('cFec', 'Fecha del pago', hoy(), 'type="date"')}
       <label class="field"><span>Medio de pago</span><select id="cMed">${mediosComprobante().map(m => opt(m, m)).join('')}</select></label>${fIn('cRef', 'Número de referencia o aprobación', '')}
@@ -3749,7 +3780,7 @@ async function prepAcademico() {
   if (!sel.app) sel.app = S.k.periodo_actual;
   if (sel.atab === 'planilla') {
     const gs = isDir() ? S.grupos : S.grupos.filter(g => S.dirGrupos.includes(g.id));
-    if (!sel.ag || !gs.find(g => g.id === sel.ag)) sel.ag = gs[0]?.id || '';
+    if (!sel.ag || !gs.find(g => g.id === sel.ag)) sel.ag = (gs.find(g => estsDe(g.id).length) || gs[0])?.id || '';   // abre en un curso con estudiantes
     if (sel.ag) await cargarGrupo(sel.ag);
   }
   if (sel.atab === 'estadisticas' && !sel.appElegido) { const pp = await periodoConDatos(S.k.periodo_actual); sel.app = pp; acad.aviso = pp !== S.k.periodo_actual ? `El periodo ${S.k.periodo_actual} aún no tiene calificaciones: se muestra el periodo ${pp}.` : ''; }
@@ -4906,7 +4937,7 @@ const waAsesor = (l = 'Hablar con un asesor') => waBtn(SOPORTE_TEL, 'Hola. Estoy
 function planesHTML(cta = true) {
   return `<div class="planes">${PLANES.map((n, i) => `<div class="plan ${i === 1 ? 'plan-dest' : ''}">${i === 1 ? '<span class="plan-tag">Recomendado</span>' : ''}<h3>${PLAN_TXT[n]}</h3>
       <div class="plan-precio">${cop(precioPlan(n))}<small> al mes</small></div><p class="muted">Usuarios ilimitados. Todo incluido.</p></div>`).join('')}</div>
-    <p class="muted">Más de 1.000 estudiantes: ${cop(40000)} adicionales por cada 100. La capacitación se cotiza aparte.</p>
+    <p class="muted">Más de 1.000 estudiantes: desde ${cop(590000)} al mes (de 1.001 a 1.100) y ${cop(40000)} adicionales por cada 100 más. La capacitación se cotiza aparte.</p>
     <ul class="incluye">${INCLUYE.map(x => `<li>✓ ${x}</li>`).join('')}</ul>
     ${cta ? `<div class="toolbar"><button class="btn" type="button" onclick="quiereRegistro()">Empezar 15 días gratis</button>${waAsesor()}</div>
     <p class="muted">Sin tarjeta y sin compromiso. Al terminar la prueba, paga en línea con Bold (tarjeta, PSE, Nequi o Bancolombia) y sigue trabajando con todo lo que registró.</p>` : ''}`;
@@ -5335,7 +5366,7 @@ async function formBeca(eid) {
   const mesOpt = (id, v) => `<select id="${id}" onchange="previewBeca()">${MESES.slice(1).map((m, i) => opt(i + 1, m, v)).join('')}</select>`;
   openModal('Asignar beca o descuento', `<div class="formgrid">
     ${eid ? `<input type="hidden" id="bEst" value="${eid}"><div class="field full"><span class="muted">Estudiante</span><br><strong>${esc(nom(est(eid)))}</strong></div>`
-      : `<label class="field full"><span>Estudiante</span><select id="bEst" onchange="previewBeca()"><option value="">Elija…</option>${acts.map(e => opt(e.id, `${e.apellidos} ${e.nombres} · ${grupo(e.grupo_id)?.nombre || ''}`, '')).join('')}</select></label>`}
+      : `<label class="field full"><span>Buscar estudiante</span><input type="search" placeholder="Escriba parte del nombre o del documento" oninput="const t=this.value.toUpperCase();[...document.querySelectorAll('#bEst option')].forEach(o=>{o.hidden=!!o.value&&!o.textContent.toUpperCase().includes(t)})"></label><label class="field full"><span>Estudiante</span><select id="bEst" onchange="previewBeca()"><option value="">Elija…</option>${acts.map(e => opt(e.id, `${e.apellidos} ${e.nombres} · ${e.doc} · ${grupo(e.grupo_id)?.nombre || ''}`, '')).join('')}</select></label>`}
     <label class="field"><span>Tipo</span><select id="bTipo">${TIPOS_BECA.map(t => opt(t, t, 'Beca')).join('')}</select></label>
     ${fIn('bMot', 'Motivo o entidad que lo otorga', '', 'maxlength="300" placeholder="Ejemplo: RENDIMIENTO ACADÉMICO, CONVENIO CAJA DE COMPENSACIÓN"')}
     <label class="field"><span>Descuento en</span><select id="bModo" onchange="previewBeca()">${opt('porcentaje', 'Porcentaje (%)', 'porcentaje')}${opt('valor', 'Valor fijo por cuota ($)', '')}</select></label>
@@ -5738,7 +5769,7 @@ const CARGA_COLS = [
   ['curso', 'Curso', 1], ['jornada', 'Jornada', 1, LISTAS.jornada], ['situacion', 'Situación', 1, LISTAS.situacion],
   ['etnia', 'Grupo étnico', 0, LISTAS.etnia], ['discapacidad', 'Discapacidad', 0, LISTAS.discapacidad], ['institucion_procedencia', 'Institución de procedencia', 0],
   ['a_parentesco', 'Acudiente: parentesco', 0, LISTAS.parentesco], ['a_nombres', 'Acudiente: nombres y apellidos', 1], ['a_tipo_doc', 'Acudiente: tipo de documento', 0, ['CC', 'CE', 'PPT', 'PEP', 'Pasaporte']],
-  ['a_doc', 'Acudiente: número de documento', 1], ['a_telefono', 'Acudiente: teléfono', 1], ['a_email', 'Acudiente: correo', 1], ['a_direccion', 'Acudiente: dirección', 1], ['a_ocupacion', 'Acudiente: ocupación', 1]];
+  ['a_doc', 'Acudiente: número de documento', 1], ['a_telefono', 'Acudiente: teléfono', 1], ['a_email', 'Acudiente: correo', 1], ['a_direccion', 'Acudiente: dirección', 1], ['a_ocupacion', 'Acudiente: ocupación', 1], ['aut_datos', 'Autoriza tratamiento de datos (Sí o No)', 0, ['Sí', 'No']], ['aut_imagen', 'Autoriza uso de imagen (Sí o No)', 0, ['Sí', 'No']]];
 const sinTilde = t => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 let carga = null;
 function avisoTopePlan(n) {
@@ -5748,7 +5779,7 @@ function avisoTopePlan(n) {
 }
 async function plantillaCarga() {
   const ej = ['SOFÍA', 'GÓMEZ RÍOS', 'RC', '1081234567', 'CIÉNAGA', '2019-05-10', 'CIÉNAGA', 'Femenino', 'CRA 3 # 4-5', 'CENTRO', 'CIÉNAGA', 'Urbana', '2', 'NUEVA EPS', 'O+', 'B4',
-    S.grupos[0]?.nombre || 'PRIMERO A', 'Mañana', 'Nuevo', 'No aplica', 'No aplica', '', 'Madre', 'ANA RÍOS', 'CC', '57111222', '3015556677', 'ana@correo.com', 'CRA 3 # 4-5', 'COMERCIANTE'];
+    S.grupos[0]?.nombre || 'PRIMERO A', 'Mañana', 'Nuevo', 'No aplica', 'No aplica', '', 'Madre', 'ANA RÍOS', 'CC', '57111222', '3015556677', 'ana@correo.com', 'CRA 3 # 4-5', 'COMERCIANTE', 'Sí', 'Sí'];
   const opciones = CARGA_COLS.filter(c => c[3]).map(c => [c[1], c[3].filter(Boolean).join(' · ')]);
   const b = await escribirXlsx([{ nombre: 'Estudiantes', filas: [CARGA_COLS.map(c => c[1] + (c[2] ? ' *' : '')), ej] },
     { nombre: 'Opciones', filas: [['Columna', 'Valores permitidos'], ['Curso', S.grupos.map(g => g.nombre).join(' · ')], ...opciones,
@@ -5807,7 +5838,7 @@ async function guardarCarga() {
       const d = { nombres: o.nombres, apellidos: o.apellidos, tipo_doc: o.tipo_doc, doc: o.doc, lugar_expedicion: o.lugar_expedicion, fnac: o.fnac, lugar_nacimiento: o.lugar_nacimiento,
         sexo: o.sexo, pais_origen: 'Colombia', direccion: o.direccion, barrio: o.barrio, municipio: o.municipio, zona: o.zona, estrato: o.estrato, eps: o.eps, rh: o.rh, sisben: o.sisben,
         etnia: o.etnia || 'No aplica', discapacidad: o.discapacidad || 'No aplica', capacidades_excepcionales: 'No aplica', grupo_id: o.grupo_id, jornada: o.jornada, situacion: o.situacion,
-        fecha_matricula: hoy(), institucion_procedencia: o.institucion_procedencia, acudiente_nombre: o.a_nombres, acudiente_tel: o.a_telefono, colegio_id: ctx.colegio_id };
+        fecha_matricula: hoy(), institucion_procedencia: o.institucion_procedencia, autoriza_datos: o.aut_datos === 'Sí', autoriza_imagen: o.aut_imagen === 'Sí', autoriza_por: o.aut_datos === 'Sí' ? o.a_nombres || null : null, autoriza_fecha: o.aut_datos === 'Sí' ? hoy() : null, acudiente_nombre: o.a_nombres, acudiente_tel: o.a_telefono, colegio_id: ctx.colegio_id };
       try {
         const e = await q(db.from('estudiantes').insert(d).select().single());
         await q(db.from('acudientes').insert({ colegio_id: ctx.colegio_id, estudiante_id: e.id, orden: 1, parentesco: o.a_parentesco || 'Madre', nombres: o.a_nombres, tipo_doc: o.a_tipo_doc || 'CC',
@@ -5881,6 +5912,8 @@ async function aplicarAmpliar(btn, p) {
   const r = await busy(btn, () => q(db.rpc('plan_cambio', { p_colegio: ctx.colegio_id, p_plan: p, p_aplicar: true })).catch(er => { toast(msg(er)); return null; }));
   if (!r) return;
   S.estado = await q(db.rpc('estado_colegio', { p_colegio: ctx.colegio_id })).catch(() => S.estado);
+  S.susc = await q(db.rpc('mi_suscripcion', { p_colegio: ctx.colegio_id })).catch(() => S.susc);
+  S.k = await q(db.from('colegios').select('*').eq('id', ctx.colegio_id).single()).catch(() => S.k);
   closeModal(); toast(`Plan ampliado: ${planTxt(p)}`); render();
 }
 async function pagarAmpliar(btn, p, total) {
@@ -6344,7 +6377,7 @@ function cgGradosHTML() {
   const cfg = S.k.grados_cfg || {}, ug = ultimoGrado(), reg = new Set(CG.grados.map(x => x.estudiante_id));
   const cand = S.ests.filter(e => !reg.has(e.id) && ((e.estado === 'Activo' && [11, 26, ug].includes(grupo(e.grupo_id)?.grado)) || e.estado === 'Graduado'))
     .sort((a, b) => (grupo(a.grupo_id)?.nombre || '').localeCompare(grupo(b.grupo_id)?.nombre || '') || nom(a).localeCompare(nom(b), 'es'));
-  const tit = cfg.titulo || (ug >= 11 ? 'BACHILLER ACADÉMICO' : ug === 5 ? 'BÁSICA PRIMARIA' : '');
+  const tit = cfg.titulo || (ug >= 11 ? 'BACHILLER ACADÉMICO' : ug === 9 ? 'BÁSICA SECUNDARIA' : ug != null && ug <= 5 ? 'BÁSICA PRIMARIA' : '');
   const sig = CG.grados.length ? Math.max(...CG.grados.map(x => x.acta)) + 1 : 1;
   return `<div class="panel"><h2>Registrar graduandos</h2><p class="muted">Se asigna a cada graduando un número de acta y de folio consecutivos. Después imprima el acta individual, el diploma y el libro de actas de grado.</p>
     <div class="formgrid"><label class="field"><span>Título que se otorga</span><input id="grT" value="${esc(tit)}" placeholder="BACHILLER ACADÉMICO"></label>
