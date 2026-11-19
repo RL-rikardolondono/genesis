@@ -582,3 +582,11 @@ body{background:linear-gradient(180deg,#EEF5FB 0,var(--paper) 320px) no-repeat,v
   .doc{padding:16px 12px;overflow-x:auto}
 }
 .cuenta-reg strong{color:#B42318}
+/* v0.28: celular */
+@media (max-width:760px){
+  .guardar-fijo{position:static}
+  .seg-asis button{min-width:42px;min-height:42px}
+  .tabs{flex-wrap:wrap}
+  .topbar .tb-perfil{font-size:.85rem}
+  .side .brand small,.side .colegio{white-space:normal;overflow:visible}
+}
