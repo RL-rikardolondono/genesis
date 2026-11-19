@@ -573,3 +573,12 @@ body{background:linear-gradient(180deg,#EEF5FB 0,var(--paper) 320px) no-repeat,v
 .verif{display:flex;gap:12px;align-items:center}.verif-qr svg{display:block;width:84px;height:84px}
 .cc-prog{display:block;height:6px;border-radius:4px;background:#DCE5EE;margin-top:6px;overflow:hidden}.cc-prog i{display:block;height:100%;background:#14A38B}
 .cc-pct{font-size:.75rem;color:#5D6B78}
+/* v0.27 (Prueba Ácida): casillas alineadas, sombras que indican que una tabla se desliza, campos sin zoom en el celular */
+.chk input[type=checkbox],.chk input[type=radio]{width:20px;height:20px;min-width:20px;flex:0 0 20px;margin:0}
+.tbl{background:linear-gradient(to right,#fff 30%,rgba(255,255,255,0)) left center/40px 100% no-repeat local,linear-gradient(to left,#fff 30%,rgba(255,255,255,0)) right center/40px 100% no-repeat local,radial-gradient(farthest-side at 0 50%,rgba(11,79,138,.18),transparent) left center/14px 100% no-repeat scroll,radial-gradient(farthest-side at 100% 50%,rgba(11,79,138,.18),transparent) right center/14px 100% no-repeat scroll}
+@media (max-width:760px){
+  input,select,textarea{font-size:16px}
+  .prueba-note{font-size:.9rem;padding:8px 10px}
+  .doc{padding:16px 12px;overflow-x:auto}
+}
+.cuenta-reg strong{color:#B42318}
