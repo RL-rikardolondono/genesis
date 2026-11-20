@@ -113,6 +113,8 @@ export function leerCsv(txt) {
   return filas;
 }
 export function descargarBlob(blob, nombre) {
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre; document.body.appendChild(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  // nombre sin caracteres que algunos navegadores rechazan (si los rechaza, el archivo queda como «download» sin extensión)
+  const ext = (nombre.match(/\.[a-z0-9]+$/i) || [''])[0], base = nombre.slice(0, nombre.length - ext.length).replace(/[^\wáéíóúñÁÉÍÓÚÑüÜ .-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (base || 'archivo') + ext; a.type = blob.type || ''; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
 }
