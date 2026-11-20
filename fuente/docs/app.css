@@ -611,3 +611,9 @@ body{background:linear-gradient(180deg,#EEF5FB 0,var(--paper) 320px) no-repeat,v
   .head{margin-bottom:8px}
 }
 .side .who strong,.side .brand small{white-space:normal;word-break:break-word}
+/* v0.30: en celular el cargo de la barra superior se ve completo (el botón Volver queda solo con la flecha) */
+@media (max-width:440px){.topbar{gap:5px}.topbar .btn.sm{padding-left:8px;padding-right:8px}.topbar .tb-volver{font-size:0}.topbar .tb-volver::before{content:"←";font-size:1rem}.topbar .tb-perfil{overflow:visible}.topbar .tb-perfil .rol-chip{padding:2px 7px;font-size:.8rem}}
+/* v0.30: cifras grandes y botones de usuarios dentro de la tarjeta en celular */
+.stat{min-width:0}.stat .n{overflow-wrap:anywhere}
+@media (max-width:480px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stat{padding:12px}.stat .n{font-size:clamp(1.15rem,6vw,1.8rem)}}
+.acc-btns{display:inline-flex;flex-wrap:wrap;gap:6px}
