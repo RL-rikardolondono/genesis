@@ -590,3 +590,24 @@ body{background:linear-gradient(180deg,#EEF5FB 0,var(--paper) 320px) no-repeat,v
   .topbar .tb-perfil{font-size:.85rem}
   .side .brand small,.side .colegio{white-space:normal;overflow:visible}
 }
+/* v0.29 (Prueba Ácida, 2.ª vuelta) */
+.field.chk{flex-direction:row;align-items:flex-start;gap:10px}
+.field.chk input[type=checkbox]{margin-top:2px}
+.tbl.desliza::before{content:"Deslice hacia el lado para ver más →";display:block;position:sticky;left:0;font-size:.8rem;color:var(--muted,#5D6B78);padding:2px 0 4px}
+.modal-foot{flex-wrap:wrap}
+.verif-pedir form,.verif-pedir .toolbar{flex-wrap:wrap}
+.verif-pedir input,#vCod,#vCod0{min-width:0;max-width:100%}
+.horario-ed,.h-tabla{max-width:100%}
+.rol-chip{white-space:nowrap}
+@media (max-width:760px){
+  .topbar .tb-perfil{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .doc table{display:block;overflow-x:auto;max-width:100%}
+  .tabs{position:static}
+  .modal-foot.guardar-fijo{position:static;justify-content:flex-start}
+}
+@media (max-height:480px) and (orientation:landscape){
+  .topbar{position:static}
+  .hola{padding:10px 14px}.hola h1{font-size:1.3rem}
+  .head{margin-bottom:8px}
+}
+.side .who strong,.side .brand small{white-space:normal;word-break:break-word}
