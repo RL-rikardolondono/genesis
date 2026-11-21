@@ -860,6 +860,7 @@ function vInicio() {
   if (isTes()) {
     const c = cartera || [], venc = c.reduce((a, x) => a + +x.saldo_vencido, 0), pag = c.reduce((a, x) => a + +x.pagado, 0);
     return hola(`${saludo()}, ${esc(primero(ctx.nombre))}`, `${esc(S.k.nombre)}. Cartera del año ${S.k.anio}.`) +
+      (S.prevCart?.n ? `<div class="note bloqueo"><strong>Deuda del año ${S.prevCart.anio}: ${cop(S.prevCart.v)}</strong> de ${pl(S.prevCart.n, 'estudiante', 'estudiantes')}. <button class="linkbtn" type="button" onclick="sel.panio=${S.prevCart.anio};go('pagos')">Ver la cartera de ${S.prevCart.anio}</button></div>` : '') +
       `<div class="stats"><div class="stat"><div class="n">${cop(pag)}</div><div class="l">Recaudado en el año</div></div>
        <div class="stat"><div class="n">${cop(venc)}</div><div class="l">Saldo vencido</div></div>
        <div class="stat"><div class="n">${c.filter(x => +x.saldo_vencido > 0).length}</div><div class="l">Estudiantes en mora</div></div></div>
@@ -971,6 +972,7 @@ async function accionEst(id, a) {
   if (['hoja', 'constancia', 'certificado'].includes(a) && !(await guard(async () => { await prepDocsEst([id], a === 'hoja'); return true; }))) return;
   if (a === 'hoja') return showDocs(hojaMatricula(id), 'Hoja de matrícula', nomArchivo('Hoja de matrícula', est(id)));
   if (a === 'constancia') return verDocSellado(constancia(id), 'Constancia de estudio', nomArchivo('Constancia de estudio', est(id)), 'constancia', id, S.k.anio, { grado: grupo(est(id).grupo_id)?.nombre || '', estado: est(id).estado });
+  if (a === 'certificado' && est(id)?.estado === 'Graduado') { const ua = await ultimoAnioHist(id); if (ua) return certAnio(id, ua); }   // v0.32.1: el egresado recibe el certificado de su último año, no uno vacío del año nuevo
   if (a === 'certificado') { const e = est(id); await guard(() => cargarGrupo(e.grupo_id)); return verDocSellado(certificado(id), 'Constancia con calificaciones', nomArchivo('Constancia con calificaciones', e), 'certificado', id, S.k.anio, { grado: grupo(e.grupo_id)?.nombre || '' }); }
   if (a === 'retiro') { await guard(() => prepDocsEst([id])); const e = est(id); return e.estado === 'Activo' ? showDocs(constanciaRetiro(id), 'Constancia de retiro', nomArchivo('Constancia de retiro', e)) : verDocSellado(constanciaRetiro(id), 'Constancia de retiro', nomArchivo('Constancia de retiro', e), 'retiro', id, S.k.anio, { fecha_retiro: e.fecha_retiro || '' }); }
   if (a === 'anteriores') return certAnteriores(id);
@@ -1649,12 +1651,13 @@ async function libroMatricula() {
     ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`;
   showDocs(indice + l.map(e => hojaMatricula(e.id)).join(''), 'Libro de matrícula', `Libro de matrícula ${S.k.anio}`);
 }
+async function ultimoAnioHist(eid) { const h = await q(db.from('historial').select('anio').eq('estudiante_id', eid).order('anio', { ascending: false }).limit(1)).catch(() => []); return h[0]?.anio || null; }
 function constancia(eid, anioDoc) {
   const e = est(eid), g = grupo(e.grupo_id), S_anio = anioDoc || S.k.anio;
   const estado = e.estado === 'Activo' ? `se encuentra matriculado(a) y cursa actualmente el grado <strong>${esc(g?.nombre || '')}</strong>, jornada ${esc((e.jornada || '').toLowerCase())}, en el año lectivo ${S_anio}`
     : e.estado === 'Retirado' ? `estuvo matriculado(a) en el grado <strong>${esc(g?.nombre || '')}</strong> durante el año lectivo ${S_anio} y se retiró el ${fechaLarga(e.fecha_retiro)}`
     : `culminó sus estudios en esta institución`;
-  return `<section class="doc">${docHead('Constancia de estudio', `Año lectivo ${S_anio}`)}${fotoDoc(eid)}
+  return `<section class="doc">${docHead('Constancia de estudio', e.estado === 'Graduado' ? 'Egresado(a)' : `Año lectivo ${S_anio}`)}${fotoDoc(eid)}
   <p style="margin-top:18px">El suscrito rector(a) y la secretaría académica de <strong>${esc(S.k.nombre)}</strong> hacen constar que <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, ${estado}, con matrícula No. ${esc(e.matricula || '')}, folio ${e.folio}.</p>
   <p>Se expide a solicitud del interesado en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
   ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`;
@@ -2311,6 +2314,12 @@ async function prepPagos() {
     all(() => db.from('acudientes').select('estudiante_id,nombres,telefono,responsable_pago,orden').eq('colegio_id', ctx.colegio_id).order('estudiante_id').order('orden')),
   ]);
   cartera = c; S.acud = a; await cargarBecas(anioCartera());
+  // v0.32.1: después del cierre, la deuda del año anterior se ve también desde el año en curso
+  S.prevCart = null;
+  if (anioCartera() === S.k.anio && S.k.anio - 1 >= new Date(S.k.creado_en || Date.now()).getFullYear()) {
+    const pv = await q(db.rpc('cartera', { p_colegio: ctx.colegio_id, p_anio: S.k.anio - 1 })).catch(() => []);
+    const d = pv.filter(x => +x.saldo_total > 0); S.prevCart = { anio: S.k.anio - 1, n: d.length, v: d.reduce((s, x) => s + +x.saldo_total, 0), ids: new Set(d.map(x => x.estudiante_id)) };
+  }
   S.docsCobrados = (await all(() => db.from('doc_solicitudes').select('valor,medio,pagado_en').eq('colegio_id', ctx.colegio_id).eq('estado', 'Pagado').gt('valor', 0).gte('pagado_en', `${anioCartera()}-01-01`).lt('pagado_en', `${anioCartera() + 1}-01-01`)).catch(() => [])).reduce((s, d) => s + +d.valor, 0);
   if (S.k.pago_bold_auto) { await verificarBold().catch(() => 0); boldOrdenes = await q(db.from('bold_ordenes').select('orden,valor,estado,creado_en,estudiante_id').eq('colegio_id', ctx.colegio_id).eq('estado', 'Pendiente').order('creado_en', { ascending: false }).limit(50)).catch(() => []); }
   acuerdos = await q(db.from('acuerdos_pago').select('*').eq('colegio_id', ctx.colegio_id).eq('estado', 'Vigente').order('creado_en', { ascending: false })).catch(() => []);
@@ -2331,6 +2340,7 @@ function vPagos() {
   const tot = k => cartera.reduce((a, x) => a + +x[k], 0);
   return head('Pagos y cartera', `Año ${anioCartera()}. Cada pago queda registrado con el nombre de quien lo recibió.`,
     `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="exportarCartera()">Exportar a Excel</button><button class="btn ghost" type="button" onclick="imprimirCartera()">Imprimir cartera</button>${puede('becas') ? `<button class="btn ghost" type="button" onclick="modalBecas()">Becas y descuentos${becas.filter(b => b.activa).length ? ` (${becas.filter(b => b.activa).length})` : ''}</button>` : ''}</div>`) + panelBoldStaff() + panelComprobantes() +
+    (S.prevCart?.n ? `<div class="note bloqueo"><strong>Deuda del año ${S.prevCart.anio}: ${cop(S.prevCart.v)}</strong> de ${pl(S.prevCart.n, 'estudiante', 'estudiantes')} (no está incluida en las cifras de ${S.k.anio}). <button class="linkbtn" type="button" onclick="cambiarAnioCartera(${S.prevCart.anio})">Ver la cartera de ${S.prevCart.anio}</button></div>` : '') +
     `<div class="stats"><div class="stat"><div class="n">${cop(tot('pagado'))}</div><div class="l">Recaudado (matrícula, pensiones y cobros)</div></div>${S.docsCobrados ? `<div class="stat"><div class="n">${cop(S.docsCobrados)}</div><div class="l">Documentos cobrados en el año (en «Documentos pedidos»)</div></div>` : ''}
       <div class="stat"><div class="n">${cop(tot('saldo_vencido'))}</div><div class="l">Saldo vencido</div></div>
       <div class="stat"><div class="n">${cop(tot('saldo_total'))}</div><div class="l">Saldo total del año</div></div>
@@ -2512,6 +2522,8 @@ async function prepCuenta() {
   const h = hermanos();
   S.cuentaHijos = h.length > 1 ? await Promise.all(h.map(async m => { const [f, pv] = await Promise.all([q(db.rpc('estado_cuenta', { p_estudiante: m.estudiante_id, p_anio: S.k.anio })).catch(() => []), deudasAnteriores(m.estudiante_id).catch(() => [])]); return { m, venc: f.filter(x => esVenc(x, S.k.anio)).reduce((a, x) => a + +x.saldo, 0) + pv.reduce((a, x) => a + +x.saldo, 0), total: f.reduce((a, x) => a + +x.saldo, 0) }; })) : [];
   acuerdos = await q(db.from('acuerdos_pago').select('*').eq('estudiante_id', propio()).eq('estado', 'Vigente')).catch(() => []);
+  // v0.32.1: los pagos del acuerdo se cuentan de todos los años (después del cierre siguen valiendo los del año anterior)
+  S.acuPagos = acuerdos[0] ? await q(db.from('pagos').select('valor,anulado,registrado_en').eq('estudiante_id', propio()).gte('registrado_en', acuerdos[0].creado_en)).catch(() => null) : null;
   await cargarCuenta(propio()); S.misBecas = await all(() => db.from('becas').select('*').eq('estudiante_id', propio()).eq('anio', S.k.anio).eq('activa', true)).catch(() => []); await cargarOrdenesFam(); await cargarDocSols(propio()); comps = await all(() => db.from('comprobantes').select('id,estudiante_id,fecha,valor,medio,referencia,nota,estado,respuesta,creado_en').eq('estudiante_id', propio()).order('creado_en', { ascending: false })).catch(() => []); }
 function vCuenta() {
   const e = est(propio()); if (!e) return head('Estado de cuenta') + '<div class="panel empty">No encontramos la información del estudiante.</div>';
@@ -2523,7 +2535,7 @@ function vCuenta() {
   // v0.30: con acuerdo de pago, lo que se paga hoy es lo que va del acuerdo (cuota inicial y cuotas vencidas), no toda la deuda
   const acuOk = acu && acu.aprobado !== false;   // v0.31: un acuerdo sin visto bueno todavía no cambia lo que se debe hoy
   const acuHoy = acuOk ? Math.max(0, +acu.inicial + (acu.cuotas || []).filter(c => c.fecha <= hoy()).reduce((s, c) => s + +c.valor, 0)
-    - (cuenta.pagos || []).filter(p => !p.anulado && new Date(p.registrado_en || p.fecha) >= new Date(acu.creado_en)).reduce((s, p) => s + +p.valor, 0)) : 0;
+    - (S.acuPagos || cuenta.pagos || []).filter(p => !p.anulado && new Date(p.registrado_en || p.fecha) >= new Date(acu.creado_en)).reduce((s, p) => s + +p.valor, 0)) : 0;
   const debeHoy = acuOk ? acuHoy : debeHoy0;
   return head(`Estado de cuenta de ${esc(e.nombres)}`, `Año ${S.k.anio}.${mediosComprobante().length ? ' Si ya pagó, envíe el comprobante en esta misma página.' : ''}`) +
     (previo > 0 ? `<div class="note bloqueo">Tiene saldos pendientes de años anteriores por <strong>${cop(previo)}</strong>: ${aniosConDeuda().map(a => `${a}: ${cop(cuenta.prevFilas.filter(x => x.anioCobro === a).reduce((s, x) => s + +x.saldo, 0))}`).join(', ')}. ${mediosComprobante().length ? 'Puede pagarlos con los medios de abajo y enviar el comprobante en «Ya pagué» (aparecen en la lista de cuotas), o comunicarse con la tesorería.' : 'Acérquese a la tesorería del colegio para pagarlos.'}</div>` : '') +
@@ -2537,7 +2549,7 @@ function vCuenta() {
     ${(S.misBecas || []).length ? `<div class="note">${esc(e.nombres)} tiene ${S.misBecas.map(b => `<strong>${esc(b.tipo.toLowerCase())}</strong> de ${esc(becaTxt(b))}`).join(' y ')}. Los valores de abajo ya tienen el descuento.</div>` : ''}
     ${acuerdoHTML(e.id)}<div class="panel"><h2>Cobros</h2>${tablaCuenta(false)}</div>
     ${(S.cuentaSig || []).length ? `<div class="panel"><h2>Matrícula ${anioSig()}</h2><div class="tbl"><table><thead><tr><th>Concepto</th><th>Valor</th><th>Pagado</th><th>Saldo</th></tr></thead><tbody>${S.cuentaSig.map(x => `<tr><td>${esc(x.concepto)}</td><td>${cop(x.valor)}</td><td>${cop(x.pagado)}</td><td><strong>${cop(x.saldo)}</strong></td></tr>`).join('')}</tbody></table></div><p class="muted">Se paga como las demás cuotas: en la tesorería, o con los medios de abajo (en «Ya pagué», marque «${esc(S.cuentaSig[0].concepto)} ${anioSig()}»).</p></div>` : ''}
-    ${panelPagarFam(venc)}<div class="panel"><h2>Pagos realizados</h2>${tablaPagos(false)}</div>`;
+    ${panelPagarFam(venc)}<div class="panel"><h2>Pagos realizados en ${cuenta.anio || S.k.anio}</h2>${tablaPagos(false)}</div>`;
 }
 
 /* =====================================================================
@@ -2579,7 +2591,7 @@ function vObservador() {
         <label class="field" id="oSitBox"><span>Situación según la Ley 1620 de 2013 (convivencia escolar)</span><select id="oSit"><option value="">No aplica</option><option value="Tipo I">Tipo I: conflicto manejado de forma inadecuada, sin daño al cuerpo o a la salud</option><option value="Tipo II">Tipo II: agresión o acoso repetido, o que causa daño al cuerpo o a la salud</option><option value="Tipo III">Tipo III: posible delito (se informa a la autoridad competente)</option></select></label>
         ${fTa('oDesc', 'Descripción de la situación', '', 'Qué ocurrió, cuándo y dónde. Escriba hechos, sin juicios.')}
         ${fTa('oComp', 'Compromiso o acción acordada (opcional)', '')}</div>
-        <div class="toolbar" style="margin-top:10px"><button class="btn" type="button" onclick="guardarObs('${e.id}')">Guardar anotación</button></div></div>
+        <div class="toolbar" style="margin-top:10px"><button class="btn" type="button" id="oBtn" onclick="busy('#oBtn', () => guardarObs('${e.id}'))">Guardar anotación</button></div></div>
       <div class="panel"><h2>Anotaciones del año (${l.length})</h2>${l.length ? `<ul class="list">${l.map(o => filaObs(o, true)).join('')}</ul>` : '<p class="muted">Sin anotaciones.</p>'}</div>`;
   }
   const es = estsDe(sel.g);
@@ -3736,7 +3748,7 @@ async function guardarCita() {
 function formConfirmarCita(id) {
   const c = citas.find(x => x.id === id), e = est(c.estudiante_id);
   const fx = c.fecha || c.fecha_propuesta, loc = fx ? new Date(new Date(fx).getTime() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16) : '';
-  openModal(`Cita con la familia de ${e ? nom(e) : ''}`, `<p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.fecha_propuesta ? `<p class="muted">La familia propuso: <strong>${fechaHoraCorta(c.fecha_propuesta)}</strong>. Puede confirmarla o cambiarla.</p>` : c.preferencia ? `<p class="muted">Prefiere: ${esc(c.preferencia)}</p>` : ''}
+  openModal(`Cita con la familia de ${e ? nom(e) : ''}`, `<p><strong>Motivo:</strong> ${esc(c.motivo)}</p>${c.fecha_propuesta ? `<p class="muted">La familia propuso: <strong>${fechaHoraCorta(c.fecha_propuesta)}</strong>; puede confirmarla o cambiarla.</p>` : c.preferencia ? `<p class="muted">Prefiere: ${esc(c.preferencia)}</p>` : ''}
     <div class="formgrid">${fFH('ccF', 'Fecha y hora', loc)}
     <label class="field"><span>Modalidad</span><select id="ccM">${['Presencial', 'Virtual', 'Llamada'].map(m => opt(m, m, c.modalidad)).join('')}</select></label>
     ${fIn('ccR', 'Indicaciones para la familia (opcional)', c.respuesta || '', 'maxlength="500"')}</div>
@@ -4028,7 +4040,7 @@ async function pazYSalvo(eid) {
        <tr><td colspan="2"><strong>Total adeudado a la fecha</strong></td><td style="text-align:right"><strong>${cop(venc)}</strong></td></tr></tbody></table>
        <p>El paz y salvo se expide una vez se cancele el saldo vencido.</p>`
     : `<p style="margin-top:18px">La tesorería de <strong>${esc(S.k.nombre)}</strong> certifica que ${quien}, se encuentra a <strong>paz y salvo</strong> por todo concepto vencido a la fecha. Deuda a la fecha: <strong>${cop(0)}</strong>.</p>`;
-  const html = `<section class="doc">${docHead(venc > 0 ? 'Constancia de saldo pendiente' : 'Paz y salvo', `Año lectivo ${cuenta.anio || S.k.anio}<br>Corte ${fmtF(hoy())}`)}${cuerpo}
+  const html = `<section class="doc">${docHead(venc > 0 ? 'Constancia de saldo pendiente' : 'Paz y salvo', `${e.estado === 'Activo' ? `Año lectivo ${cuenta.anio || S.k.anio}<br>` : ''}Corte ${fmtF(hoy())}`)}${cuerpo}
     <p>Se expide en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
     ${firmas(['Tesorería', isFam() ? '' : ctx.nombre], ['Rector(a)', S.k.rector_nombre])}</section>`;
   // el paz y salvo lleva código de verificación (es el documento que más se falsifica); la constancia de deuda no
@@ -5347,7 +5359,7 @@ function formBoldColegio() {
       <li>Copie cada una y péguela aquí.</li></ol>
     <div class="formgrid">${fIn('bkId', 'Llave de identidad', '', 'autocomplete="off" spellcheck="false"')}
       <label class="field"><span>Llave secreta</span><span class="pw"><input id="bkSe" type="password" autocomplete="new-password" spellcheck="false">${ojo('bkSe', true)}</span></label></div>
-    <p class="muted">La llave secreta queda guardada de forma protegida: nadie la vuelve a ver en la pantalla, ni siquiera el rector.</p>
+    <p class="muted">La llave secreta queda guardada en la base de datos y nadie la vuelve a ver en la aplicación, ni siquiera el rector: solo la usa el servidor para firmar los pagos.</p>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="bkBtn" onclick="guardarBoldColegio()">Conectar</button></div>`);
 }
 async function guardarBoldColegio() {
@@ -5560,6 +5572,7 @@ async function descargarDoc(tipo, periodo, anio) {
   if (!(await guard(async () => { await prepDocsEst([eid]); if (['boletin', 'certificado'].includes(tipo)) await cargarGrupo(e.grupo_id); return true; }))) return;
   if (tipo === 'boletin') return showDocs(boletinHTML(eid, periodo), 'Boletín', nomArchivo(`Boletín P${periodo}`, e));
   if (tipo === 'constancia') return verDocSellado(constancia(eid, anio), 'Constancia de estudio', nomArchivo('Constancia de estudio', e), 'constancia', eid, anio || S.k.anio, { grado: grupo(e.grupo_id)?.nombre || '', estado: e.estado });
+  if (tipo === 'certificado' && e.estado === 'Graduado') { const ua = await ultimoAnioHist(eid); if (ua) return certAnio(eid, ua); }
   if (tipo === 'certificado') return verDocSellado(certificado(eid), 'Constancia con calificaciones', nomArchivo('Constancia con calificaciones', e), 'certificado', eid, S.k.anio, { grado: grupo(e.grupo_id)?.nombre || '' });
   if (tipo === 'anteriores') return certAnio(eid, anio);
   if (tipo === 'retiro') return e.estado === 'Activo' ? showDocs(constanciaRetiro(eid), 'Constancia de retiro', nomArchivo('Constancia de retiro', e)) : verDocSellado(constanciaRetiro(eid), 'Constancia de retiro', nomArchivo('Constancia de retiro', e), 'retiro', eid, S.k.anio, { fecha_retiro: e.fecha_retiro || '' });
