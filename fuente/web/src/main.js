@@ -424,6 +424,7 @@ function authMsg(e) {
   if (c.includes('INVALID_EMAIL')) return 'El correo no es válido';
   return msg(e);
 }
+window.busy = (...a) => busy(...a);
 async function busy(btnSel, fn) { const b = typeof btnSel === 'string' ? $(btnSel) : btnSel; if (b) { b.disabled = true; b.dataset.t = b.textContent; b.textContent = 'Un momento…'; } try { return await fn(); } finally { if (b) { b.disabled = false; b.textContent = b.dataset.t; } } }
 async function doLogin() {
   authErr('');
@@ -1151,7 +1152,7 @@ async function retiroConfirmar(id) {
     const [f, prev] = await Promise.all([q(db.rpc('estado_cuenta', { p_estudiante: id, p_anio: S.k.anio })).catch(() => []), deudasAnteriores(id).catch(() => [])]);
     deuda = f.filter(x => esVenc(x, S.k.anio)).reduce((a, x) => a + +x.saldo, 0) + prev.reduce((a, x) => a + +x.saldo, 0);
   }
-  const av = deuda ? `\n\nAtención: la familia tiene ${cop(deuda)} vencidos. El retiro no borra esa deuda; queda en la cartera.` : '';
+  const av = deuda ? `\n\nAtención: este estudiante tiene ${cop(deuda)} vencidos. El retiro no borra esa deuda; queda en la cartera.` : '';
   if (await confirmar('¿Registrar el retiro de este estudiante? Dejará de generar cobros desde el mes siguiente a la fecha de retiro.' + av, 'Sí, registrar retiro')) await guardarRetiro(id);
 }
 window.retiroConfirmar = retiroConfirmar;
@@ -1237,6 +1238,7 @@ function verInvitacion(id) {
 }
 async function nuevoCodigo(id) {
   const m = S.miembros.find(x => x.id === id);
+  if (m.user_id === me.id) return toast('No puede cambiar su propio código: perdería su acceso. Si lo necesita, pídaselo a otro rector(a) o a soporte de SkyNet Genesis');   // v0.32
   if (m.user_id && !await confirmar(`${m.nombre} ya activó su cuenta. Un código nuevo desvincula su acceso actual hasta que lo vuelva a activar. ¿Continuar?`)) return;
   const c = await guard(() => q(db.rpc('regenerar_codigo', { p_miembro: id })), 'Código nuevo generado');
   if (c) { m.codigo = c; m.user_id = null; verInvitacion(id); }
@@ -1292,7 +1294,7 @@ function formUsuario() {
     <label class="field"><span>Nombre completo</span><input id="uNom"></label>
     <label class="field"><span>Correo electrónico</span><input id="uEmail" type="email"></label>
     <label class="field"><span>Fecha de nacimiento (opcional, para el recordatorio de cumpleaños)</span><input id="uFnac" type="date" min="1920-01-01" max="2015-12-31"></label></div>
-    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="invitar(null)">Agregar usuario</button></div>`);
+    <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="invBtn" onclick="busy('#invBtn', () => invitar(null))">Agregar usuario</button></div>`);
 }
 function asigsDocTxt(mid, gid) {
   const l = S.dg.filter(d => d.miembro_id === mid && d.grupo_id === gid);
@@ -1574,6 +1576,8 @@ function vAsistencia() {
 }
 const asisGuardada = {};
 async function setAsis(eid, v) {
+  if (sel.fecha > hoy()) return toast('No se toma asistencia de un día que aún no ha llegado');   // v0.32
+  if (isoDow(sel.fecha) === 7) return toast('Ese día es domingo: no hay clases');
   const pc = porClase(), k = pc ? `${sel.fecha}|${eid}|${sel.a}` : `${sel.fecha}|${eid}`, t = pc ? 'asistencia_clase' : 'asistencia';
   const ok = await guard(async () => {
     let d = db.from(t).delete().eq('estudiante_id', eid).eq('fecha', sel.fecha); if (pc) d = d.eq('asignatura_id', sel.a);
@@ -2107,7 +2111,7 @@ async function guardarConcepto(id) {
   if (vv('kVal') === '' && !Object.keys(vg).length) return toast('Escriba el valor del concepto (si es gratis, escriba 0)');
   // v0.31: cambiar el valor recalcula lo que deben todas las familias: se avisa
   const old = id ? conceptos.find(c => c.id === id) : null;
-  if (old && (+old.valor !== d.valor || JSON.stringify(old.valores_grado || {}) !== JSON.stringify(vg)) && !(await confirmar(`Cambiar el valor de «${old.nombre}» cambia lo que deben todas las familias en los meses que aún no han pagado (lo ya pagado no cambia). ¿Continuar?`, 'Sí, cambiar'))) return;
+  if (old && +old.valor > 0 && (+old.valor !== d.valor || JSON.stringify(old.valores_grado || {}) !== JSON.stringify(vg)) && !(await confirmar(`Cambiar el valor de «${old.nombre}» cambia lo que deben todas las familias en los meses que aún no han pagado (lo ya pagado no cambia). ¿Continuar?`, 'Sí, cambiar'))) return;
   if (d.periodicidad === 'mensual' && !d.meses.length) return toast('Marque al menos un mes de cobro');
   const r = await guard(() => id ? uno(db.from('conceptos').update(d).eq('id', id).select().single())
     : q(db.from('conceptos').insert({ ...d, colegio_id: ctx.colegio_id, anio: anioCos(), orden: conceptos.length + 1 }).select().single()), 'Concepto guardado');
@@ -2400,7 +2404,7 @@ function tablaPagos(conAcciones) {
 }
 window.modalCuenta = (...a) => modalCuenta(...a);   // v0.31: lo usan botones «Volver» dentro de ventanas
 // v0.31: una sola regla de «vencido a hoy» en todas las pantallas (estado de cuenta, hijos, tesorería, paz y salvo)
-function esVenc(x, anio) { const mH = +hoy().slice(5, 7), aH = +hoy().slice(0, 4), a = anio || S.k.anio; return +x.saldo > 0 && (x.vencido || a < aH || (a === aH && (x.mes || 1) < mH)); }
+function esVenc(x, anio) { const mH = +hoy().slice(5, 7), aH = +hoy().slice(0, 4), a = anio || S.k.anio; return +x.saldo > 0 && (x.vencido || a < aH || (a === aH && (x.mes || 1) < mH)); }   // «debe a la fecha»: la misma regla que el paz y salvo del servidor (priv.debe_a_hoy)
 function modalCuenta() {
   const e = est(cuenta.eid), saldo = cuenta.filas.reduce((a, x) => a + +x.saldo, 0), venc = cuenta.filas.filter(x => esVenc(x, cuenta.anio)).reduce((a, x) => a + +x.saldo, 0);
   const previo = saldoPrevio(), otro = cuenta.anio !== S.k.anio;
@@ -2430,6 +2434,7 @@ function previewPago() {
   const v = +vv('pVal') || 0, el = $('#pPrev'); if (!el) return;
   if (v <= 0) { el.innerHTML = ''; return; }
   const { out, resto } = repartirPago(v);
+  if (cuenta.anio === S.k.anio && saldoPrevio() > 0) { el.innerHTML = `Este estudiante debe ${cop(saldoPrevio())} de años anteriores: al registrar, el pago se aplica primero a esa deuda.`; return; }   // v0.32
   el.innerHTML = out.length ? `Se aplicará a: ${out.map(({ x, v }) => `${esc(x.concepto)} ${MESES[x.mes] || ''} ${cop(v)}${v < +x.saldo ? ' (abono)' : ''}`).join(', ')}.${resto > 0 ? ` <strong style="color:var(--red)">Sobran ${cop(resto)}: el valor supera lo que debe en el año.</strong>` : ''}` : 'No hay cuotas pendientes.';
 }
 let registrandoPago = false, compPend = null; // compPend: comprobante de la familia que se confirma al registrar el pago
@@ -2511,14 +2516,14 @@ async function prepCuenta() {
 function vCuenta() {
   const e = est(propio()); if (!e) return head('Estado de cuenta') + '<div class="panel empty">No encontramos la información del estudiante.</div>';
   const mH = +hoy().slice(5, 7), aH = +hoy().slice(0, 4), anC = cuenta.anio || S.k.anio;
-  const venc = cuenta.filas.filter(x => +x.saldo > 0 && (x.vencido || anC < aH || (anC === aH && (x.mes || 1) < mH))).reduce((a, x) => a + +x.saldo, 0), total = cuenta.filas.reduce((a, x) => a + +x.saldo, 0);
+  const venc = cuenta.filas.filter(x => esVenc(x, anC)).reduce((a, x) => a + +x.saldo, 0), total = cuenta.filas.reduce((a, x) => a + +x.saldo, 0);
   const previo = saldoPrevio(), acu = acuerdoDe(e.id);
   const dia = S.k.dia_limite_pago || 5, vence = x => { const d = `${cuenta.anio || S.k.anio}-${String(x.mes || 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`; const fm = e.fecha_matricula || ''; return fm > d ? fm : d; };
   const debeHoy0 = venc + previo;
   // v0.30: con acuerdo de pago, lo que se paga hoy es lo que va del acuerdo (cuota inicial y cuotas vencidas), no toda la deuda
   const acuOk = acu && acu.aprobado !== false;   // v0.31: un acuerdo sin visto bueno todavía no cambia lo que se debe hoy
   const acuHoy = acuOk ? Math.max(0, +acu.inicial + (acu.cuotas || []).filter(c => c.fecha <= hoy()).reduce((s, c) => s + +c.valor, 0)
-    - (cuenta.pagos || []).filter(p => !p.anulado && new Date(p.registrado_en || p.fecha) >= new Date(new Date(acu.creado_en) - 12e4)).reduce((s, p) => s + +p.valor, 0)) : 0;
+    - (cuenta.pagos || []).filter(p => !p.anulado && new Date(p.registrado_en || p.fecha) >= new Date(acu.creado_en)).reduce((s, p) => s + +p.valor, 0)) : 0;
   const debeHoy = acuOk ? acuHoy : debeHoy0;
   return head(`Estado de cuenta de ${esc(e.nombres)}`, `Año ${S.k.anio}.${mediosComprobante().length ? ' Si ya pagó, envíe el comprobante en esta misma página.' : ''}`) +
     (previo > 0 ? `<div class="note bloqueo">Tiene saldos pendientes de años anteriores por <strong>${cop(previo)}</strong>: ${aniosConDeuda().map(a => `${a}: ${cop(cuenta.prevFilas.filter(x => x.anioCobro === a).reduce((s, x) => s + +x.saldo, 0))}`).join(', ')}. ${mediosComprobante().length ? 'Puede pagarlos con los medios de abajo y enviar el comprobante en «Ya pagué» (aparecen en la lista de cuotas), o comunicarse con la tesorería.' : 'Acérquese a la tesorería del colegio para pagarlos.'}</div>` : '') +
@@ -3050,7 +3055,7 @@ function agendaHTML() {
 function vComunicados() {
   setTimeout(() => cargarImgs('comunicados', 'imagen', 'img.foto-com'), 0);
   const l = isFam() ? comsMios() : (S.coms || []).filter(c => isDir() || isTes() || c.destino === 'todos' || gruposVis().some(g => g.id === c.grupo_id || g.id === est(c.estudiante_id)?.grupo_id));
-  return head('Comunicados', isFam() ? 'Circulares, citaciones y avisos del colegio. Confirme la lectura de los que lo solicitan.' : 'Envíe circulares, citaciones y recordatorios, y vea quién los ha leído.',
+  return head('Comunicados', isFam() ? 'Circulares, citaciones y avisos del colegio. Confirme la lectura de los que lo solicitan.' : (isTes() ? 'Circulares y avisos del colegio. Los publica la rectoría, coordinación, secretaría o los docentes.' : 'Envíe circulares, citaciones y recordatorios, y vea quién los ha leído.'),
     puedeComunicar() ? '<button class="btn" type="button" onclick="formComunicado()">Nuevo comunicado</button>' : '') + agendaHTML() +
     (l.length ? `<div class="card-list">${l.map(c => {
       const leido = S.lect[c.id], lects = lectAll[c.id] || [], mio = isDir() || c.creado_por === me.id;
@@ -3950,7 +3955,7 @@ async function confirmarComp(id) {
   compPend = { id, estudiante_id: c.estudiante_id, medio: c.medio };
   await abrirCuenta(c.estudiante_id, anioSig() && new RegExp(`\\b${anioSig()}\\b`).test(c.nota || '') && !new RegExp(`\\b${S.k.anio}\\b`).test(c.nota || '') ? anioSig() : undefined);
   const set = (s, v) => { const el = $(s); if (el && v) el.value = v; };
-  set('#pFec', c.fecha); set('#pRef', c.referencia || 'Comprobante enviado por la familia'); set('#pVal', String(c.valor)); previewPago();
+  set('#pFec', c.fecha); set('#pRef', c.referencia || ''); set('#pVal', String(c.valor)); previewPago();
   if ([...($('#pMed')?.options || [])].some(o => o.value === c.medio)) set('#pMed', c.medio);
   toast(`Revise los datos del comprobante de ${cop(c.valor)} y pulse «Registrar pago». El comprobante queda confirmado cuando el pago se registre; si cierra sin registrar, sigue en la lista`);
 }
@@ -4014,7 +4019,7 @@ async function pazYSalvo(eid) {
   if (cuenta.eid !== eid) return toast('Abra primero el estado de cuenta');
   const mesHoy = +hoy().slice(5, 7), anioHoy = +hoy().slice(0, 4);
   // vencido, o de un mes anterior al actual aunque el estudiante haya entrado hoy (p. ej. la matrícula de quien llega a mitad de año)
-  const e = est(eid), vencidas = [...cuenta.prevFilas, ...cuenta.filas.filter(x => +x.saldo > 0 && (x.vencido || ((cuenta.anio || S.k.anio) < anioHoy) || ((cuenta.anio || S.k.anio) === anioHoy && x.mes < mesHoy)))];
+  const e = est(eid), vencidas = [...cuenta.prevFilas, ...cuenta.filas.filter(x => esVenc(x, cuenta.anio || S.k.anio))];
   const venc = vencidas.reduce((a, x) => a + +x.saldo, 0);
   const quien = `el(la) estudiante <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, del curso <strong>${esc(grupo(e.grupo_id)?.nombre || '')}</strong>`;
   const cuerpo = venc > 0
@@ -5565,7 +5570,7 @@ function constanciaRetiro(eid) {
   const e = est(eid), g = grupo(e.grupo_id);
   if (e.estado === 'Activo') return constancia(eid);
   return `<section class="doc">${docHead('Constancia de retiro', `Año lectivo ${S.k.anio}`)}${fotoDoc(eid)}
-  <p style="margin-top:18px">El suscrito rector(a) y la secretaría académica de <strong>${esc(S.k.nombre)}</strong> hacen constar que <strong>${esc(nom(e))}</strong>, identificado(a) con ${esc(e.tipo_doc)} ${esc(e.doc)}, estuvo matriculado(a) en esta institución en el grado <strong>${esc(g?.nombre || '')}</strong>, con matrícula No. ${esc(e.matricula || '')}, folio ${esc(e.folio)}, y fue <strong>retirado(a) el ${e.fecha_retiro ? fechaLarga(e.fecha_retiro) : '(sin fecha registrada)'}</strong>${e.motivo_retiro ? `, por el siguiente motivo: ${esc(e.motivo_retiro)}` : ''}.</p>
+  <p style="margin-top:18px">El suscrito rector(a) y la secretaría académica de <strong>${esc(S.k.nombre)}</strong> hacen constar que <strong>${esc(nom(e))}</strong>, identificado(a) con ${esc(e.tipo_doc)} ${esc(e.doc)}, estuvo matriculado(a) en esta institución en el grado <strong>${esc(g?.nombre || '')}</strong>, con matrícula No. ${esc(e.matricula || '')}, folio ${esc(e.folio)}, y fue <strong>retirado(a) el ${e.fecha_retiro ? fechaLarga(e.fecha_retiro) : '(sin fecha registrada)'}</strong>${e.motivo_retiro ? `, por el siguiente motivo: ${esc(String(e.motivo_retiro).split('. ')[0])}` : ''}.</p>
   <p>Se expide para que el retiro se registre en el Sistema Integrado de Matrícula (SIMAT) y el estudiante pueda ser matriculado en otra institución.</p>
   <p>Se expide a solicitud del interesado en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
   ${firmas(['Rector(a)', S.k.rector_nombre], ['Secretaría académica', S.k.secretaria_nombre])}</section>`;
@@ -5962,7 +5967,7 @@ function acuerdoHTML(eid) {
     <p class="muted">Mientras pague cada cuota en su fecha (hay 5 días de margen), su familia tiene acceso completo. Las pensiones nuevas se siguen pagando cada mes. Los cobros de abajo aparecen como pendientes porque son la deuda que cubre el acuerdo.</p></div>`;
   return `<div class="note"><strong>Acuerdo de pago vigente (No. ${esc(a.numero || '')}, del ${fmtF(a.creado_en)}).</strong>${a.aprobado === false ? ` <span class="tag t2">Pendiente del visto bueno de la rectoría</span>${puede('aprobar_acuerdos') ? ` <button class="btn sm" type="button" onclick="aprobarAcuerdo('${a.id}')">Dar visto bueno</button>` : ''}` : ''} Deuda reconocida ${cop(a.total)}${+a.inicial ? `; cuota inicial ${cop(a.inicial)}` : ''}${cs.length ? `; ${cs.length} ${cs.length === 1 ? 'cuota' : 'cuotas'} hasta el ${fmtF(cs[cs.length - 1].fecha)}` : ''}.
     Mientras los pagos registrados cubran lo acordado a cada fecha (la cuota inicial, al firmar), la familia tiene acceso completo. Si se atrasa más de 5 días en una cuota, el acuerdo se da por incumplido solo.
-    ${manejaPagos() ? `<div class="toolbar" style="margin:6px 0 0"><button class="btn ghost sm" type="button" onclick="terminarAcuerdo('${a.id}')">Terminar el acuerdo</button></div>` : ''}</div>`;
+    ${puede("aprobar_acuerdos") ? `<div class="toolbar" style="margin:6px 0 0"><button class="btn ghost sm" type="button" onclick="terminarAcuerdo('${a.id}')">Terminar el acuerdo</button></div>` : ''}</div>`;
 }
 async function terminarAcuerdo(id) {
   const m = await pedirTexto('Motivo para terminar el acuerdo (por ejemplo: cumplido, incumplido, se firmó uno nuevo):'); if (!m) return;
@@ -6212,8 +6217,8 @@ async function guardarCarga() {
   });
   if (cerrarBtn) cerrarBtn.disabled = false; if (xBtn) xBtn.disabled = false; window.cargandoExcel = false;
   S.acud = await all(() => db.from('acudientes').select('*').eq('colegio_id', ctx.colegio_id).order('orden'));
-  $('#cargaRes').innerHTML = `<div class="note"><strong>${n} ${n === 1 ? 'estudiante matriculado' : 'estudiantes matriculados'}.</strong>${fallas.length ? `<br>No se pudieron guardar ${pl(ok.length - n, 'fila', 'filas')}: ${fallas.slice(0, 5).map(esc).join('; ')}${fallas.length > 5 ? '…' : ''}` : ''}<br>Ahora puede dar acceso a cada familia desde la ficha del estudiante.</div>`;
-  carga = null; toast(`${n} ${n === 1 ? 'estudiante matriculado' : 'estudiantes matriculados'}`); render();
+  carga = null; toast(`${n} ${n === 1 ? 'estudiante matriculado' : 'estudiantes matriculados'}`); render();   // v0.32: el resultado se muestra después de redibujar
+  await new Promise(r => setTimeout(r, 50)); const cr = $('#cargaRes'); if (cr) $('#cargaRes').innerHTML = `<div class="note"><strong>${n} ${n === 1 ? 'estudiante matriculado' : 'estudiantes matriculados'}.</strong>${fallas.length ? `<br>No se pudieron guardar ${pl(ok.length - n, 'fila', 'filas')}: ${fallas.slice(0, 5).map(esc).join('; ')}${fallas.length > 5 ? '…' : ''}` : ''}<br>Ahora puede dar acceso a cada familia desde la ficha del estudiante.</div>`;
 }
 
 // Descargar toda la información del colegio en un solo Excel (una hoja por tema)
@@ -6859,7 +6864,7 @@ function casosComision(g, p) {
 function cgComisionHTML() {
   const gs = S.grupos.filter(g => g.nivel !== 'preescolar'), g = grupo(sel.acg), p = +sel.acp;
   if (!g) return '<div class="panel empty">Primero cree los cursos.</div>';
-  const a = CG.acta, casos = casosComision(g, p), dec = Object.fromEntries((a?.casos || []).map(c => [c.estudiante_id, c.decision]));
+  const a = CG.acta, casos = casosComision(g, p), dec = Object.fromEntries((Array.isArray(a?.casos) ? a.casos : []).map(c => [c.estudiante_id, c.decision]));
   return `<div class="panel"><div class="toolbar"><label class="field"><span>Curso</span><select onchange="sel.acg=this.value;go('certgrados')">${gs.map(x => opt(x.id, x.nombre, g.id)).join('')}</select></label>
       <label class="field"><span>Comisión</span><select onchange="sel.acp=+this.value;go('certgrados')">${perG(g).map(x => opt(x.n, 'Periodo ' + x.n, p)).join('')}${opt(0, 'Promoción (fin de año)', p)}</select></label></div>
     <p class="muted">${a ? `Acta No. ${a.numero} de ${S.k.anio}, guardada por ${esc(a.creado_por || '')}.` : 'Aún no se ha guardado el acta de esta comisión.'} La lista de estudiantes con desempeño bajo sale de las calificaciones ${p === 0 ? 'definitivas del año' : 'del periodo ' + p}.</p>
@@ -6883,7 +6888,7 @@ function imprimirActa() {
   showDocs(`<section class="doc">${docHead(`Acta No. ${a.numero} · Comisión de evaluación y promoción`, `${esc(g?.nombre || '')} · ${a.periodo === 0 ? 'Promoción, fin del año' : 'Periodo ' + a.periodo} ${a.anio}`)}
     <p style="margin-top:14px">En ${esc(S.k.ciudad || '')}, el ${fechaLetras(a.fecha)}, se reunió la comisión de evaluación y promoción del curso ${esc(g?.nombre || '')} de ${esc(S.k.nombre)}, conforme al Decreto 1290 de 2009 y al sistema institucional de evaluación (SIEE).</p>
     <div class="dobs"><span>Asistentes</span><p style="white-space:pre-line">${esc(a.asistentes || '')}</p></div>
-    <table><thead><tr><th>Estudiante</th><th>Asignaturas en desempeño bajo</th><th>Decisión o recomendación</th></tr></thead><tbody>${(a.casos || []).length ? a.casos.map(c => `<tr><td>${esc(c.nombre)}</td><td>${esc((c.asignaturas || []).join(', '))}</td><td>${esc(c.decision || '')}</td></tr>`).join('') : '<tr><td colspan="3">Ningún estudiante con desempeño bajo.</td></tr>'}</tbody></table>
+    <table><thead><tr><th>Estudiante</th><th>Asignaturas en desempeño bajo</th><th>Decisión o recomendación</th></tr></thead><tbody>${Array.isArray(a.casos) && a.casos.length ? a.casos.map(c => `<tr><td>${esc(c.nombre)}</td><td>${esc((c.asignaturas || []).join(', '))}</td><td>${esc(c.decision || '')}</td></tr>`).join('') : '<tr><td colspan="3">Ningún estudiante con desempeño bajo.</td></tr>'}</tbody></table>
     <div class="dobs"><span>Conclusiones y compromisos</span><p style="white-space:pre-line">${esc(a.conclusiones || 'Ninguna.')}</p></div>
     ${firmas(['Rector(a)', S.k.rector_nombre], ['Director(a) de grupo', g?.director_nombre])}</section>`, `Acta de comisión No. ${a.numero}`, `Acta comision ${a.numero} ${g?.nombre || ''} ${a.anio}`);
 }
