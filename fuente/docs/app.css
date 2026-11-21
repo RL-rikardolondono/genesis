@@ -620,3 +620,4 @@ body{background:linear-gradient(180deg,#EEF5FB 0,var(--paper) 320px) no-repeat,v
 /* v0.31: el campo de verificación no se sale del cuadro */
 .verif-pedir form,.verif-pedir .field{min-width:0;max-width:100%;flex-wrap:wrap}
 #vCod0,#vCod{width:100%;max-width:100%;box-sizing:border-box;min-width:0}
+.juego .jg-quien{color:inherit;opacity:.95;font-weight:700}
