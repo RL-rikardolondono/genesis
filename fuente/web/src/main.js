@@ -21,6 +21,11 @@ function revisarNit(t) {
   const r = d.reduce((a, x, i) => a + +x * P[i], 0) % 11, dv = r > 1 ? 11 - r : r;
   return dv === +m[2] ? '' : `El dígito de verificación de ese NIT no corresponde: para ${m[1]} es ${dv}. Revíselo en el RUT`;
 }
+// v0.34: validaciones comunes (Prueba Ácida 7.ª vuelta)
+const correoOk = t => /^[^\s@]+@[^\s@]+\.[^\s@.]{2,}$/.test(String(t || '').trim()) && !/\.\./.test(t);
+const telOk = t => { const d = String(t || '').replace(/[\s()+-]/g, ''); return /^\d{7,13}$/.test(d) && /^[\d\s()+-]+$/.test(String(t).trim()); };
+// cédula, tarjeta de identidad, registro civil y NUIP: solo números; los documentos de extranjeros pueden llevar letras
+const docOk = (td, d) => { const v = String(d || '').replace(/[\s.]/g, ''); return ['CC', 'TI', 'RC', 'NUIP'].includes(String(td || '').toUpperCase()) ? /^\d{5,15}$/.test(v) : /^[0-9A-Za-z]{4,20}$/.test(v); };
 // Primer nombre con mayúscula inicial para los saludos (los datos se guardan en mayúscula)
 const primero = t => { const w = String(t || '').trim().split(/\s+/)[0] || ''; return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase(); };
 const nf = n => Number.isFinite(+n) ? (+n).toLocaleString('es-CO') : n;
@@ -55,7 +60,7 @@ function dialogo(html) {
 }
 function dlgFin(v) { document.getElementById('dlg')?._res?.(v); }
 // Para borrar algo con datos: hay que escribir el nombre exacto (evita borrados por un clic)
-const confirmarEscribiendo = (msg, palabra, si = 'Sí, eliminar') => dialogo(`<p>${esc(msg)}</p><p class="muted" style="margin:6px 0">Para confirmar, escriba <strong>${esc(palabra)}</strong>:</p><input id="dlgW" autocomplete="off" style="width:100%" oninput="document.getElementById('dlgOk').disabled = this.value.trim().toLowerCase() !== ${esc(JSON.stringify(palabra.toLowerCase()))}"><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(false)">Cancelar</button><button class="btn warn" id="dlgOk" type="button" disabled onclick="dlgFin(true)">${esc(si)}</button></div>`);
+const confirmarEscribiendo = (msg, palabra, si = 'Sí, eliminar') => dialogo(`<p style="white-space:pre-line">${esc(msg)}</p><p class="muted" style="margin:6px 0">Para confirmar, escriba <strong>${esc(palabra)}</strong>:</p><input id="dlgW" autocomplete="off" style="width:100%" oninput="document.getElementById('dlgOk').disabled = this.value.trim().toLowerCase() !== ${esc(JSON.stringify(palabra.toLowerCase()))}"><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(false)">Cancelar</button><button class="btn warn" id="dlgOk" type="button" disabled onclick="dlgFin(true)">${esc(si)}</button></div>`);
 const confirmar = (msg, si = 'Sí, continuar') => dialogo(`<p style="white-space:pre-line">${esc(msg)}</p><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(false)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(true)">${esc(si)}</button></div>`);
 const pedirTexto = (msg, ph = '', val = '') => dialogo(`<p>${esc(msg)}</p><textarea id="dlgT" rows="3" placeholder="${esc(ph)}" style="width:100%">${esc(val)}</textarea><div class="modal-foot"><button class="btn ghost" type="button" onclick="dlgFin(null)">Cancelar</button><button class="btn" type="button" onclick="dlgFin(document.getElementById('dlgT').value.trim())">Aceptar</button></div>`);
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 6500); }
@@ -115,6 +120,71 @@ function msg(e) {
   if (/^[\x00-\x7F]+$/.test(m) && /\b(the|violates|relation|column|function|error|failed|null)\b/i.test(m)) return 'No se pudo completar la acción. Intente de nuevo; si continúa, comuníquese con soporte';
   return m;
 }
+// v0.34/v0.35: campos de dinero con separador de miles mientras se escribe (1.250.000), siempre en pesos enteros.
+// v0.35 (Prueba Ácida 8): lo que se ve es exactamente lo que se registra. Nunca se borra ni se cambia lo que la persona escribe:
+// si el valor no es válido (signo menos, coma o punto con centavos, puntos mal puestos) queda tal cual, en rojo, con el motivo
+// debajo, y los botones de guardar de esa ventana no actúan hasta corregirlo.
+const DIN = 'type="text" inputmode="numeric" data-din autocomplete="off" maxlength="17"';
+const CENT = 'Sin centavos: escriba el valor en pesos enteros (los puntos de mil se ponen solos)';
+function evalDin(v) {
+  v = String(v ?? '').trim();
+  if (!v) return { ok: true, d: '' };
+  if (/-/.test(v)) return { ok: false, m: 'El valor no puede ser negativo: quite el signo menos' };
+  if (/,/.test(v)) return { ok: false, m: CENT };
+  if (/^\d+$/.test(v)) return { ok: true, d: v.replace(/^0+(?=\d)/, '') };
+  if (/^\d{1,3}(\.\d{3})+$/.test(v)) return { ok: true, d: v.replace(/\./g, '').replace(/^0+(?=\d)/, '') };
+  if (/^[\d.]+$/.test(v) && /\.\d{1,2}$/.test(v)) return { ok: false, m: CENT };
+  return { ok: false, m: 'Revise el valor: escriba solo números (los puntos de mil se ponen solos)' };
+}
+// algún campo de dinero visible con un valor no válido: se marca, se avisa y no se guarda
+const dinMalEn = () => { const m = [...document.querySelectorAll('input[data-din]')].find(i => !evalDin(i.value).ok); if (!m) return false; marcarDin(m); toast(m._dinMsg); try { m.focus(); } catch {} return true; };
+// cifras del valor si es válido; 'NaN' si no lo es (así nunca se registra otro valor)
+const dinV = el => { const r = evalDin(el?.value); return r.ok ? r.d : 'NaN'; };
+function marcarDin(el) {
+  const r = evalDin(el.value); el.classList.toggle('din-mal', !r.ok); el._dinMsg = r.ok ? '' : r.m;
+  let m = el.parentElement?.querySelector(':scope > .din-msg');
+  if (!r.ok) { if (!m) { m = document.createElement('small'); m.className = 'din-msg'; el.insertAdjacentElement('afterend', m); } m.textContent = r.m; } else m?.remove();
+  return r;
+}
+function fmtDin(el) {
+  const r = evalDin(el.value);
+  if (r.ok && r.d) {   // solo se reformatea un valor válido (mismo número, con sus puntos de mil)
+    const f = Number(r.d).toLocaleString('es-CO');
+    if (el.value !== f) {
+      const pos = el.selectionStart, antes = pos == null ? null : el.value.slice(0, pos).replace(/\D/g, '').length;
+      el.value = f;
+      if (antes != null && document.activeElement === el) { let i = 0, n = 0; while (i < f.length && n < antes) { if (/\d/.test(f[i])) n++; i++; } try { el.setSelectionRange(i, i); } catch {} }
+    }
+  }
+  marcarDin(el);
+}
+document.addEventListener('input', ev => {
+  const el = ev.target; if (!el?.dataset || el.dataset.din === undefined) return;
+  if (ev.inputType === 'insertText' && ev.data && /[^\d.,\- ]/.test(ev.data) && ev.data.length === 1) {   // v0.36: una letra tecleada no entra (solo números)
+    const i = el.selectionStart - 1; if (i >= 0 && el.value[i] === ev.data) { el.value = el.value.slice(0, i) + el.value.slice(i + 1); try { el.setSelectionRange(i, i); } catch {} }
+    toast('Este campo es solo para números');
+  }
+  const v = el.value;
+  if (!/\./.test(v)) el._manual = false;
+  if (ev.inputType === 'insertText' && ev.data === '.') el._manual = true;   // un punto escrito a mano: no se reacomoda mientras se escribe
+  // una cifra tecleada o un borrado sobre un valor con nuestros puntos: se reacomodan los puntos de mil; lo pegado solo si es válido
+  const uno = (ev.inputType === 'insertText' && /^\d$/.test(ev.data || '')) || /^delete/.test(ev.inputType || '');
+  if (!el._manual && uno && /^[\d.]+$/.test(v)) { const d = v.replace(/\./g, '').replace(/^0+(?=\d)/, ''); const f = d ? Number(d).toLocaleString('es-CO') : ''; if (f !== v) { const pos = el.selectionStart, antes = pos == null ? 0 : v.slice(0, pos).replace(/\D/g, '').length; el.value = f; let i = 0, n = 0; while (i < f.length && n < antes) { if (/\d/.test(f[i])) n++; i++; } try { el.setSelectionRange(i, i); } catch {} } marcarDin(el); }
+  else fmtDin(el);
+}, true);
+document.addEventListener('change', ev => {
+  const el = ev.target; if (!el?.dataset || el.dataset.din === undefined) return;
+  el._manual = false; const r = marcarDin(el); if (!r.ok) toast(r.m);
+}, true);
+// con un valor de dinero mal escrito, los botones de guardar/registrar de esa ventana no actúan (los de Cancelar, Cerrar y Volver sí)
+document.addEventListener('click', ev => {
+  const b = ev.target?.closest?.('button'); if (!b || b.classList.contains('ghost') || b.classList.contains('linkbtn')) return;
+  const box = b.closest('#mb, .dlg-box, #view'); const mal = box ? [...box.querySelectorAll('input[data-din]')].find(i => !i.disabled && !evalDin(i.value).ok) : null;
+  box?.querySelectorAll('input[data-din].din-mal').forEach(i => { if (i !== mal) marcarDin(i); });   // los que se corrigieron por programa dejan de estar en rojo
+  if (!mal) return;
+  marcarDin(mal);
+  ev.preventDefault(); ev.stopPropagation(); toast(mal._dinMsg || 'Revise el valor'); try { mal.focus(); } catch {}
+}, true);
 async function q(p) { const { data, error } = await p; if (error) throw error; return data; }
 // Para cambios: si la base no cambió ninguna fila (sin permiso o registro inexistente) se avisa en vez de decir "guardado"
 // Revisión 21 oct: los datos y nombres siempre en MAYÚSCULA. Lo que se escribe en una casilla de datos se ve en mayúscula
@@ -123,7 +193,7 @@ async function q(p) { const { data, error } = await p; if (error) throw error; r
 const SIN_MAYUS = new Set(['bkId', 'mpBoU', 'mpLlV', 'tUrl', 'iUrl', 'iWeb', 'fEmail', 'cTit', 'eeTit', 'auT', 'iTit', 'uTit', 'peResp', 'tNota',
   'cRef', 'pcRef', 'sRef', 'pRef', 'aCod', 'mpEfTxt', 'prOp', 'dsRef']);
 function mayusOk(el) {
-  if (!el || el.tagName !== 'INPUT' || el.readOnly || el.dataset.libre !== undefined) return false;
+  if (!el || el.tagName !== 'INPUT' || el.readOnly || el.dataset.libre !== undefined || el.dataset.din !== undefined) return false;
   if (!['text', 'tel', ''].includes((el.getAttribute('type') || '').toLowerCase())) return false;   // las búsquedas quedan como se escriben
   if (SIN_MAYUS.has(el.id) || /^(qz|qq|qa|qe|ec-|rs_)/.test(el.id) || /\b(qe-[lor]|hHora)\b/.test(el.className)) return false;
   return !/email|password|url/.test(el.autocomplete || '');
@@ -228,6 +298,9 @@ function faltaAnio(eid) {
 // Calendarios que ve cada usuario: la familia, el de su curso; el personal, el del colegio y (si hay) el de los ciclos
 const calsVis = () => { if (isFam()) { const g = grupo(est(propio())?.grupo_id); return [[perG(g), '']]; } return calCiclos() ? [[periodos(), ''], [calCiclos(), ' (ciclos)']] : [[periodos(), '']]; };
 const escala = () => S.k.escala || [];
+// v0.35: el estudiante tiene al menos una calificación (o valoración) en ese periodo
+const conNotas = (eid, n) => { const g = grupo(est(eid)?.grupo_id); return !!g && asigsDe(g).some(a => nota(eid, a.id, +n) != null); };
+const primerConEst = gs => gs.find(g => (S.ests || []).some(e => e.grupo_id === g.id && e.estado === 'Activo')) || gs[0];
 function gruposVis() {
   if (isDir()) return S.grupos;
   if (isDoc()) return S.grupos.filter(g => S.misGrupos.includes(g.id) || S.dirGrupos.includes(g.id));
@@ -263,11 +336,18 @@ function perdidas(eid) { const g = grupo(est(eid).grupo_id); if (!g || g.nivel =
 /* =====================================================================
    Carga de datos
    ===================================================================== */
+// v0.36 (seguridad): la fila del colegio se lee solo con las columnas que cualquier miembro puede ver (SQL 050: permisos por columna);
+// lo reservado (permisos, firma, llave de Bold, código de admisiones, plan y fechas de pago) llega por colegio_privado según el cargo
+const COLS_K = 'id,nombre,nit,dane,resolucion,ciudad,direccion,telefono,rector_nombre,secretaria_nombre,anio,periodo_actual,max_perdidas,periodos,escala,activo,creado_en,web,lema,logo,dia_limite_pago,politica_datos,asistencia_por_clase,demo,restringir_morosos,pago_efectivo,pago_efectivo_texto,pago_llave,pago_llave_valor,pago_llave_titular,pago_bold,pago_bold_url,red_facebook,red_instagram,red_youtube,red_tiktok,tienda_activa,tienda_texto,atencion,campus_activo,campus_grados,gemas_activas,pago_bold_auto,cierre_inactividad,horario_cfg,doc_precios,contrato_cfg,periodos_ciclos,periodo_actual_ciclos,admisiones_abiertas,admision_anio,admision_grados,admision_texto,matricula_linea,matricula_anio,matricula_hasta,grados_cfg,restringir_estudiante';
+async function leerColegio(id) {
+  const [k, pr] = await Promise.all([q(db.from('colegios').select(COLS_K).eq('id', id).single()), q(db.rpc('colegio_privado', { p_colegio: id })).catch(() => ({}))]);
+  return { ...k, ...(pr || {}) };
+}
 async function cargarColegio(intento = 0) {
   resetS();
   const c = ctx.colegio_id;
   const [k, grupos, asigs, ests] = await Promise.all([
-    q(db.from('colegios').select('*').eq('id', c).single()),
+    leerColegio(c),
     all(() => db.from('grupos').select('*').eq('colegio_id', c).order('grado').order('nombre')),
     all(() => db.from('asignaturas').select('*').eq('colegio_id', c).order('nivel').order('orden')),
     all(() => db.from('estudiantes').select('*').eq('colegio_id', c).order('apellidos').order('nombres').order('id')),
@@ -361,7 +441,7 @@ function authScreen(extra) {
       <button class="btn" type="submit">Entrar</button>
     </form>
     <p class="muted" style="margin-top:14px">${store.get('adm') ? '¿Primera vez? ' : '¿Primera vez? El colegio le entregó un código de activación. '}<button class="linkbtn" type="button" onclick="setAuth('registro')">Cree su cuenta</button></p>
-    <details class="verif-pedir"><summary>¿Recibió un certificado de un colegio? Verifíquelo aquí</summary><form class="toolbar" onsubmit="event.preventDefault();pedirVerificar($('#vCod0').value)"><label class="field"><span>Código de verificación</span><input id="vCod0" style="text-transform:uppercase" placeholder="XXXX-XXXX-XXXX" required></label><button class="btn ghost" type="submit">Verificar</button></form></details>
+    <details class="verif-pedir"><summary>¿Recibió un certificado de un colegio? Verifíquelo aquí</summary><form class="toolbar" onsubmit="event.preventDefault();pedirVerificar($('#vCod0').value)"><label class="field"><span>Código de verificación del documento (no es el código de activación)</span><input id="vCod0" style="text-transform:uppercase" placeholder="Ej.: AB12-CD34-EF56 (del documento)" required></label><button class="btn ghost" type="submit">Verificar</button></form></details>
     <div class="demo-box"><strong>¿Quiere conocer Colegio-IA?</strong><br><span class="muted">Pruebe gratis el colegio de demostración como directivo, docente, acudiente o estudiante.</span><br><button class="btn wa" type="button" onclick="quiereDemo()">Probar la demostración</button></div>
     <div class="demo-box reg-box"><strong>¿Es directivo de un colegio?</strong><br><span class="muted">Registre su colegio y úselo 15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button> <button class="linkbtn" type="button" onclick="verPlanes()">Ver planes y precios</button></div>`;
   if (authMode === 'colegio') body = `<h2>Registre su colegio · 15 días gratis</h2>${formRegistroHTML()}
@@ -386,13 +466,14 @@ function authScreen(extra) {
     <p id="actHola">Hola${me?.name ? ', ' + esc(me.name.split(' ')[0]) : ''}. Escriba el código de activación que le entregó el colegio.</p>
     ${extra || ''}
     <div id="miBloqueo"></div><div id="misAdm"></div>
-    <form onsubmit="event.preventDefault();doActivar()">
-      <label class="field"><span>Código de activación</span><input id="aCod" autocomplete="one-time-code" style="text-transform:uppercase;letter-spacing:.1em" required></label>
+    <div id="regArriba"></div>
+    <form id="actForm" onsubmit="event.preventDefault();doActivar()">
+      <label class="field"><span>Código de activación (10 letras y números)</span><input id="aCod" autocomplete="one-time-code" style="text-transform:uppercase;letter-spacing:.1em" placeholder="Ejemplo: BA2CH6D7QQ"></label>
       <p class="err" id="aErr" role="alert"></p>
       <div class="toolbar" style="margin:0"><button class="btn" type="submit">Activar</button>${ctxs.length ? '<button class="btn ghost" type="button" onclick="volverApp()">Cancelar</button>' : ''}</div>
     </form>
     ${demoSel}
-    <div class="demo-box reg-box"><strong>¿Es directivo de un colegio?</strong><br><span class="muted">Registre su colegio y úselo 15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button></div>
+    <div class="demo-box reg-box reg-abajo"><strong>¿Es directivo de un colegio?</strong><br><span class="muted">Registre su colegio y úselo 15 días gratis, sin tarjeta.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button></div>
     <p class="muted" style="margin-top:14px">Sesión: ${esc(me?.email || '')}.
       ${ctxs.length ? `<button class="linkbtn" type="button" onclick="volverApp()">Volver</button> ·` : ''}
       ${superadmin ? `<button class="linkbtn" type="button" onclick="irPlataforma()">Superadministrador</button> ·` : ''}
@@ -401,6 +482,7 @@ function authScreen(extra) {
   if (authMode === 'admision') return cargarAdmision();
   if (authMode === 'verificar') return cargarVerificacion();
   if (authMode === 'activar') { cargarMisAdm(); revisarBloqueo(); }
+  if (store.get('adm') && $('#admCol')) admNombreColegio();
   const f = $('#auth input'); if (f) f.focus();
 }
 function setAuth(m) { authMode = m; authScreen(); }
@@ -472,7 +554,9 @@ async function doActivar() {
   authErr('');
   await busy('#auth .btn', async () => {
     try {
-      const r = await q(db.rpc('activar_cuenta', { p_codigo: $('#aCod').value }));
+      const cod = $('#aCod').value.replace(/[\s-]/g, '').toUpperCase();   // v0.34: el código pegado con espacios o guiones también sirve
+      if (!cod) return authErr('Escriba el código de activación que le entregó el colegio');
+      const r = await q(db.rpc('activar_cuenta', { p_codigo: cod }));
       toast(`Acceso activado: ${ROL_TXT[r.rol]} en ${r.colegio}`);
       authMode = 'login'; await arrancar();
     } catch (e) { authErr(msg(e)); }
@@ -542,11 +626,11 @@ function mostrarApp() { $('#auth').hidden = true; $('#app').hidden = false; }
    ===================================================================== */
 const VIEWS = [
   { id: 'inicio', label: 'Inicio', ok: () => true, prep: prepInicio, fn: vInicio },
-  { id: 'config', label: 'Parametrización', ok: () => isDir() || isTes(), prep: prepConfig, fn: vConfig },
+  { id: 'config', label: () => isTes() && !puede('costos') ? 'Costos del año (consulta)' : 'Parametrización', ok: () => isDir() || isTes(), prep: prepConfig, fn: vConfig },
   { id: 'estudiantes', label: 'Estudiantes y matrícula', ok: isDir, prep: prepEstudiantes, fn: vEstudiantes },
   { id: 'notas', label: 'Calificaciones', ok: () => isDir() || isDoc(), prep: async () => { await prepGrupoSel(); await cargarCorrecciones(); }, fn: vNotas },
   { id: 'asistencia', label: 'Asistencia', ok: () => isDir() || isDoc(), prep: prepGrupoSel, fn: vAsistencia },
-  { id: 'boletines', label: 'Boletines', ok: () => !isTes(), prep: async () => { await prepGrupoSel(); if (propio()) { await cargarFotoEst([propio()]); await cargarDocSols(propio()); } S.ret = new Set(isDir() && sel.g ? (await q(db.rpc('retenidos_grupo', { p_grupo: sel.g })).catch(() => [])).map(x => x.retenidos_grupo || x) : []); }, fn: vBoletines },
+  { id: 'boletines', label: 'Boletines', ok: () => !isTes(), prep: async () => { await prepGrupoSel(); if (propio()) { await cargarFotoEst([propio()]); await cargarDocSols(propio()); } await cargarRet(); }, fn: vBoletines },
   { id: 'observador', label: 'Observador', ok: () => isDir() || isDoc() || isFam(), prep: prepObservador, fn: vObservador },
   { id: 'piar', label: 'PIAR e inclusión', ok: () => isDir() || isDoc() || isAcud(), prep: prepPiar, fn: vPiar },
   { id: 'comunicados', label: 'Comunicados', ok: () => true, prep: prepComunicados, fn: vComunicados, badge: () => isFam() ? noLeidos() : 0 },
@@ -600,7 +684,7 @@ function menuHTML() {
     const vs = sec.ids.map(id => VIEWS.find(v => v.id === id)).filter(v => v && visible(v)); if (!vs.length) return '';
     const activa = vs.some(v => v.id === view), cerr = sec.t && menuCerr[sec.t] && !activa;
     const bad = vs.reduce((a, v) => a + (v.badge ? +v.badge() || 0 : 0), 0);
-    const items = vs.map(v => `<button type="button" class="nav-it" ${v.id === view ? 'aria-current="page"' : ''} onclick="go('${v.id}')"><span class="nav-ico" aria-hidden="true">${ICO[v.id] || '•'}</span><span class="nav-tx">${v.label}</span>${v.badge && v.badge() ? `<span class="badge">${v.badge()}</span>` : ''}</button>`).join('');
+    const items = vs.map(v => `<button type="button" class="nav-it" ${v.id === view ? 'aria-current="page"' : ''} onclick="go('${v.id}')"><span class="nav-ico" aria-hidden="true">${ICO[v.id] || '•'}</span><span class="nav-tx">${typeof v.label === 'function' ? v.label() : v.label}</span>${v.badge && v.badge() ? `<span class="badge">${v.badge()}</span>` : ''}</button>`).join('');
     return sec.t ? `<div class="nav-sec sec-${sec.c}"><button type="button" class="nav-h" aria-expanded="${!cerr}" onclick="toggleSec('${sec.t}')"><span>${sec.t}</span>${cerr && bad ? `<span class="badge">${bad}</span>` : ''}<span class="nav-fl" aria-hidden="true">${cerr ? '▸' : '▾'}</span></button>${cerr ? '' : `<div class="nav-g">${items}</div>`}</div>` : items;
   }).join('');
 }
@@ -639,7 +723,7 @@ function barraHijos() {
 }
 function avisoRestringido() {
   if (isEst()) return `<div class="panel restringido"><h2>Su acceso está suspendido en este momento</h2>
-    <p>Pídale a su acudiente que se comunique con la secretaría del colegio. Apenas se resuelva, podrá volver a entrar a su campus virtual.</p></div>`;
+    <p>Pídale a su acudiente que se comunique con la secretaría del colegio${S.k?.telefono ? ` (teléfono ${esc(S.k.telefono)})` : ''}. Apenas se resuelva, podrá volver a entrar a su campus virtual.</p></div>`;
   return `<div class="panel restringido"><h2>El acceso de la familia está limitado en este momento</h2>
     <p>Hay cuotas pendientes por pagar. Apenas el pago quede registrado, se habilita todo de nuevo.</p>
     <p class="muted">Para más información, comuníquese con la secretaría del colegio${S.k?.telefono ? ` (teléfono ${esc(S.k.telefono)})` : ''}. Los comunicados del colegio siguen disponibles.</p>
@@ -715,13 +799,13 @@ function render() {
   if (modo === 'colegio' && S?.estado?.cobro === 'aviso' && !S.estado.en_prueba && (isDir() || isTes())) $('#view').insertAdjacentHTML('afterbegin', avisoCobro());
   if (modo === 'colegio' && S?.estado?.en_prueba && S.estado.cobro !== 'cerrada' && esRector()) $('#view').insertAdjacentHTML('afterbegin', avisoPrueba());
   if (modo === 'colegio' && S?.k?.demo) $('#view').insertAdjacentHTML('beforeend', ctaDemo());
-  if (modo === 'colegio' && ctx && v.id === 'inicio' && !isFam()) { const h = porAprobarHTML(), f = $('#view').firstElementChild; if (h) f ? f.insertAdjacentHTML('afterend', h) : $('#view').insertAdjacentHTML('afterbegin', h); }
+  if (modo === 'colegio' && ctx && v.id === 'inicio' && !isFam()) { const h = porAprobarHTML() + novStaffHTML(), f = $('#view').firstElementChild; if (h) f ? f.insertAdjacentHTML('afterend', h) : $('#view').insertAdjacentHTML('afterbegin', h); }
   if (modo === 'colegio' && ctx) $('#view').insertAdjacentHTML('afterbegin', barraSup());
   if (v.id === 'estudiantes') drawEst();
   setTimeout(marcarDeslizables, 0);
 }
 // v0.29: las tablas más anchas que la pantalla dicen que se pueden deslizar
-function marcarDeslizables() { document.querySelectorAll('.tbl').forEach(t => t.classList.toggle('desliza', t.scrollWidth > t.clientWidth + 4)); }
+function marcarDeslizables() { document.querySelectorAll('.tbl').forEach(t => t.classList.toggle('desliza', t.scrollWidth > t.clientWidth + 4)); document.querySelectorAll('input[data-din]').forEach(fmtDin); }
 window.addEventListener('resize', () => setTimeout(marcarDeslizables, 100));
 /* ---------- Sesión: evita mostrar datos vacíos cuando la sesión venció ---------- */
 const VENCE_MS = 10 * 60 * 1000;
@@ -836,6 +920,7 @@ function arranqueHTML() {
   return `<section class="panel arranque"><h2>Para arrancar con Colegio-IA <span class="badge">${hechos} de ${pasos.length}</span></h2>
     <div class="bar"><i style="width:${Math.round(hechos / pasos.length * 100)}%"></i></div>
     <ul class="list">${pasos.map(([ok, t, d, fn]) => `<li class="${ok ? 'dim' : ''}">${ok ? '✅' : '⬜'} <strong>${t}</strong><br><span class="muted">${d}</span>${ok ? '' : ` <button class="linkbtn" type="button" onclick="${fn}">Hacerlo ahora</button>`}</li>`).join('')}</ul>
+    ${!k.tienda_activa ? `<p class="muted">Opcional: la <strong>tienda del colegio</strong> (uniformes, útiles, eventos) empieza apagada y las familias no la ven. <button class="linkbtn" type="button" onclick="go('pedidos')">Encenderla en Tienda y pedidos</button></p>` : ''}
     <div class="toolbar"><button class="btn ghost sm" type="button" onclick="ocultarArranque()">Ocultar esta lista</button></div></section>`;
 }
 let resumen = null;
@@ -908,7 +993,7 @@ function vInicio() {
   const g = grupo(e.grupo_id);
   if (!g) return head(`Hola`, '') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
   const pr = promedio(e.id), pe = perdidas(e.id);
-  return hola(ctx.rol === 'acudiente' ? `${saludo()}, ${esc(primero(ctx.nombre))}` : `${saludo()}, ${esc(primero(e.nombres))}`, `${ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)} · ` : ''}${esc(g.nombre)}. Director(a) de grupo: ${esc(g.director_nombre || 'sin asignar')}.`) + avisoCuota() + mlAvisoInicio() + juegoInicioHTML() + hoyFamilia() + campusInicioHTML() +
+  return hola(ctx.rol === 'acudiente' ? `${saludo()}, ${esc(primero(ctx.nombre))}` : `${saludo()}, ${esc(primero(e.nombres))}`, `${ctx.rol === 'acudiente' ? `Seguimiento de ${esc(e.nombres)} · ` : ''}${esc(g.nombre)}.${g.director_nombre ? ` Director(a) de grupo: ${esc(g.director_nombre)}.` : ''}`) + avisoCuota() + mlAvisoInicio() + juegoInicioHTML() + hoyFamilia() + campusInicioHTML() +
     `<div class="stats">
       <div class="stat"><div class="n">${g.nivel === 'preescolar' ? 'Cualitativa' : pr == null ? '—' : N(pr)}</div><div class="l">${g.nivel === 'preescolar' ? 'Valoración por dimensiones' : 'Promedio acumulado' + (pr == null ? '' : ', ' + desem(pr))}</div></div>
       <div class="stat"><div class="n">${pe.length}</div><div class="l">Asignaturas en bajo</div></div>
@@ -940,7 +1025,7 @@ function vEstudiantes() {
       <label class="field"><span>Estado</span><select onchange="sel.fe=this.value;drawEst()">${['Activo', 'Retirado', 'Graduado', ''].map(x => opt(x, x || 'Todos', sel.fe ?? 'Activo')).join('')}</select></label>
       <label class="field"><span>Buscar</span><input type="search" value="${esc(sel.q)}" placeholder="Nombre o documento" oninput="sel.q=this.value;drawEst()"></label>
       <span class="muted" style="margin-left:auto" id="estCnt">${pl(act.length, "activo", "activos")}</span></div>
-      <div class="tbl" id="estTbl"></div></div>`;
+      <div class="tbl fija-der fija-2" id="estTbl"></div></div>`;
 }
 function familiaDe(eid) { return (S.miembros || []).filter(m => m.estudiante_id === eid); }
 // v0.30: buscar por palabras en cualquier orden y sin importar tildes («sofia castro» encuentra a CASTRO DÍAZ SOFÍA)
@@ -967,7 +1052,7 @@ async function avisoDeudaDoc(eid) {
   const [f, prev] = await Promise.all([q(db.rpc('estado_cuenta', { p_estudiante: eid, p_anio: S.k.anio })).catch(() => []), deudasAnteriores(eid).catch(() => [])]);
   const v = f.filter(x => esVenc(x, S.k.anio)).reduce((a, x) => a + +x.saldo, 0) + prev.reduce((a, x) => a + +x.saldo, 0);
   if (!v) return true;
-  return confirmar(`${nom(est(eid))} tiene ${cop(v)} vencidos. ¿Entregar el documento de todas formas?${Object.values(S.k.doc_precios || {}).some(p => +p > 0) ? '\nSi el colegio cobra los documentos, la familia los pide y paga en «Documentos».' : ''}`, 'Sí, entregar');
+  return confirmar(`${nom(est(eid))} tiene ${cop(v)} pendientes a la fecha (vencidos o que vencen hoy). ¿Entregar el documento de todas formas?${Object.values(S.k.doc_precios || {}).some(p => +p > 0) ? '\nSi el colegio cobra los documentos, la familia los pide y paga en «Documentos».' : ''}`, 'Sí, entregar');
 }
 async function accionEst(id, a) {
   if (a === 'editar') return formEst(id);
@@ -1059,7 +1144,7 @@ function formEst(id) {
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button>${puede('matricula') ? `<button class="btn" type="button" onclick="guardarEst('${id || ''}')">${id ? 'Guardar cambios' : 'Matricular'}</button>` : ''}</div>`);
 }
 function agregarAcud() { const b = $('#acudBox'); b.insertAdjacentHTML('beforeend', filaAcud({}, b.children.length)); }
-const vv = id => { const el = $('#' + id); return el ? (el.type === 'checkbox' ? el.checked : el.value.trim()) : null; };
+const vv = id => { const el = $('#' + id); return el ? (el.type === 'checkbox' ? el.checked : el.dataset.din !== undefined ? dinV(el) : el.value.trim()) : null; };
 // Revisión 20 oct: la matrícula no se guarda incompleta (datos que pide el SIMAT y al menos un acudiente completo).
 // Las autorizaciones de datos e imagen NO son obligatorias: la familia puede no autorizar y es válido.
 const OBLIG_EST = [['fNom', 'nombres', 'Nombres'], ['fApe', 'apellidos', 'Apellidos'], ['fTd', 'tipo_doc', 'Tipo de documento'], ['fDoc', 'doc', 'Número de documento'],
@@ -1072,20 +1157,20 @@ function validarMatricula(d, acs) {
   document.querySelectorAll('.modal .falta').forEach(x => x.classList.remove('falta'));
   const f = [], marca = el => el?.closest('.field')?.classList.add('falta');
   OBLIG_EST.forEach(([id, k, l]) => { if (!d[k]) { f.push(l); marca($('#' + id)); } });
-  if (d.doc && !/^[0-9A-Za-z]{5,15}$/.test(d.doc.replace(/[\s.]/g, ''))) { f.push('Número de documento del estudiante (solo números, sin puntos)'); marca($('#fDoc')); }
+  if (d.doc && !docOk(d.tipo_doc, d.doc)) { f.push(['CC', 'TI', 'RC', 'NUIP'].includes(d.tipo_doc) ? 'Número de documento del estudiante (solo números, sin puntos ni letras)' : 'Número de documento del estudiante (letras y números, sin puntos)'); marca($('#fDoc')); }
   if (d.fnac && (!fechaReal(d.fnac) || d.fnac > hoy() || d.fnac < '1990-01-01')) { f.push('Fecha de nacimiento (no puede ser futura ni anterior a 1990)'); marca($('#fNac')); }
   if (d.nombres && d.nombres.trim().length < 2) { f.push('Nombres completos (al menos 2 letras)'); marca($('#fNom')); }
   if (d.apellidos && d.apellidos.trim().length < 2) { f.push('Apellidos completos (al menos 2 letras)'); marca($('#fApe')); }
-  if (d.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(d.email)) { f.push('Correo del estudiante válido (o déjelo vacío)'); marca($('#fEmail')); }
+  if (d.email && !correoOk(d.email)) { f.push('Correo del estudiante válido (o déjelo vacío)'); marca($('#fEmail')); }
   const filas = [...document.querySelectorAll('#acudBox .acud')];
   const usados = acs.map((a, i) => ({ a, el: filas[i] })).filter(x => x.a.nombres || x.a.doc || x.a.telefono || x.a.email || x.a.direccion || x.a.ocupacion);
   if (!usados.length) { f.push('Al menos un acudiente con todos sus datos'); marca(filas[0]?.querySelector('.aNom')); }
   usados.forEach(({ a, el }) => {
     const n = `Acudiente ${a.orden}`;
     (a.responsable_pago ? OBLIG_ACU : OBLIG_ACU.slice(0, 3)).forEach(([c, k, l]) => { if (!a[k]) { f.push(`${n}: ${l}`); marca(el.querySelector(c)); } });
-    if (a.doc && !/^[0-9A-Za-z]{5,15}$/.test(a.doc.replace(/[\s.]/g, ''))) { f.push(`${n}: número de documento sin puntos`); marca(el.querySelector('.aDoc')); }
+    if (a.doc && !docOk(a.tipo_doc, a.doc)) { f.push(`${n}: número de documento ${['CC', 'TI', 'RC', 'NUIP'].includes(a.tipo_doc) ? 'solo con números' : ''} sin puntos`); marca(el.querySelector('.aDoc')); }
     if (a.telefono && !/^[0-9+ ]{7,15}$/.test(a.telefono)) { f.push(`${n}: teléfono válido`); marca(el.querySelector('.aTel')); }
-    if (a.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a.email)) { f.push(`${n}: correo válido`); marca(el.querySelector('.aEmail')); }
+    if (a.email && !correoOk(a.email)) { f.push(`${n}: correo válido`); marca(el.querySelector('.aEmail')); }
   });
   acs.forEach((a, i) => { if (a.responsable_pago && !usados.some(u => u.a === a)) { f.push(`Acudiente ${i + 1} está marcado como responsable de pagos pero no tiene datos`); marca(filas[i].querySelector('.aResp')); } });
   const resp = usados.filter(u => u.a.responsable_pago).length;
@@ -1142,6 +1227,16 @@ async function guardarEst(id) {
   if (!id && fotoNueva) { const fo = fotoNueva; fotoNueva = null; await guard(async () => { await q(db.from('fotos_est').upsert({ estudiante_id: r.id, foto: fo }, { onConflict: 'estudiante_id' })); fotoEst[r.id] = fo; return true; }); }
   S.acud = await all(() => db.from('acudientes').select('*').eq('colegio_id', ctx.colegio_id).order('orden'));
   closeModal(); render();
+  // v0.34: si un acudiente de la ficha ya tiene cuenta de familia en el colegio (otro hijo), se ofrece darle acceso a este estudiante también
+  if (!id) {
+    const mails = [...new Set(acs.map(a => a.email).filter(Boolean))];
+    const ya = mails.length ? (await q(db.from('miembros').select('id,nombre,email,user_id,estudiante_id').eq('colegio_id', ctx.colegio_id).eq('rol', 'acudiente').in('email', mails)).catch(() => [])).find(m => m.user_id) : null;
+    if (ya && await confirmar(`${ya.nombre} (${ya.email}) ya tiene cuenta de acudiente en el colegio. ¿Darle acceso también a ${nom(r)}? Quedará ligado a su misma cuenta, sin código.`, 'Sí, dar acceso')) {
+      const m = await guard(() => q(db.from('miembros').insert({ colegio_id: ctx.colegio_id, rol: 'acudiente', nombre: ya.nombre, email: ya.email, estudiante_id: r.id }).select().single()), 'Acceso creado: lo verá en «Cambiar de perfil»');
+      if (m && S.miembros && !S.miembros.some(x => x.id === m.id)) S.miembros.push(m);
+      render();
+    }
+  }
 }
 function formRetiro(id) {
   const e = est(id);
@@ -1189,11 +1284,22 @@ function formFamilia(eid) {
     </div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cerrar</button><button class="btn" type="button" onclick="invitar('${eid}')">Crear invitación</button></div>`);
 }
-async function invitar(eid) {
+// v0.34: doble clic en «Crear invitación» no muestra «Ya existe un registro» (la segunda pulsación se ignora)
+let invitando = false;
+async function invitar(eid) { if (invitando) return; invitando = true; try { await invitar0(eid); } finally { invitando = false; } }
+async function invitar0(eid) {
   const d = { colegio_id: ctx.colegio_id, rol: eid ? $('#iRol').value : $('#uRol').value, nombre: (eid ? $('#iNom') : $('#uNom')).value.trim(), email: (eid ? $('#iEmail') : $('#uEmail')).value.trim(), estudiante_id: eid || null };
-  if (!d.nombre || !/^\S+@\S+\.\S+$/.test(d.email)) return toast('Escriba el nombre y un correo válido');
+  if (!d.nombre || !correoOk(d.email)) return toast('Escriba el nombre y un correo válido (por ejemplo nombre@correo.com)');
   const ya = S.miembros.find(x => (x.email || '').toLowerCase() === d.email.toLowerCase() && x.rol === d.rol && (x.estudiante_id || null) === d.estudiante_id);
   if (ya) return toast(`${ya.nombre} ya tiene ${ya.user_id ? 'acceso' : 'una invitación pendiente'} como ${(ROL_TXT[ya.rol] || ya.rol).toLowerCase()} con ese correo: aparece en la lista${ya.user_id ? '' : ' (use «Mensaje» para volver a enviarla)'}`);
+  // v0.34: avisos de correo repetido en otro cargo y de un segundo acceso de estudiante
+  const otroCargo = S.miembros.find(x => (x.email || '').toLowerCase() === d.email.toLowerCase() && x.rol !== d.rol && !['acudiente', 'estudiante'].includes(x.rol) && !['acudiente', 'estudiante'].includes(d.rol));
+  if (otroCargo && !(await confirmar(`El correo ${d.email} ya está registrado como ${(ROL_TXT[otroCargo.rol] || otroCargo.rol).toLowerCase()} (${otroCargo.nombre}). Una persona puede tener dos cargos, pero revise que no sea un error. ¿Crear también el acceso como ${(ROL_TXT[d.rol] || d.rol).toLowerCase()}?`, 'Sí, crear'))) return;
+  if (d.rol === 'estudiante' && eid) {
+    const ya2 = S.miembros.find(x => x.rol === 'estudiante' && x.estudiante_id === eid && x.activo !== false);
+    if (ya2 && !(await confirmar(`${nom(est(eid))} ya tiene un acceso de estudiante con el correo ${ya2.email}. ¿Crear otro con ${d.email}?`, 'Sí, crear otro'))) return;
+    if (acudDe(eid).some(a => (a.email || '').toLowerCase() === d.email.toLowerCase()) && !(await confirmar(`${d.email} es el correo de un acudiente. El acceso de estudiante es para el propio estudiante (ve el campus, no los pagos). ¿Usar ese correo de todas formas?`, 'Sí, usar ese correo'))) return;
+  }
   if (!eid && $('#uFnac')?.value) { d.fnac = $('#uFnac').value; if (d.fnac < '1920-01-01' || d.fnac > '2015-12-31') return toast('Revise la fecha de nacimiento'); }
   const m = await guard(() => q(db.from('miembros').insert(d).select().single()), 'Invitación creada');
   if (!m) return;
@@ -1288,9 +1394,9 @@ function vUsuarios() {
     <div class="panel"><h2>Familias y estudiantes</h2><p>${fam.filter(m => m.user_id).length} cuentas activas y ${fam.filter(m => !m.user_id).length} invitaciones pendientes.</p>
       <div class="toolbar"><label class="field"><span>Buscar</span><input type="search" placeholder="Nombre o correo" value="${esc(sel.uq || '')}" oninput="sel.uq=this.value;filtrarFilas(this.value)"></label>
         <label class="field"><span>Ordenar por</span><select onchange="sel.uord=this.value;render()">${[['ape', 'Apellido del estudiante'], ['nom', 'Nombre del acudiente'], ['acc', 'Último acceso']].map(([v, l]) => opt(v, l, sel.uord || 'ape')).join('')}</select></label></div>
-      <div class="tbl"><table><thead><tr><th>Estudiante</th><th>Usuario</th><th>Correo</th><th>Estado</th><th>Último acceso</th><th></th></tr></thead><tbody>
+      <div class="tbl fija-der"><table><thead><tr><th>Estudiante</th><th>Usuario</th><th>Correo</th><th>Estado</th><th>Último acceso</th><th></th></tr></thead><tbody>
       ${famOrden(fam).map(m => { const e = est(m.estudiante_id); return `<tr class="fila-busca" data-n="${esc(`${e ? nom(e) : ''} ${m.nombre} ${m.email}`.toLowerCase())}"><td>${e ? `<strong>${esc(e.apellidos)}</strong> ${esc(e.nombres)}<br><span class="muted">${esc(grupo(e.grupo_id)?.nombre || '')}</span>` : '—'}</td>
-        <td>${esc(m.nombre)}<br><span class="muted">${m.rol === 'estudiante' ? 'Estudiante' : 'Acudiente'}</span></td><td>${esc(m.email)}</td><td>${estadoAcceso(m)}</td><td>${m.user_id ? haceCuanto(ultAcc(m)) : '—'}</td>
+        <td>${esc(m.nombre)}<br><span class="muted">${m.rol === 'estudiante' ? 'Estudiante' : 'Acudiente'}</span></td><td>${esc(m.email)}</td><td>${estadoAcceso(m)}${!m.user_id && m.codigo ? `<br><span class="muted">Código <span class="code">${esc(m.codigo)}</span></span>` : ''}</td><td>${m.user_id ? haceCuanto(ultAcc(m)) : '—'}</td>
         <td style="white-space:nowrap">${m.user_id ? '' : `<button class="btn ghost sm" type="button" onclick="verInvitacion('${m.id}')">Mensaje</button> `}<button class="btn ghost sm" type="button" onclick="toggleMiembro('${m.id}')">${m.activo ? 'Bloquear' : 'Activar'}</button></td></tr>`; }).join('')}
       </tbody></table></div>
       <p class="muted">"Nuevo código" sirve cuando alguien perdió su código o cambió de correo: el código anterior deja de funcionar y la persona vuelve a activar su cuenta con el nuevo. Un acudiente con varios hijos usa una sola cuenta: si ya la activó, los hijos que se le agreguen después aparecen solos en su cuenta, sin código nuevo.</p></div>`;
@@ -1337,10 +1443,12 @@ async function guardarGruposDoc(mid) {
 async function prepGrupoSel() {
   if (isFam()) { const e = est(propio()); if (e) await cargarGrupo(e.grupo_id); return; }
   const gs = gruposVis(); if (!gs.length) return;
-  if (!sel.g || !gs.find(g => g.id === sel.g)) sel.g = gs[0].id;
+  if (!sel.g || !gs.find(g => g.id === sel.g)) sel.g = primerConEst(gs).id;   // v0.34: abre el primer curso con estudiantes
   await cargarGrupo(sel.g);
 }
-async function cambiarGrupo(g) { sel.g = g; sel.a = ''; $('#view').innerHTML = '<div class="loading">Cargando…</div>'; await guard(() => cargarGrupo(g)); render(); }
+async function cambiarGrupo(g) { sel.g = g; sel.a = ''; $('#view').innerHTML = '<div class="loading">Cargando…</div>'; await guard(() => cargarGrupo(g)); if (view === 'boletines') await cargarRet(); render(); }
+// v0.34: los boletines retenidos por pagos pendientes se calculan para el grupo que se está viendo (antes solo para el que abría por defecto)
+async function cargarRet() { S.ret = new Set(isDir() && sel.g ? (await q(db.rpc('retenidos_grupo', { p_grupo: sel.g })).catch(() => [])).map(x => x.retenidos_grupo || x) : []); S.retG = sel.g; }
 const perOpts = (s, g) => perG(g !== undefined ? g : view === 'boletines' && propio() ? grupo(est(propio())?.grupo_id) : grupo(sel.g)).map(p => opt(p.n, 'Periodo ' + p.n, s)).join('');
 function sinGrupos() { return `<div class="panel empty">${isDir() ? 'Aún no hay cursos. Créelos en Parametrización.' : 'No tiene grupos asignados.'}</div>`; }
 const cierreDe = (p, g) => calG(g !== undefined ? g : grupo(sel.g)).find(x => x.n === +p)?.cierre || '';
@@ -1426,8 +1534,14 @@ function estadoCal(eid) {
   const v = notaRaw(eid, sel.a, sel.p), h = guardadasHoy[`${eid}|${sel.a}|${sel.p}`];
   return v == null ? '<span class="muted">Pendiente</span>' : `<span class="ok">✓ Guardada${h ? ' ' + h : ''}</span>`;
 }
+// v0.34: en el celular la columna «✓ Guardado» queda fuera de la pantalla: se confirma también con una señal fija arriba
+// v0.36: en el celular la confirmación se ve en la misma fila (se pone verde un momento) y no tapa nada; sin fila, una señal arriba
+function flashOk(t, fila) {
+  if (fila && matchMedia('(max-width:760px)').matches) { fila.classList.add('ok-flash'); fila.title = '✓ ' + t; clearTimeout(fila._okT); fila._okT = setTimeout(() => fila.classList.remove('ok-flash'), 2400); return; }
+  let f = $('#flashOk'); if (!f) { f = document.createElement('div'); f.id = 'flashOk'; f.className = 'flash-ok'; f.setAttribute('role', 'status'); document.body.appendChild(f); } f.textContent = '✓ ' + t; f.classList.add('on'); clearTimeout(flashOk.t); flashOk.t = setTimeout(() => f.classList.remove('on'), 2200); }
 function marcarGuardada(eid) {
   const k = `${eid}|${sel.a}|${sel.p}`; if (notaRaw(eid, sel.a, sel.p) != null) guardadasHoy[k] = horaAhora(); else delete guardadasHoy[k];
+  flashOk(`Guardado ${horaAhora()}: ${est(eid)?.nombres || ''}`, $('#st-' + eid)?.closest('tr'));
   const st = $('#st-' + eid); if (st) st.innerHTML = estadoCal(eid);
   const ac = $('#ac-' + eid); if (ac && grupo(sel.g)?.nivel !== 'preescolar') ac.innerHTML = chip(defin(eid, sel.a));
   const rn = $('#regN'); if (rn) rn.textContent = estsDe(sel.g).filter(e => notaRaw(e.id, sel.a, sel.p) != null).length;
@@ -1603,7 +1717,7 @@ async function setAsis(eid, v) {
     return true;
   });
   const m = pc ? S.asisC : S.asis;
-  if (ok) { if (v === 'P') delete m[k]; else m[k] = v; asisGuardada[k] = horaAhora(); render(); }
+  if (ok) { if (v === 'P') delete m[k]; else m[k] = v; asisGuardada[k] = horaAhora(); render(); flashOk(`Guardado ${asisGuardada[k]}`, document.querySelector(`[aria-label="Asistencia de ${CSS.escape(nom(est(eid)))}"]`)?.closest('tr')); }
 }
 
 /* =====================================================================
@@ -1696,20 +1810,23 @@ function boletinHTML(eid, per) {
     : `<table><thead><tr><th>Asignatura</th><th>IH</th>${ps.map(p => `<th>P${p.n}</th>`).join('')}<th>Acum.</th><th>Desempeño</th></tr></thead><tbody>${as.map(a => { const d = defin(eid, a.id, per), lo = S.logros[`${g.id}|${a.id}|${per}`]; return `<tr><td>${esc(a.nombre)}${logroLista(lo)}</td><td>${a.ih}</td>${ps.map(p => { const v = nota(eid, a.id, p.n), r = S.rec[`${eid}|${a.id}|${p.n}`]; return `<td>${v == null ? '—' : N(v)}${r?.nota != null && v === +r.nota ? '<sup>R</sup>' : ''}</td>`; }).join('')}<td><strong>${d == null ? '—' : N(d)}</strong></td><td>${d == null ? '' : desem(d)}</td></tr>`; }).join('')}</tbody></table>`;
   return `<section class="doc">${docHead('Informe académico', esCiclo(g) && g.periodos?.length ? `${esc(gradoTxt(g.grado))}, ${semTxt(g)}: periodo ${per} · año ${S.k.anio}` : `Periodo ${per} de ${periodos().length}, año ${S.k.anio}`)}
   ${fotoDoc(eid)}<div class="dgrid"><div><span>Estudiante</span>${esc(nom(e))}</div><div><span>Documento</span>${e.tipo_doc} ${esc(e.doc)}</div><div><span>Grado y grupo</span>${esc(g.nombre)}</div>
-  <div><span>Director(a) de grupo</span>${esc(g.director_nombre || '')}</div><div><span>${porClase() ? 'Fallas del año hasta este periodo (horas de clase)' : 'Fallas del año hasta este periodo'}</span>${fallas(eid, perG(g).find(p => p.n === +per)?.fin)}</div>${pre ? '' : `<div><span>Promedio acumulado</span>${pr == null ? '—' : N(pr) + ' ' + desem(pr)}</div>`}</div>
+  ${g.director_nombre ? `<div><span>Director(a) de grupo</span>${esc(g.director_nombre)}</div>` : ''}<div><span>${porClase() ? 'Fallas del año hasta este periodo (horas de clase)' : 'Fallas del año hasta este periodo'}</span>${fallas(eid, perG(g).find(p => p.n === +per)?.fin)}</div>${pre ? '' : `<div><span>Promedio acumulado</span>${pr == null ? '—' : N(pr) + ' ' + desem(pr)}</div>`}</div>
   ${body}
   ${!pre && Object.keys(S.rec).some(k => { if (!k.startsWith(eid + '|') || S.rec[k].nota == null) return false; const [, a, pn] = k.split('|'); return +pn <= per && nota(eid, a, +pn) === +S.rec[k].nota; }) ? '<p class="dnote"><sup>R</sup> Calificación obtenida en actividad de recuperación (Decreto 1290 de 2009).</p>' : ''}
   ${e.piar ? '<p class="dnote">Estudiante valorado con ajustes razonables según su Plan Individual de Ajustes Razonables (PIAR), Decreto 1421 de 2017.</p>' : ''}
   <div class="dobs"><span>Observaciones</span><p>${esc(S.obs[eid + '|' + per] || 'Sin observaciones para este periodo.')}</p></div>
   ${pre ? '<p class="dnote">En el nivel de preescolar la evaluación es cualitativa y no se reprueba el grado.</p>' : `<p class="dnote">Escala institucional: ${escala().map(s => `${s.d} de ${N(s.min)} a ${N(s.max)}`).join(', ')}. Equivalencia con la escala nacional del Decreto 1290 de 2009.</p>`}
-  ${firmas(['Rector(a)', S.k.rector_nombre], ['Director(a) de grupo', g.director_nombre])}</section>`;
+  ${firmas(...[['Rector(a)', S.k.rector_nombre], ['Director(a) de grupo', g.director_nombre]].filter(f => f[0] !== 'Director(a) de grupo' || f[1]))}</section>`;
 }
 function vBoletines() {
   if (!sel.p) sel.p = paG(propio() ? grupo(est(propio())?.grupo_id) : grupo(sel.g));
   if (propio()) ajustarPer(grupo(est(propio())?.grupo_id)); else if (sel.g) ajustarPer(grupo(sel.g));
   if (propio()) {
     const eid = propio(); if (!est(eid) || !grupo(est(eid).grupo_id)) return head('Boletín') + '<div class="panel empty">El estudiante aún no tiene grupo asignado.</div>';
-    return head('Boletín', 'Consulte e imprima el informe de cada periodo.', `<div class="toolbar" style="margin:0"><label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label>${docPagado(eid, 'boletin', sel.p) && perPublicado(grupo(est(eid).grupo_id), sel.p) ? `<button class="btn" type="button" onclick="imprimirBoletin('${eid}')">Imprimir</button>` : ''}</div>`) +
+    // v0.36: el selector solo ofrece periodos con calificaciones (si aún no hay ninguna, el periodo en curso)
+    const gF = grupo(est(eid).grupo_id), pcn = perG(gF).filter(p => conNotas(eid, p.n)).map(p => p.n), lp = pcn.length ? pcn : [paG(gF)];
+    if (!lp.includes(sel.p)) sel.p = lp[lp.length - 1];
+    return head('Boletín', 'Consulte e imprima el informe de cada periodo.', `<div class="toolbar" style="margin:0"><label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${lp.map(n => opt(n, 'Periodo ' + n, sel.p)).join('')}</select></label>${docPagado(eid, 'boletin', sel.p) && perPublicado(grupo(est(eid).grupo_id), sel.p) ? `<button class="btn" type="button" onclick="imprimirBoletin('${eid}')">Imprimir</button>` : ''}</div>`) +
       (S.k.anio > new Date(S.k.creado_en || Date.now()).getFullYear() && isAcud() ? `<p class="muted">Las calificaciones de ${S.k.anio - 1} y años anteriores están en <button class="linkbtn" type="button" onclick="go('documentos')">Documentos › Certificados de años anteriores</button>.</p>` : '') +
       ((() => { const gE = grupo(est(eid).grupo_id), ult = Math.max(...perG(gE).map(p => p.n)); return docPagado(eid, 'boletin', ult) && perPublicado(gE, ult); })() ? `<div class="note">Ya puede descargar el informe final del año. <button class="btn sm" type="button" onclick="verInformeFinal('${eid}')">Informe final</button></div>` : '') +
       (!perPublicado(grupo(est(eid).grupo_id), sel.p) ? `<div class="panel"><h2>Boletín del periodo ${sel.p}</h2><p>El boletín de este periodo se publica cuando termine el periodo y se cierre la digitación de calificaciones${(() => { const p = perG(grupo(est(eid).grupo_id)).find(x => x.n === sel.p); return p?.cierre || p?.fin ? ` (${fmtF(p.cierre || p.fin)})` : ''; })()}. Mientras tanto, puede ver las calificaciones parciales en el inicio (botón «Ver detalle» de cada asignatura).</p></div>`
@@ -1717,20 +1834,21 @@ function vBoletines() {
         ${isEst() ? '<p class="muted">Su acudiente puede pagarlo desde su cuenta, en "Documentos".</p>' : docSols.some(x => x.estudiante_id === eid && x.tipo === 'boletin' && x.periodo === sel.p && x.estado === 'Por confirmar') ? '<div class="note">Ya envió el comprobante: el boletín se libera cuando tesorería lo confirme.</div>' : `<div class="toolbar"><button class="btn" type="button" onclick="pedirDoc('boletin',${sel.p})">Pagar el boletín</button><button class="btn ghost" type="button" onclick="go('documentos')">Ver mis documentos</button></div>`}</div>`);
   }
   const gs = gruposVis(); if (!gs.length) return head('Boletines') + sinGrupos();
-  const es = estsDe(sel.g), ret = S.ret || new Set(), nRet = es.filter(e => ret.has(e.id)).length;
-  return head('Boletines', isDoc() ? `${escribeObs() ? 'Como director(a) de este grupo, escriba la observación de cada estudiante para el boletín.' : 'La observación de cada estudiante la escribe el director(a) de este grupo; usted puede leerla.'} Los boletines los generan y entregan coordinación y rectoría.` : 'Escriba la observación de cada estudiante y genere los informes del periodo.', isDoc() ? '' : `<button class="btn" type="button" onclick="boletinesGrupo()" ${es.length > nRet ? '' : 'disabled'}>Generar boletines del grupo</button> <button class="btn ghost" type="button" onclick="informesFinalesGrupo()" ${es.length > nRet ? '' : 'disabled'}>Informes finales del grupo</button>`) +
-    (nRet ? `<div class="note">${nRet} ${nRet === 1 ? 'boletín está retenido' : 'boletines están retenidos'} por pagos pendientes: no se incluyen al generar los del grupo. Se liberan solos cuando la familia se pone al día.</div>` : '') +
+  const es = estsDe(sel.g), ret = S.retG === sel.g && S.ret || new Set(), nRet = es.filter(e => ret.has(e.id)).length;
+  return head('Boletines', isDoc() ? `${escribeObs() ? 'Como director(a) de este grupo, escriba la observación de cada estudiante para el boletín.' : 'La observación de cada estudiante la escribe el director(a) de este grupo; usted puede leerla.'} Los boletines los generan y entregan coordinación y rectoría.` : 'Escriba la observación de cada estudiante y genere los informes del periodo.', isDoc() ? '' : `<button class="btn" type="button" onclick="boletinesGrupo()" ${es.length > nRet ? '' : `disabled title="${es.length ? 'Todos los boletines del grupo están retenidos por pagos pendientes' : 'El grupo no tiene estudiantes activos'}"`}>Generar boletines del grupo</button> <button class="btn ghost" type="button" onclick="informesFinalesGrupo()" ${es.length > nRet ? '' : `disabled title="${es.length ? 'Todos los boletines del grupo están retenidos por pagos pendientes' : 'El grupo no tiene estudiantes activos'}"`}>Informes finales del grupo</button>`) +
+    (nRet ? `<div class="note">${nRet} ${nRet === 1 ? 'boletín está retenido' : 'boletines están retenidos'} por pagos pendientes: no se incluyen al generar los del grupo. Se liberan solos cuando la familia se pone al día, o cuando tiene un acuerdo de pago con visto bueno de la rectoría y la cuota inicial pagada (mientras lo cumpla).${['rector', 'coordinador'].includes(ctx.rol) ? ' Rectoría y coordinación pueden entregar uno de todas formas con «Entregar de todas formas».' : ''}${es.length && es.length === nRet ? ' <strong>Como todos están retenidos, «Generar boletines del grupo» e «Informes finales» quedan inactivos.</strong>' : ''}</div>` : '') +
     `<div class="panel"><div class="toolbar">
       <label class="field"><span>Grupo</span><select onchange="cambiarGrupo(this.value)">${gs.map(x => opt(x.id, x.nombre, sel.g)).join('')}</select></label>
       <label class="field"><span>Periodo</span><select onchange="sel.p=+this.value;render()">${perOpts(sel.p)}</select></label></div>
-    ${es.length ? `<ul class="list">${es.map(e => `<li><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px"><strong>${esc(e.apellidos)} ${esc(e.nombres)} ${e.piar ? '<span class="tag piar">PIAR</span>' : ''} ${ret.has(e.id) ? '<span class="tag t3">Retenido</span>' : ''}</strong>${isDoc() || ret.has(e.id) ? '' : `<button class="btn ghost sm" type="button" onclick="verBoletin('${e.id}')">Ver boletín</button> <button class="btn ghost sm" type="button" onclick="verInformeFinal('${e.id}')">Informe final</button>`}</div>
+    ${es.length ? `<ul class="list">${es.map(e => `<li><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px"><strong>${esc(e.apellidos)} ${esc(e.nombres)} ${e.piar ? '<span class="tag piar">PIAR</span>' : ''} ${ret.has(e.id) ? '<span class="tag t3">Retenido</span>' : ''}</strong>${isDoc() ? '' : ret.has(e.id) ? (['rector', 'coordinador'].includes(ctx.rol) ? `<button class="btn ghost sm" type="button" title="Entrega excepcional decidida por la rectoría o la coordinación: pide confirmación" onclick="verBoletin('${e.id}')">Entregar de todas formas</button>` : '') : `<button class="btn ghost sm" type="button" onclick="verBoletin('${e.id}')">Ver boletín</button> <button class="btn ghost sm" type="button" onclick="verInformeFinal('${e.id}')">Informe final</button>`}</div>
       <label class="field"><span>Observación del periodo ${sel.p} ${escribeObs() ? '(se guarda sola al salir de la casilla)' : '(la escribe el director(a) de grupo)'} <span class="ok" id="obok-${e.id}"></span></span><textarea id="ob-${e.id}" onchange="setObs('${e.id}',this)" ${escribeObs() ? '' : 'readonly'}>${esc(S.obs[e.id + '|' + sel.p] || '')}</textarea></label>
       ${escribeObs() ? '' : '<!--'}<select class="acc" aria-label="Agregar frase frecuente" onchange="agregarFrase('${e.id}',this.value);this.value=''"><option value="">Agregar frase frecuente…</option>${BANCO_OBS.map((f, i) => `<option value="${i}">${esc(f.length > 70 ? f.slice(0, 70) + '…' : f)}</option>`).join('')}</select>${escribeObs() ? '' : '-->'}</li>`).join('')}</ul>` : '<div class="empty">Este grupo no tiene estudiantes activos.</div>'}</div>`;
 }
 const nomArchivo = (t, e) => `${t} ${e ? e.apellidos + ' ' + e.nombres : ''} ${S.k.anio}`.replace(/\s+/g, ' ').trim();
-async function verBoletin(eid) { if (!isFam() && !(await avisoDeudaDoc(eid))) return; await guard(() => cargarFotoEst([eid])); showDocs(boletinHTML(eid, sel.p), 'Boletín', nomArchivo(`Boletín P${sel.p}`, est(eid))); }
+async function verBoletin(eid) { if (!isFam() && S.ret?.has(eid)) { if (!(await confirmar(`El boletín de ${nom(est(eid))} está retenido por pagos pendientes. ¿Entregarlo de todas formas (entrega excepcional)?${conNotas(eid, sel.p) ? '' : `\nAtención: no tiene calificaciones en el periodo ${sel.p}; el boletín saldrá con guiones.`}`, 'Sí, entregar'))) return; }
+  else if (!isFam() && !conNotas(eid, sel.p) && !(await confirmar(`${nom(est(eid))} no tiene calificaciones en el periodo ${sel.p}: el boletín saldrá con guiones. ¿Verlo de todas formas?`, 'Sí, ver'))) return; else if (!isFam() && !(await avisoDeudaDoc(eid))) return; await guard(() => cargarFotoEst([eid])); showDocs(boletinHTML(eid, sel.p), 'Boletín', nomArchivo(`Boletín P${sel.p}`, est(eid))); }
 async function imprimirBoletin(eid) { await guard(() => cargarFotoEst([eid])); lastDocs = boletinHTML(eid, sel.p); lastTitulo = nomArchivo(`Boletín P${sel.p}`, est(eid)); printDocs(); }
-async function boletinesGrupo() { const l = estsDe(sel.g).filter(e => !(S.ret || new Set()).has(e.id));
+async function boletinesGrupo() { await cargarRet(); const l = estsDe(sel.g).filter(e => !S.ret.has(e.id)); if (!l.length) { render(); return toast(S.ret.size ? 'Todos los boletines de este grupo están retenidos por pagos pendientes' : 'Este grupo no tiene estudiantes activos'); }
   const g = grupo(sel.g), as = g ? asigsDe(g) : [], sinN = as.filter(a => !l.some(e => nota(e.id, a.id, sel.p) != null));
   const incomp = g?.nivel === 'preescolar' ? [] : l.filter(e => as.some(a => nota(e.id, a.id, sel.p) == null));
   if (!sinN.length && incomp.length && !(await confirmar(`${pl(incomp.length, 'estudiante no tiene', 'estudiantes no tienen')} todas sus calificaciones del periodo ${sel.p} (por ejemplo ${incomp.slice(0, 3).map(e => nom(e)).join(', ')}). Sus boletines saldrán con guiones y un promedio calculado solo con lo que hay. ¿Generarlos de todas formas?`, 'Sí, generar'))) return;
@@ -1789,7 +1907,7 @@ function paramPermisos() {
     ${Object.entries(PERM_TXT).map(([k, [t, d]]) => `<tr><td><strong>${t}</strong><br><span class="muted">${d}</span></td>${CARGOS.map(([c]) =>
       `<td class="num"><input type="checkbox" class="pmC" data-k="${k}" data-c="${c}" aria-label="${esc(t)}: ${c}" ${permRoles(k).includes(c) ? 'checked' : ''} ${r ? '' : 'disabled'}></td>`).join('')}</tr>`).join('')}
     </tbody></table></div>
-    <p class="muted" style="margin-top:8px">Siempre: el rector(a) maneja Parametrización, Usuarios y el cierre del año; los docentes califican sus cursos; las familias solo ven lo suyo.</p>
+    <p class="muted" style="margin-top:8px">Siempre: solo el rector(a) cambia los datos del colegio, los periodos, los permisos, los directivos y cierra el año; coordinación y secretaría también organizan cursos, plan de estudios, logros y campus; los docentes califican sus cursos; las familias solo ven lo suyo.</p>
     ${r ? `<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarPermisos()">Guardar permisos</button><button class="btn ghost" type="button" onclick="permisosDefecto()">Volver a los permisos sugeridos</button></div>` : ''}</div>`;
 }
 function permisosDefecto() { document.querySelectorAll('.pmC').forEach(x => { x.checked = PERM_DEF[x.dataset.k].includes(x.dataset.c); }); toast('Se marcaron los permisos sugeridos. Pulse "Guardar permisos" para aplicarlos'); }
@@ -1870,7 +1988,7 @@ async function guardarAtencion() {
   await guardarColegio({ atencion: d }, 'Horario de atención guardado');
 }
 async function guardarColegio(d, okMsg) {
-  const r = await guard(() => uno(db.from('colegios').update(d).eq('id', S.k.id).select().single()), okMsg);
+  const r0 = await guard(() => uno(db.from('colegios').update(d).eq('id', S.k.id).select(COLS_K).single()), okMsg), r = r0 && { ...S.k, ...d, ...r0 };
   if (r) { S.k = r; ctx.colegios.nombre = r.nombre; render(); }
   return r;
 }
@@ -1879,6 +1997,9 @@ async function guardarInst() {
     web: vv('iWeb'), lema: vv('iLema'), rector_nombre: vv('iRec'), secretaria_nombre: vv('iSec'), politica_datos: vv('iPol') };
   if (!d.nombre) return toast('El nombre del colegio es obligatorio');
   { const mn = revisarNit(d.nit); if (mn) return toast(mn); }
+  if (d.dane && !/^\d{12}$/.test(d.dane.replace(/\s/g, ''))) return toast('El código DANE tiene 12 números (sin letras ni guiones). Revíselo en la resolución del colegio');
+  if (d.dane) d.dane = d.dane.replace(/\s/g, '');
+  if (d.telefono && !telOk(d.telefono)) return toast('Escriba un teléfono válido: solo números (de 7 a 13 cifras), por ejemplo 3001234567 o 6054201234');
   if (d.web) { const u = normUrl(d.web); if (!u) return toast('La página web no parece válida. Escríbala como colegio.edu.co'); d.web = u; }
   await guardarColegio(d, 'Datos guardados');
 }
@@ -2027,7 +2148,7 @@ async function guardarPeriodos() {
 }
 function paramGrupos() {
   return `<div class="panel"><div class="head" style="margin-bottom:10px"><h2 style="margin:0">Cursos</h2><button class="btn sm" type="button" onclick="formGrupo()">Nuevo curso</button></div>
-      ${S.grupos.length ? `<div class="tbl"><table><thead><tr><th>Curso</th><th>Grado</th><th>Nivel</th><th>Director(a)</th><th>Estudiantes</th><th></th></tr></thead><tbody>${S.grupos.map(g => `<tr><td><strong>${esc(g.nombre)}</strong></td><td>${gradoTxt(g.grado)}${esCiclo(g) && g.periodos?.length ? `<br><span class="muted">${semTxt(g)}</span>` : ''}</td><td>${NIVELES[g.nivel]}</td><td>${esc(g.director_nombre || '—')}</td><td>${estsDe(g.id).length}</td><td style="white-space:nowrap"><button class="btn ghost sm" type="button" onclick="formGrupo('${g.id}')">Editar</button> ${puede('matricula') && estsDe(g.id).length ? `<button class="btn ghost sm" type="button" onclick="formMoverCurso('${g.id}')">Pasar estudiantes a otro curso</button> ` : ''}<button class="btn ghost sm" type="button" onclick="borrarGrupo('${g.id}')">Eliminar</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no hay cursos.</p>'}</div>`;
+      ${S.grupos.length ? `<div class="tbl fija-der"><table><thead><tr><th>Curso</th><th>Grado</th><th>Nivel</th><th>Director(a)</th><th>Estudiantes</th><th></th></tr></thead><tbody>${S.grupos.map(g => `<tr><td><strong>${esc(g.nombre)}</strong></td><td>${gradoTxt(g.grado)}${esCiclo(g) && g.periodos?.length ? `<br><span class="muted">${semTxt(g)}</span>` : ''}</td><td>${NIVELES[g.nivel]}</td><td>${esc(g.director_nombre || '—')}</td><td>${estsDe(g.id).length}</td><td style="white-space:nowrap"><button class="btn ghost sm" type="button" onclick="formGrupo('${g.id}')">Editar</button> ${puede('matricula') && estsDe(g.id).length ? `<button class="btn ghost sm" type="button" onclick="formMoverCurso('${g.id}')">Pasar estudiantes a otro curso</button> ` : ''}<button class="btn ghost sm" type="button" onclick="borrarGrupo('${g.id}')">Eliminar</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no hay cursos.</p>'}</div>`;
 }
 
 // v0.29: cambio de curso en lote (p. ej. dividir SEXTO A en dos cursos)
@@ -2084,7 +2205,7 @@ function paramCostos() {
   return (ed ? '' : '<div class="note">Puede consultar los costos. Los cambia quien tenga el permiso "Costos y medios de pago" (Parametrización › Permisos).</div>') +
     `<div class="toolbar"><label class="field"><span>Año de los costos</span><select onchange="cambiarAnioCostos(this.value)">${[S.k.anio, S.k.anio + 1].map(a => opt(a, a === S.k.anio ? `${a} (año en curso)` : `${a} (año siguiente: matrícula en línea)`, ac)).join('')}</select></label></div>` +
     (ac > S.k.anio ? `<div class="note">Está viendo los costos de <strong>${ac}</strong>. Con ellos se arma el contrato de la matrícula en línea ${ac}. Al cerrar el año ${S.k.anio}, estos costos se conservan.</div>` : '') + `<div class="panel"><h2>Resolución de costos ${ac}</h2><p class="muted">Tarifas autorizadas por la Secretaría de Educación para el año lectivo.</p>
-    <div class="formgrid">${fIn('cRes', 'Número de resolución', c.resolucion)}${fIn('cFec', 'Fecha de la resolución', c.fecha_resolucion, 'type="date"')}${fIn('cEnt', 'Entidad que la expide', c.entidad || 'Secretaría de Educación')}${fTa('cObs', 'Observaciones', c.observaciones)}</div>
+    <div class="formgrid">${fIn('cRes', 'Número de resolución (solo el número, ej.: 2310 de 2025)', c.resolucion, 'placeholder="2310 de 2025"')}${fIn('cFec', 'Fecha de la resolución', c.fecha_resolucion, 'type="date"')}${fIn('cEnt', 'Entidad que la expide', c.entidad || 'Secretaría de Educación')}${fTa('cObs', 'Observaciones', c.observaciones)}</div>
     ${ed ? '<div class="toolbar guardar-fijo"><button class="btn" type="button" onclick="guardarResolucion()">Guardar resolución</button></div>' : ''}</div>
   ${panelMediosPago()}
   ${panelDocPrecios()}
@@ -2093,8 +2214,8 @@ function paramCostos() {
     <div class="toolbar"><label class="field"><span>Pagar hasta el día</span><select id="cDia" ${rr ? '' : 'disabled'}>${Array.from({ length: 28 }, (_, i) => opt(i + 1, i + 1, S.k.dia_limite_pago || 5)).join('')}</select></label>
     ${rr ? '<button class="btn" type="button" onclick="guardarDiaLimite()">Guardar</button>' : '<span class="muted">Sin permiso para cambiarlo.</span>'}</div></div>
   <div class="panel"><div class="head" style="margin-bottom:10px"><div><h2 style="margin:0">Conceptos de cobro ${ac}</h2><p class="muted" style="margin:4px 0 0">Los cobros mensuales se generan solo en los meses marcados. Si un grado tiene tarifa distinta, escríbala en "Valor por grado".</p></div>${ed ? '<button class="btn sm" type="button" onclick="formConcepto()">Nuevo concepto</button>' : ''}</div>
-    ${conceptos.length ? `<div class="tbl"><table><thead><tr><th>Concepto</th><th>Tipo</th><th>Cobro</th><th>Valor</th><th>Por grado</th><th>Estado</th><th></th></tr></thead><tbody>
-    ${conceptos.map(x => `<tr class="${x.activo ? '' : 'dim'}"><td><strong>${esc(x.nombre)}</strong></td><td>${TIPOS_COSTO[x.tipo]}</td><td>${x.periodicidad === 'mensual' ? `Mensual: ${x.meses.map(m => MESES[m].slice(0, 3)).join(', ')} (${x.meses.length} cuotas)` : `Único en ${MESES[x.mes_cobro]}`}</td><td>${cop(x.valor)}</td>
+    ${conceptos.length ? `<div class="tbl fija-der"><table><thead><tr><th>Concepto</th><th>Tipo</th><th>Cobro</th><th>Valor</th><th>Por grado</th><th>Estado</th><th></th></tr></thead><tbody>
+    ${conceptos.map(x => `<tr class="${x.activo ? '' : 'dim'}"><td><strong>${esc(x.nombre)}</strong></td><td>${TIPOS_COSTO[x.tipo]}</td><td>${x.periodicidad === 'mensual' ? `Mensual: ${x.meses.map(m => MESES[m].slice(0, 3)).join(', ')} (${x.meses.length} cuotas)` : `Único en ${MESES[x.mes_cobro]}`}</td><td>${cop(x.valor)}${x.cambio_nombre ? `<br><span class="muted" style="font-size:.8rem">Cambió: ${esc(x.cambio_nombre)}, ${fmtF(x.cambio_en)}</span>` : ''}</td>
       <td>${Object.keys(x.valores_grado || {}).length ? Object.entries(x.valores_grado).map(([g, v]) => `${gradoTxt(+g)}: ${cop(v)}`).join('<br>') : '<span class="muted">Igual para todos</span>'}</td><td>${x.activo ? 'Activo' : 'Inactivo'}</td>
       <td style="white-space:nowrap">${ed ? `<button class="btn ghost sm" type="button" onclick="formConcepto('${x.id}')">Editar</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no hay conceptos para este año.</p>'}
     ${gradosUsados.length ? '' : '<p class="muted">Cree primero los cursos para poder fijar valores por grado.</p>'}</div>`;
@@ -2118,19 +2239,24 @@ function formConcepto(id) {
     ${fIn('kNom', 'Nombre', x.nombre)}
     <label class="field"><span>Tipo</span><select id="kTipo">${Object.entries(TIPOS_COSTO).map(([v, l]) => opt(v, l, x.tipo)).join('')}</select></label>
     <label class="field"><span>Se cobra</span><select id="kPer" onchange="document.getElementById('kMeses').hidden=this.value!=='mensual';document.getElementById('kMesU').hidden=this.value==='mensual'">${opt('unico', 'Una sola vez', x.periodicidad)}${opt('mensual', 'Cada mes (cuotas)', x.periodicidad)}</select></label>
-    ${fIn('kVal', 'Valor general', x.valor, 'type="number" min="0" step="1000"')}
+    ${fIn('kVal', 'Valor general', x.valor, DIN)}
     <label class="field" id="kMesU" ${x.periodicidad === 'mensual' ? 'hidden' : ''}><span>Mes en que se cobra (este cobro único vence ese mes)</span><select id="kMes">${MESES.slice(1).map((m, i) => opt(i + 1, m, x.mes_cobro)).join('')}</select></label>
     <label class="field chk"><input id="kAct" type="checkbox" ${x.activo ? 'checked' : ''}> Activo <span class="muted">(desmárquelo para dejar de cobrarlo este año sin borrar lo ya pagado)</span></label></div>
     <div id="kMeses" ${x.periodicidad === 'mensual' ? '' : 'hidden'}><h3 style="margin-top:12px">Meses en que se cobra</h3><div class="toolbar">${MESES.slice(1).map((m, i) => `<label class="chk"><input type="checkbox" class="kMesChk" value="${i + 1}" ${x.meses.includes(i + 1) ? 'checked' : ''}> ${m.slice(0, 3)}</label>`).join('')}</div></div>
-    ${grados.length ? `<h3 style="margin-top:12px">Valor por grado (opcional)</h3><p class="muted">Déjelo vacío para usar el valor general.</p><div class="formgrid">${grados.map(g => `<label class="field"><span>${gradoEtq(g)}</span><input type="number" min="0" step="1000" class="kGr" data-g="${g}" value="${x.valores_grado?.[g] ?? ''}"></label>`).join('')}</div>` : ''}
+    ${grados.length ? `<h3 style="margin-top:12px">Valor por grado (opcional)</h3><p class="muted">Déjelo vacío para usar el valor general.</p>${(() => { const cg = g => `<label class="field"><span>${gradoEtq(g)}</span><input ${DIN} class="kGr" data-g="${g}" value="${x.valores_grado?.[g] ?? ''}"></label>`, si = grados.filter(conCurso), no = grados.filter(g => !conCurso(g));
+      return `<div class="formgrid">${si.map(cg).join('')}</div>${no.length ? `<details style="margin-top:8px"${no.some(g => x.valores_grado?.[g] != null) ? ' open' : ''}><summary class="muted">Grados que el colegio aún no tiene (${no.length})</summary><div class="formgrid">${no.map(cg).join('')}</div></details>` : ''}`; })()}` : ''}
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarConcepto('${id || ''}')">Guardar</button></div>`);
 }
-async function guardarConcepto(id) {
-  const vg = {}; document.querySelectorAll('.kGr').forEach(i => { if (i.value !== '') vg[i.dataset.g] = +i.value; });
+async function guardarConcepto(id) { if (dinMalEn()) return;
+  const vg = {}; document.querySelectorAll('.kGr').forEach(i => { if (dinV(i) !== '') vg[i.dataset.g] = +dinV(i); });
   const d = { nombre: vv('kNom'), tipo: vv('kTipo'), periodicidad: vv('kPer'), valor: +vv('kVal') || 0, valores_grado: vg, mes_cobro: +vv('kMes') || 2,
     meses: [...document.querySelectorAll('.kMesChk:checked')].map(i => +i.value), activo: vv('kAct') };
   if (!d.nombre) return toast('Escriba el nombre del concepto');
   if (vv('kVal') === '' && !Object.keys(vg).length) return toast('Escriba el valor del concepto (si es gratis, escriba 0)');
+  // v0.34: valores fuera de lo normal (un cero de más) se confirman; más de $100.000.000 no se acepta
+  const vMax = Math.max(d.valor, ...Object.values(vg));
+  if (vMax > 100000000) return toast('Ese valor es demasiado alto para un cobro escolar (máximo $100.000.000). Revise los ceros');
+  if (vMax > 10000000 && !(await confirmar(`El valor ${cop(vMax)} es muy alto para un cobro escolar. ¿Lo escribió bien?`, 'Sí, es correcto'))) return;
   // v0.31: cambiar el valor recalcula lo que deben todas las familias: se avisa
   const old = id ? conceptos.find(c => c.id === id) : null;
   if (old && +old.valor > 0 && (+old.valor !== d.valor || JSON.stringify(old.valores_grado || {}) !== JSON.stringify(vg)) && !(await confirmar(`Cambiar el valor de «${old.nombre}» cambia lo que deben todas las familias en los meses que aún no han pagado (lo ya pagado no cambia). ¿Continuar?`, 'Sí, cambiar'))) return;
@@ -2175,17 +2301,20 @@ function setCierre(id, k, v) { const c = cierre.find(x => x.id === id); if (!c) 
 // Promovidos que quedarían en el mismo curso porque no existe el curso del grado siguiente
 function sinCursoSiguiente() { return cierre.filter(c => c.resultado === 'Promovido' && (!c.destino || c.destino === est(c.id)?.grupo_id)); }
 async function confirmarCierre() {
-  const n = cierre.length, hoyD = new Date();
-  if (hoyD.getFullYear() === S.k.anio && hoyD.getMonth() < 11 && !await confirmar(`El año lectivo ${S.k.anio} termina el 31 de diciembre y aún no estamos en diciembre. ¿Desea cerrarlo de todas formas?`)) return;
+  // v0.34: una sola ventana con todos los avisos (antes eran hasta cuatro seguidas); con avisos hay que escribir CERRAR
+  const n = cierre.length, hoyD = new Date(), av = [];
+  if (hoyD.getFullYear() === S.k.anio && hoyD.getMonth() < 11) av.push(`El año lectivo ${S.k.anio} termina el 31 de diciembre y aún no estamos en diciembre.`);
   const sc = sinCursoSiguiente().length;
-  if (sc && !await confirmar(`${sc} estudiante(s) promovido(s) quedarían en el mismo curso porque no hay curso del grado siguiente. ¿Desea cerrar el año de todas formas?`)) return;
+  if (sc) av.push(`${sc} estudiante(s) promovido(s) quedarían en el mismo curso porque no hay curso del grado siguiente.`);
   const inc = cierre.filter(c => faltaAnio(c.id).incompleto).length, ab = periodos().filter(p => !perPublicado(null, p.n));
-  if ((inc || ab.length) && !await confirmarEscribiendo(`${ab.length ? `Hay ${ab.length === 1 ? 'un periodo que aún no ha cerrado' : ab.length + ' periodos que aún no han cerrado'} (${ab.map(p => 'P' + p.n).join(', ')}). ` : ''}${inc ? `${inc} de ${n} estudiantes no tienen todas sus calificaciones, y aun así quedarían promovidos, no promovidos o graduados según la propuesta. ` : ''}Esta acción no se puede deshacer.`, 'CERRAR', 'Sí, cerrar el año')) return;
+  if (ab.length) av.push(`Hay ${ab.length === 1 ? 'un periodo que aún no ha cerrado' : ab.length + ' periodos que aún no han cerrado'} (${ab.map(p => 'P' + p.n).join(', ')}).`);
+  if (inc) av.push(`${inc} de ${n} estudiantes no tienen todas sus calificaciones, y aun así quedarían promovidos, no promovidos o graduados según la propuesta.`);
   const exP = await q(db.from('excusas').select('id').eq('colegio_id', ctx.colegio_id).eq('estado', 'Pendiente')).catch(() => []);   // v0.33
   const coP = await q(db.from('correcciones').select('id').eq('colegio_id', ctx.colegio_id).eq('estado', 'Pendiente')).catch(() => []);
   const pend = [exP.length ? pl(exP.length, 'excusa sin revisar', 'excusas sin revisar') : '', coP.length ? pl(coP.length, 'solicitud de corrección de calificaciones sin atender', 'solicitudes de corrección de calificaciones sin atender') : ''].filter(Boolean);
-  if (pend.length && !await confirmar(`Antes de cerrar, quedan pendientes: ${pend.join(' y ')}. Después del cierre ya no afectan el año ${S.k.anio}. ¿Cerrar de todas formas?`, 'Sí, cerrar')) return;
-  if (!await confirmar(`Se cerrará el año ${S.k.anio} para ${pl(n, 'estudiante', 'estudiantes')} y el colegio pasará al año ${S.k.anio + 1}. ¿Continuar?`)) return;
+  if (pend.length) av.push(`Quedan pendientes: ${pend.join(' y ')}. Después del cierre ya no afectan el año ${S.k.anio}.`);
+  const fin = `Se cerrará el año ${S.k.anio} para ${pl(n, 'estudiante', 'estudiantes')} y el colegio pasará al año ${S.k.anio + 1}. Esta acción no se puede deshacer.`;
+  if (av.length ? !await confirmarEscribiendo(`Antes de cerrar, revise:\n• ${av.join('\n• ')}\n\n${fin}`, 'CERRAR', 'Sí, cerrar el año') : !await confirmar(fin, 'Sí, cerrar el año')) return;
   const dec = cierre.map(c => ({ estudiante_id: c.id, resultado: c.resultado, grupo_destino: c.destino || '' }));
   const r = await guard(() => q(db.rpc('cerrar_anio', { p_colegio: ctx.colegio_id, p_decisiones: dec })));
   if (r) { sel.ptab = 'inst'; cierre = []; try { sessionStorage.setItem('genesis:ir', 'inicio'); } catch {} toast(`Año cerrado. Bienvenido al año ${r.nuevo_anio}`); await entrarContexto(ctx.id); }
@@ -2217,7 +2346,7 @@ const gradosTxt = a => a.grados?.length ? a.grados.slice().sort((x, y) => x - y)
 function planHTML(n) {
   const as = S.asigs.filter(a => a.nivel === n).sort((a, b) => a.orden - b.orden), tipo = n === 'preescolar' ? 'dimensión' : 'asignatura';
   const ya = new Set(as.map(a => a.nombre.toLowerCase()));
-  return `<div class="tbl"><table><thead><tr><th>Nombre</th><th>Horas por semana</th><th>Grados</th><th title="Orden en que aparece en boletines, planillas y certificados">Posición en el boletín</th><th></th></tr></thead><tbody>
+  return `<div class="tbl fija-der"><table><thead><tr><th>Nombre</th><th>Horas por semana</th><th>Grados</th><th title="Orden en que aparece en boletines, planillas y certificados">Posición en el boletín</th><th></th></tr></thead><tbody>
     ${as.map((a, i) => `<tr><td><input value="${esc(a.nombre)}" maxlength="80" onchange="editAsig('${a.id}',{nombre:this.value.trim()})"></td><td><input type="number" min="0" max="40" value="${a.ih}" style="width:70px" onchange="editAsig('${a.id}',{ih:+this.value},this)"></td>
       <td><button class="linkbtn" type="button" onclick="formGradosAsig('${a.id}')">${esc(gradosTxt(a))}</button></td><td style="white-space:nowrap"><button class="btn ghost sm" type="button" title="Subir" aria-label="Subir ${esc(a.nombre)}" ${i ? '' : 'disabled'} onclick="moverAsig('${a.id}',-1)">▲</button> <button class="btn ghost sm" type="button" title="Bajar" aria-label="Bajar ${esc(a.nombre)}" ${i < as.length - 1 ? '' : 'disabled'} onclick="moverAsig('${a.id}',1)">▼</button></td><td><button class="btn ghost sm" type="button" onclick="borrarAsig('${a.id}')">Eliminar</button></td></tr>`).join('') || `<tr><td colspan="5" class="muted">Aún no hay ${tipo === 'dimensión' ? 'dimensiones' : 'asignaturas'} en este nivel.</td></tr>`}
   </tbody></table></div>
@@ -2346,7 +2475,10 @@ async function prepPagos() {
     q(db.rpc('cartera', { p_colegio: ctx.colegio_id, p_anio: anioCartera() })),
     all(() => db.from('acudientes').select('estudiante_id,nombres,telefono,responsable_pago,orden').eq('colegio_id', ctx.colegio_id).order('estudiante_id').order('orden')),
   ]);
-  cartera = c; S.acud = a; await cargarBecas(anioCartera());
+  // v0.34: por grado (de preescolar a once y luego los ciclos), como en el resto de la app, y por apellido dentro del curso
+  const gO = new Map(S.grupos.map(g => [g.nombre, g])), oG = n => { const g = gO.get(n); return g ? g.grado : 999; };
+  cartera = c.slice().sort((x, y) => oG(x.grupo) - oG(y.grupo) || String(x.grupo || '').localeCompare(String(y.grupo || ''), 'es') || String(x.nombre).localeCompare(String(y.nombre), 'es'));
+  S.acud = a; await cargarBecas(anioCartera());
   // v0.32.1: después del cierre, la deuda del año anterior se ve también desde el año en curso
   S.prevCart = null;
   if (anioCartera() === S.k.anio && S.k.anio - 1 >= new Date(S.k.creado_en || Date.now()).getFullYear()) {
@@ -2377,17 +2509,17 @@ function vPagos() {
     `<div class="stats"><div class="stat"><div class="n">${cop(tot('pagado'))}</div><div class="l">Recaudado (matrícula, pensiones y cobros)</div></div>${S.docsCobrados ? `<div class="stat"><div class="n">${cop(S.docsCobrados)}</div><div class="l">Documentos cobrados en el año (en «Documentos pedidos»)</div></div>` : ''}
       <div class="stat"><div class="n">${cop(tot('saldo_vencido'))}</div><div class="l">Saldo vencido</div></div>
       <div class="stat"><div class="n">${cop(tot('saldo_total'))}</div><div class="l">Saldo total del año</div></div>
-      <div class="stat"><div class="n">${cartera.filter(x => +x.saldo_vencido > 0 && !acuerdoDe(x.estudiante_id)).length}</div><div class="l">Estudiantes en mora</div></div>
+      <div class="stat"><div class="n">${cartera.filter(x => +x.saldo_vencido > 0 && !(acuerdoDe(x.estudiante_id) && acuerdoDe(x.estudiante_id).aprobado !== false)).length}</div><div class="l">Estudiantes en mora <span class="muted">(sin acuerdo aprobado)</span></div></div>
       <div class="stat"><div class="n">${cartera.filter(x => acuerdoDe(x.estudiante_id)?.aprobado !== false && acuerdoDe(x.estudiante_id)).length}</div><div class="l">Con acuerdo de pago aprobado</div></div></div>
     <div class="panel"><div class="toolbar">
       <label class="field"><span>Año</span><select onchange="cambiarAnioCartera(this.value)">${[...(anioSig() ? [-1] : []), 0, 1, 2, 3].map(i => S.k.anio - i).filter(a => a >= new Date(S.k.creado_en || Date.now()).getFullYear()).map(a => opt(a, a, anioCartera())).join('')}</select></label>
       <label class="field"><span>Curso</span><select onchange="sel.pg=this.value;render()"><option value="">Todos</option>${[...new Set(cartera.map(x => x.grupo).filter(Boolean))].map(g => opt(g, g, fg)).join('')}</select></label>
       <label class="field"><span>Buscar</span><input type="search" id="pqBus" value="${esc(sel.pq || '')}" placeholder="Nombre o documento" oninput="buscarCartera(this.value)"></label>
       <label class="chk"><input type="checkbox" ${solo ? 'checked' : ''} onchange="sel.pmora=this.checked;render()"> Solo con saldo vencido</label></div>
-    ${l.length ? `<div class="tbl"><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Cobrado</th><th>Pagado</th><th title="Cuotas que ya pasaron su fecha límite de pago">Vencido</th><th>Saldo del año</th><th></th></tr></thead><tbody>
-      ${l.map(x => `<tr class="${x.estado === 'Activo' ? '' : 'dim'}"><td><strong>${esc(x.nombre)}</strong>${est(x.estudiante_id)?.doc ? ` <span class="muted">${esc(est(x.estudiante_id).tipo_doc || '')} ${esc(est(x.estudiante_id).doc)}</span>` : ''}${x.estado !== 'Activo' ? ` <span class="tag">${x.estado}</span>` : ''}${acuerdoDe(x.estudiante_id) ? (acuerdoDe(x.estudiante_id).aprobado === false ? ' <span class="tag t3">Acuerdo sin visto bueno</span>' : ' <span class="tag t2">Con acuerdo de pago</span>') : ''}${becasDe(x.estudiante_id).length ? ` <span class="tag t2" title="${esc(becasDe(x.estudiante_id).map(b => b.tipo + ': ' + becaTxt(b)).join('; '))}">${esc(becasDe(x.estudiante_id)[0].tipo)}</span>` : ''}</td><td>${esc(x.grupo || '—')}</td><td>${cop(x.cobrado)}</td><td>${cop(x.pagado)}</td>
+    ${l.length ? `<div class="tbl fija-der"><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Cobrado</th><th>Pagado</th><th title="Cuotas que ya pasaron su fecha límite de pago">Vencido</th><th>Saldo del año</th><th></th></tr></thead><tbody>
+      ${l.map(x => `<tr class="${x.estado === 'Activo' ? '' : 'dim'}"><td><strong>${esc(x.nombre)}</strong>${est(x.estudiante_id)?.doc ? ` <span class="muted cart-doc">${esc(est(x.estudiante_id).tipo_doc || '')} ${esc(est(x.estudiante_id).doc)}</span>` : ''}${x.estado !== 'Activo' ? ` <span class="tag">${x.estado}</span>` : ''}${acuerdoDe(x.estudiante_id) ? (acuerdoDe(x.estudiante_id).aprobado === false ? ' <span class="tag t3">Acuerdo sin visto bueno</span>' : ' <span class="tag t2">Con acuerdo de pago</span>') : ''}${becasDe(x.estudiante_id).length ? ` <span class="tag t2" title="${esc(becasDe(x.estudiante_id).map(b => b.tipo + ': ' + becaTxt(b)).join('; '))}">${esc(becasDe(x.estudiante_id)[0].tipo)}</span>` : ''}</td><td>${esc(x.grupo || '—')}</td><td>${cop(x.cobrado)}</td><td>${cop(x.pagado)}</td>
         <td>${+x.saldo_vencido > 0 ? `<strong style="color:var(--red)">${cop(x.saldo_vencido)}</strong>` : cop(0)}</td><td>${cop(x.saldo_total)}</td>
-        <td style="white-space:nowrap"><button class="btn sm" type="button" onclick="abrirCuenta('${x.estudiante_id}', ${anioCartera()})">${manejaPagos() ? 'Ver y registrar pago' : 'Ver estado de cuenta'}</button> ${+x.saldo_vencido > 0 ? avisoMora(x) : ''}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty">${conceptosVacios()}</div>`}</div>`;
+        <td><div class="acc-btns"><button class="btn sm" type="button" onclick="abrirCuenta('${x.estudiante_id}', ${anioCartera()})">${manejaPagos() ? 'Ver y registrar pago' : 'Ver estado de cuenta'}</button> ${+x.saldo_vencido > 0 ? avisoMora(x) : ''}</div></td></tr>`).join('')}</tbody></table></div>` : `<div class="empty">${conceptosVacios()}</div>`}</div>`;
 }
 // la búsqueda filtra mientras se escribe (sin perder el primer clic en «Ver y registrar pago» ni lo escrito)
 let tBusCart = 0;
@@ -2424,10 +2556,10 @@ function tablaCuenta(conCheck) {
   // La familia ve lo pagado y lo pendiente a hoy; no se le muestran las cuotas futuras (no presionar)
   const mesHoy = +hoy().slice(5, 7), anioHoy = +hoy().slice(0, 4), an = cuenta.anio || S.k.anio;
   const f = isFam() ? cuenta.filas.filter(x => x.vencido || +x.pagado > 0 || an < anioHoy || (an === anioHoy && (x.mes || 1) <= mesHoy)) : cuenta.filas;
-  return f.length ? `<div class="tbl"><table><thead><tr>${conCheck ? '<th></th>' : ''}<th>Concepto</th><th>Mes</th><th>Valor</th><th>Pagado</th><th>Saldo</th></tr></thead><tbody>
-    ${f.map((x, i) => `<tr>${conCheck ? `<td>${+x.saldo > 0 ? `<input type="checkbox" class="cuotaChk" value="${i}" aria-label="Pagar ${esc(x.concepto)} ${MESES[x.mes]}">` : ''}</td>` : ''}
-      <td>${esc(x.concepto)}</td><td>${MESES[x.mes]}</td><td>${cop(x.valor)}</td><td>${cop(x.pagado)}</td>
-      <td>${+x.saldo > 0 ? `<strong style="color:${x.vencido ? 'var(--red)' : 'inherit'}">${cop(x.saldo)}</strong>${x.vencido ? ` <span class="tag t3">${isFam() ? 'Pendiente por pagar' : 'Vencido'}</span>` : ''}` : '<span class="tag">Pagado</span>'}</td></tr>`).join('')}
+  return f.length ? `<div class="tbl fija-der${conCheck ? ' fija-2' : ''}"><table><thead><tr>${conCheck ? '<th></th>' : ''}<th>Concepto</th><th>Mes</th><th>Vence</th><th>Valor</th><th>Pagado</th><th>Saldo</th></tr></thead><tbody>
+    ${f.map((x, i) => { const ve = venceEf(x, an, est(cuenta.eid)), hoyV = +x.saldo > 0 && !x.vencido && ve <= hoy(); return `<tr>${conCheck ? `<td>${+x.saldo > 0 ? `<input type="checkbox" class="cuotaChk" value="${i}" aria-label="Pagar ${esc(x.concepto)} ${MESES[x.mes]}">` : ''}</td>` : ''}
+      <td>${esc(x.concepto)}</td><td>${['matricula', 'seguro', 'carnet'].includes(x.tipo) ? `Única <span class="muted">(${MESES[x.mes].toLowerCase()})</span>` : MESES[x.mes]}</td><td style="white-space:nowrap">${fmtF(ve)}</td><td>${cop(x.valor)}</td><td>${cop(x.pagado)}</td>
+      <td>${+x.saldo > 0 ? `<strong style="color:${x.vencido ? 'var(--red)' : 'inherit'}">${cop(x.saldo)}</strong>${x.vencido ? ` <span class="tag t3">${isFam() ? 'Pendiente por pagar' : 'Vencido'}</span>` : hoyV ? ' <span class="tag t2">Vence hoy</span>' : ''}` : '<span class="tag">Pagado</span>'}</td></tr>`; }).join('')}
     </tbody></table></div>` : `<p class="muted">${isFam() ? 'No tiene cobros a la fecha.' : 'No hay cobros para este estudiante en el año.'}</p>`;
 }
 const nomConcepto = x => { const c = conceptos.find(k => k.id === x.concepto_id) || cuenta.filas.find(k => k.concepto_id === x.concepto_id); return `${c?.nombre || c?.concepto || 'Pago'}${x.mes ? ' ' + MESES[x.mes] : ''}`; };
@@ -2447,15 +2579,20 @@ function tablaPagos(conAcciones) {
 }
 window.modalCuenta = (...a) => modalCuenta(...a);   // v0.31: lo usan botones «Volver» dentro de ventanas
 // v0.31: una sola regla de «vencido a hoy» en todas las pantallas (estado de cuenta, hijos, tesorería, paz y salvo)
-function esVenc(x, anio) { const mH = +hoy().slice(5, 7), aH = +hoy().slice(0, 4), a = anio || S.k.anio; return +x.saldo > 0 && (x.vencido || a < aH || (a === aH && (x.mes || 1) < mH)); }   // «debe a la fecha»: la misma regla que el paz y salvo del servidor (priv.debe_a_hoy)
+// v0.34: «debe a la fecha» = lo vencido (pasada la fecha límite) + lo que ya llegó a su fecha límite normal (vence hoy), también para quien se matriculó hoy.
+// Es la misma regla del servidor (priv.debe_a_hoy). «Vencido» (mora, bloqueo) es solo lo que pasó su fecha límite.
+const fechaNominal = (x, a) => `${a}-${String(x.mes || 1).padStart(2, '0')}-${String(Math.min(S.k.dia_limite_pago || 5, 28)).padStart(2, '0')}`;
+// fecha límite real de una cuota: la normal, o la fecha de matrícula si es posterior (el que entra a mitad de año); como priv.cuenta_base
+const venceEf = (x, a, e) => { const n = fechaNominal(x, a), fm = e?.fecha_matricula && +String(e.fecha_matricula).slice(0, 4) === +a && !(e.al_dia_hasta && +String(e.al_dia_hasta).slice(0, 4) === +a) ? String(e.fecha_matricula).slice(0, 10) : ''; return fm > n ? fm : n; };
+function esVenc(x, anio) { const aH = +hoy().slice(0, 4), a = +(anio || S.k.anio); return +x.saldo > 0 && (x.vencido || a < aH || (a === aH && fechaNominal(x, a) <= hoy())); }
 function modalCuenta() {
   const e = est(cuenta.eid), saldo = cuenta.filas.reduce((a, x) => a + +x.saldo, 0), venc = cuenta.filas.filter(x => esVenc(x, cuenta.anio)).reduce((a, x) => a + +x.saldo, 0);
   const previo = saldoPrevio(), otro = cuenta.anio !== S.k.anio;
   openModal(`Estado de cuenta ${cuenta.anio}: ${nom(e)}`, `${previo > 0 ? `<div class="note bloqueo">Tiene saldos pendientes de años anteriores por <strong>${cop(previo)}</strong>: ${aniosConDeuda().map(a => `${a}: ${cop(cuenta.prevFilas.filter(x => x.anioCobro === a).reduce((s, x) => s + +x.saldo, 0))} <button class="linkbtn" type="button" onclick="abrirCuenta('${cuenta.eid}', ${a})">ver y registrar pago</button>`).join(' · ')}</div>` : ''}
-    ${otro ? `<div class="note">Está viendo el año <strong>${cuenta.anio}</strong>. Los pagos que registre aquí se aplican a ese año. <button class="linkbtn" type="button" onclick="abrirCuenta('${cuenta.eid}')">Volver a ${S.k.anio}</button></div>` : ''}<p class="muted">${esc(grupo(e.grupo_id)?.nombre || '')} · Debe a la fecha: <strong style="color:${venc ? 'var(--red)' : 'inherit'}">${cop(venc)}</strong>${(() => { const vs = cuenta.filas.filter(x => x.vencido).reduce((a, x) => a + +x.saldo, 0); return vs !== venc ? ` <span class="muted">(vencido, pasada la fecha límite: ${cop(vs)}; el resto vence hoy o en estos días)</span>` : ''; })()} · Saldo del año: <strong>${cop(saldo)}</strong>${e.estado !== 'Activo' ? ` · ${e.estado}${e.fecha_retiro ? ' el ' + fmtF(e.fecha_retiro) : ''}` : ''}</p>
+    ${otro ? `<div class="note">Está viendo el año <strong>${cuenta.anio}</strong>. Los pagos que registre aquí se aplican a ese año. <button class="linkbtn" type="button" onclick="abrirCuenta('${cuenta.eid}')">Volver a ${S.k.anio}</button></div>` : ''}<p class="muted">${esc(grupo(e.grupo_id)?.nombre || '')} · Debe a la fecha: <strong style="color:${venc ? 'var(--red)' : 'inherit'}">${cop(venc)}</strong>${(() => { const vs = cuenta.filas.filter(x => x.vencido).reduce((a, x) => a + +x.saldo, 0); return vs !== venc ? ` <span class="muted">(vencido, pasada la fecha límite: ${cop(vs)}; vence hoy: ${cop(venc - vs)}, queda vencido desde mañana si no se paga${e.fecha_matricula === hoy() ? '. A quien se matricula hoy, lo atrasado le vence hoy' : ''})</span>` : ''; })()} · Saldo del año: <strong>${cop(saldo)}</strong>${e.estado !== 'Activo' ? ` · ${e.estado}${e.fecha_retiro ? ' el ' + fmtF(e.fecha_retiro) : ''}` : ''}</p>
     ${manejaPagos() ? `<h3>Registrar pago</h3>
     <p class="muted">Escriba el valor que le entregan. Colegio-IA lo aplica solo, empezando por las cuotas más antiguas.</p>
-    <div class="formgrid">${fIn('pVal', 'Valor recibido', '', 'type="number" min="1" oninput="previewPago()"')}${fIn('pFec', 'Fecha', hoy(), 'type="date"')}
+    <div class="formgrid">${fIn('pVal', 'Valor recibido', '', DIN + ' oninput="previewPago()"')}${fIn('pFec', 'Fecha', hoy(), 'type="date"')}
       <label class="field"><span>Medio de pago</span><select id="pMed">${['Efectivo', 'Transferencia', 'Llave Bre-B', 'Consignación', 'Tarjeta', 'Nequi', 'Daviplata', 'PSE', 'Bold (en línea)', 'Otro'].map(x => opt(x, x)).join('')}</select></label>
       ${fIn('pRef', 'Referencia o comprobante (opcional)', '')}</div>
     ${cuenta.filas.filter(x => +x.saldo > 0).length > 1 ? `<details class="pCuotasBox" style="margin-top:8px"><summary>Aplicar a cuotas específicas (opcional)</summary><div class="cuotas">${cuenta.filas.filter(x => +x.saldo > 0).map(x => `<label class="chk"><input type="checkbox" class="pCuota" data-k="${x.concepto_id}|${x.mes ?? ''}" onchange="previewPago()"> ${esc(x.concepto)}${x.tipo === 'pension' && x.mes ? ' ' + MESES[x.mes] : ''}: ${cop(x.saldo)}${x.vencido ? ' <span class="tag t3">Vencida</span>' : ''}</label>`).join('')}</div><p class="muted">Si no marca ninguna, el pago se aplica a las más antiguas.</p></details>` : ''}
@@ -2478,13 +2615,14 @@ function repartirPago(valor) {
 }
 function previewPago() {
   const v = +vv('pVal') || 0, el = $('#pPrev'); if (!el) return;
+  if (vv('pVal') === 'NaN') { el.innerHTML = '<strong style="color:var(--red)">Corrija el valor recibido (vea el aviso debajo del campo).</strong>'; return; }
   if (v <= 0) { el.innerHTML = ''; return; }
   const { out, resto } = repartirPago(v);
   if (cuenta.anio === S.k.anio && saldoPrevio() > 0) { el.innerHTML = `Este estudiante debe ${cop(saldoPrevio())} de años anteriores: al registrar, el pago se aplica primero a esa deuda.`; return; }   // v0.32
-  el.innerHTML = out.length ? `Se aplicará a: ${out.map(({ x, v }) => `${esc(x.concepto)} ${MESES[x.mes] || ''} ${cop(v)}${v < +x.saldo ? ' (abono)' : ''}`).join(', ')}.${resto > 0 ? ` <strong style="color:var(--red)">Sobran ${cop(resto)}: el valor supera lo que debe en el año.</strong>` : ''}` : 'No hay cuotas pendientes.';
+  el.innerHTML = out.length ? `Se aplicará a: ${out.map(({ x, v }) => `${esc(x.concepto)} ${MESES[x.mes] || ''} ${cop(v)}${v < +x.saldo ? ' (abono)' : ''}`).join(', ')}.${resto > 0 ? ` <strong style="color:var(--red)">Sobran ${cop(resto)}: el valor supera ${document.querySelector('.pCuota:checked') ? 'el saldo de las cuotas marcadas' : 'lo que debe en el año'}.</strong>` : ''}` : 'No hay cuotas pendientes.';
 }
 let registrandoPago = false, compPend = null; // compPend: comprobante de la familia que se confirma al registrar el pago
-async function registrarPago() {
+async function registrarPago() { if (dinMalEn()) return;
   if (registrandoPago) return;   // un doble clic no registra el pago dos veces
   registrandoPago = true;
   try { await registrarPago0(); } finally { registrandoPago = false; }
@@ -2496,12 +2634,14 @@ async function registrarPago0() {
   if (cuenta.anio === S.k.anio && saldoPrevio() > 0) {
     const a0 = Math.min(...aniosConDeuda()), s0 = cuenta.prevFilas.filter(x => x.anioCobro === a0).reduce((s, x) => s + +x.saldo, 0);
     if (await confirmar(`Este estudiante debe ${cop(saldoPrevio())} de años anteriores (${aniosConDeuda().join(', ')}). Los pagos se aplican primero a lo más antiguo.\n¿Aplicar este pago a la deuda de ${a0} (${cop(s0)})?${valor > s0 ? `\nEl valor supera esa deuda: registre aquí ${cop(s0)} y el resto después en el año siguiente.` : ''}`, `Sí, aplicar a ${a0}`)) {
-      if (valor > s0) { const el = $('#pVal'); if (el) el.value = s0; return toast(`Quedó escrito ${cop(s0)}, lo que se debe de ${a0}. Oprima de nuevo «Registrar pago» y luego registre el resto.`); }
+      if (valor > s0) { const el = $('#pVal'); if (el) el.value = nf(s0); return toast(`Quedó escrito ${cop(s0)}, lo que se debe de ${a0}. Oprima de nuevo «Registrar pago» y luego registre el resto.`); }
       await guard(() => cargarCuenta(cuenta.eid, a0));
       return registrarPago0();
     }
     if (!(await confirmar('¿Aplicar el pago al año en curso y dejar la deuda anterior pendiente?', 'Sí, al año en curso'))) return;
   }
+  // v0.34: fechas imposibles (años atrás o más de un mes adelante) no se aceptan; la base también las rechaza
+  { const f = vv('pFec'), lim = sumarDias(hoy(), 31); if (!fechaReal(f)) return toast('Escriba la fecha del pago'); if (f < `${(cuenta.anio || S.k.anio) - 1}-01-01`) return toast(`La fecha del pago (${fmtF(f)}) es demasiado antigua para un cobro de ${cuenta.anio || S.k.anio}. Revísela`); if (f > lim) return toast('La fecha del pago no puede ser de más de un mes adelante. Revísela'); }
   if (fFuturo(vv('pFec')) && !(await confirmar(`La fecha del pago (${fmtF(vv('pFec'))}) es posterior a hoy. ¿Es correcta?`, 'Sí, es correcta'))) return;
   const { out, resto } = repartirPago(valor);
   if (!out.length) return toast('Este estudiante no tiene cuotas pendientes');
@@ -2578,7 +2718,7 @@ function vCuenta() {
     `<div class="stats"><div class="stat"><div class="n" style="color:${debeHoy ? 'var(--red)' : 'var(--teal-d)'}">${cop(debeHoy)}</div><div class="l">${acuOk ? `A pagar hoy según su acuerdo de pago${debeHoy0 ? ` (deuda total incluida en el acuerdo: ${cop(debeHoy0)}; vea abajo las cuotas y fechas)` : ''}` : debeHoy ? (acuOk ? '' : `Pendiente por pagar a hoy${previo > 0 ? ' (incluye años anteriores)' : ''}`) : 'Está al día'}</div></div>
       <div class="stat"><div class="n">${cop(cuenta.filas.reduce((a, x) => a + +x.pagado, 0))}</div><div class="l">Pagado en el año</div></div>
       ${(() => { const px = cuenta.filas.filter(x => !x.vencido && +x.saldo > 0).sort((a, b) => vence(a).localeCompare(vence(b)))[0]; return px ? `<div class="stat"><div class="n">${cop(px.saldo)}</div><div class="l">Próxima cuota: ${esc(px.concepto)}${px.mes && px.tipo === 'pension' ? ' de ' + MESES[px.mes].toLowerCase() : ''}, vence el ${fmtF(vence(px))}</div></div>` : ''; })()}</div>
-    ${(S.cuentaHijos || []).length > 1 ? `<div class="panel"><h2>Todos sus hijos</h2><div class="tbl"><table><thead><tr><th>Estudiante</th><th>Pendiente por pagar a hoy</th><th></th></tr></thead><tbody>
+    ${(S.cuentaHijos || []).length > 1 ? `<div class="panel"><h2>Todos sus hijos</h2><div class="tbl fija-der"><table><thead><tr><th>Estudiante</th><th>Pendiente por pagar a hoy</th><th></th></tr></thead><tbody>
       ${S.cuentaHijos.map(x => `<tr><td><strong>${esc(x.m.estudiantes?.nombres || '')} ${esc(x.m.estudiantes?.apellidos || '')}</strong></td><td>${x.venc > 0 ? `<strong style="color:var(--red)">${cop(x.venc)}</strong>` : '<span class="ok">Al día</span>'}</td>
         <td>${x.m.id === ctx.id ? '<span class="tag">Viendo</span>' : `<button class="btn ghost sm" type="button" onclick="entrarContexto('${x.m.id}')">Ver detalle</button>`}</td></tr>`).join('')}
       <tr><td><strong>Total</strong></td><td><strong>${cop(S.cuentaHijos.reduce((a, x) => a + x.venc, 0))}</strong></td><td></td></tr></tbody></table></div></div>` : ''}
@@ -2623,7 +2763,7 @@ function vObservador() {
       `<div class="toolbar" style="margin:0"><button class="btn ghost" type="button" onclick="sel.oe='';render()">Volver</button>${isDoc() ? '' : `<button class="btn ghost" type="button" onclick="verObservador('${e.id}')">Ver e imprimir</button>`}</div>`) +
       `<div class="panel"><h2>Nueva anotación</h2><div class="formgrid">
         ${fIn('oFec', 'Fecha', hoy(), 'type="date"')}
-        <label class="field"><span>Tipo</span><select id="oTipo" >${TIPOS_OBS.map(t => opt(t, t === 'Felicitación' ? '⭐ Felicitación (destaque algo positivo)' : t, 'Felicitación')).join('')}</select></label>
+        <label class="field"><span>Tipo</span><select id="oTipo" >${TIPOS_OBS.map(t => opt(t, t === 'Felicitación' ? '⭐ Felicitación: reconocimiento especial (+15 gemas)' : t === 'Positiva' ? 'Positiva: buen comportamiento o avance del día (+5 gemas)' : t, 'Felicitación')).join('')}</select></label>
         <label class="field" id="oSitBox"><span>Situación según la Ley 1620 de 2013 (convivencia escolar)</span><select id="oSit"><option value="">No aplica</option><option value="Tipo I">Tipo I: conflicto manejado de forma inadecuada, sin daño al cuerpo o a la salud</option><option value="Tipo II">Tipo II: agresión o acoso repetido, o que causa daño al cuerpo o a la salud</option><option value="Tipo III">Tipo III: posible delito (se informa a la autoridad competente)</option></select></label>
         ${fTa('oDesc', 'Descripción de la situación', '', 'Qué ocurrió, cuándo y dónde. Escriba hechos, sin juicios.')}
         ${fTa('oComp', 'Compromiso o acción acordada (opcional)', '')}</div>
@@ -2909,7 +3049,7 @@ function formColegio() {
 async function crearColegio() {
   const d = { p_nombre: $('#cNom').value.trim(), p_ciudad: $('#cCiu').value.trim(), p_rector_nombre: $('#cRec').value.trim(), p_rector_email: $('#cEmail').value.trim(), p_anio: +$('#cAnio').value };
   const tel = $('#cTel').value.trim();
-  if (!d.p_nombre || !d.p_rector_nombre || !/^\S+@\S+\.\S+$/.test(d.p_rector_email)) return toast('Completa nombre del colegio, rector(a) y un correo válido');
+  if (!d.p_nombre || !d.p_rector_nombre || !correoOk(d.p_rector_email)) return toast('Completa nombre del colegio, rector(a) y un correo válido');
   const r = await guard(() => q(db.rpc('crear_colegio', d)), 'Colegio creado');
   if (!r) return;
   const url = location.origin + location.pathname;
@@ -2940,13 +3080,13 @@ function formPagoSusc(id) {
   if (c.pagado_hasta) sig.setMonth(sig.getMonth() + 1);
   const mes = `${sig.getFullYear()}-${String(sig.getMonth() + 1).padStart(2, '0')}`;
   openModal(`Pago de suscripción: ${c.nombre}`, `<div class="formgrid">
-    ${fIn('sMes', 'Mes que paga', mes, 'type="month"')}${fIn('sVal', 'Valor', c.valor_mensual, 'type="number" min="1" step="1000"')}
+    ${fIn('sMes', 'Mes que paga', mes, 'type="month"')}${fIn('sVal', 'Valor', c.valor_mensual, DIN)}
     ${fIn('sFec', 'Fecha de pago', hoy(), 'type="date"')}
     <label class="field"><span>Medio de pago</span><select id="sMed">${['Transferencia', 'Consignación', 'Nequi', 'Daviplata', 'Efectivo', 'Otro'].map(x => opt(x, x)).join('')}</select></label>
     ${fIn('sRef', 'Referencia', '')}</div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" onclick="guardarPagoSusc('${id}')">Registrar pago</button></div>`);
 }
-async function guardarPagoSusc(id) {
+async function guardarPagoSusc(id) { if (dinMalEn()) return;
   const m = vv('sMes'); if (!/^\d{4}-\d{2}$/.test(m || '')) return toast('Elija el mes que paga');
   const d = { colegio_id: id, mes: m + '-01', valor: +vv('sVal') || 0, fecha: vv('sFec') || hoy(), medio: vv('sMed'), referencia: vv('sRef') };
   if (d.valor <= 0) return toast('Escriba el valor pagado');
@@ -2988,7 +3128,7 @@ async function descargarCSV(nombre, filas) {
   filas = [...filas, [], [`Generado con Colegio-IA · SkyNet Genesis · ${SG_CORREO} · WhatsApp 304 437 5758`]];
   const txt = '﻿' + filas.map(f => f.map(c).join(';')).join('\r\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' }));
-  a.download = nombre.replace(/[^\wáéíóúñÁÉÍÓÚÑ .-]/g, '') + '.csv'; document.body.appendChild(a); a.click();
+  a.download = nombre.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w .-]/g, '') + '.csv'; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
   toast('Archivo descargado. Ábralo con Excel');
 }
@@ -3051,6 +3191,8 @@ function detalleFallas(eid) {
   openModal(`Asistencia de ${est(eid).nombres}`, l.length ? `<div class="tbl"><table><thead><tr><th>Fecha</th>${porClase() ? '<th>Clase</th>' : ''}<th>Novedad</th></tr></thead><tbody>${l.map(x => `<tr><td>${fmtF(x.f)}</td>${porClase() ? `<td>${esc(x.a)}</td>` : ''}<td>${x.t}</td></tr>`).join('')}</tbody></table></div>
     ${isAcud() ? '<p class="muted">Si su hijo(a) faltó por un motivo justificado, envíe la excusa desde la sección <button class="linkbtn" type="button" onclick="closeModal();go(\'excusas\')">Excusas</button>.</p>' : ''}` : '<p class="muted">No hay fallas ni llegadas tarde registradas este año.</p>');
 }
+// v0.35: la actividad que guarda la nota puesta antes de crear actividades se explica a la familia
+const nomActFam = n => /^calificaci[oó]n anterior del periodo$/i.test(String(n || '').trim()) ? 'Calificación registrada directamente <span class="muted">(se puso antes de crear las actividades del periodo y cuenta como una actividad más)</span>' : esc(n);
 function detalleAsig(aid) {
   const e = est(propio()), g = grupo(e.grupo_id), a = S.asigs.find(x => x.id === aid), pre = g.nivel === 'preescolar';
   const html = perG(g).filter(p => p.n <= paG(g)).map(p => {
@@ -3058,7 +3200,7 @@ function detalleAsig(aid) {
     const parcial = v == null && acts.some(x => S.nact[`${x.id}|${e.id}`] != null);   // v0.30: hay actividades calificadas pero falta alguna (p. ej. un cuestionario que aún no cierra)
     return `<div class="item" style="margin-bottom:10px"><h3>Periodo ${p.n}: ${parcial ? '<span class="muted">En proceso: la calificación del periodo se ve cuando estén todas las actividades (algunas se publican al cierre del cuestionario)</span>' : pre ? (v == null ? 'Sin valorar' : desem(v)) : chip(v)}</h3>
       ${lo ? `<div class="meta">Logros</div>${logroLista(lo)}` : ''}
-      ${acts.length ? `<div class="tbl"><table><thead><tr><th>Actividad</th><th>Calificación</th></tr></thead><tbody>${acts.map(x => { const n = S.nact[`${x.id}|${e.id}`]; return `<tr><td>${esc(x.nombre)}${x.fecha ? ` <span class="muted">${fmtF(x.fecha)}</span>` : ''}</td><td>${n == null ? '<span class="muted">Pendiente</span>' : N(n)}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
+      ${acts.length ? `<div class="tbl"><table><thead><tr><th>Actividad</th><th>Calificación</th></tr></thead><tbody>${acts.map(x => { const n = S.nact[`${x.id}|${e.id}`]; return `<tr><td>${nomActFam(x.nombre)}${x.fecha ? ` <span class="muted">${fmtF(x.fecha)}</span>` : ''}</td><td>${n == null ? '<span class="muted">Pendiente</span>' : N(n)}</td></tr>`; }).join('')}</tbody></table></div>` : ''}
       ${r ? `<p><strong>Plan de recuperación:</strong> ${esc(r.plan)}${r.fecha ? ` (fecha: ${fmtF(r.fecha)})` : ''}${r.nota != null ? `. Calificación obtenida: ${N(r.nota)}` : ''}</p>` : ''}
       ${porClase() ? `<p class="muted">Fallas en la asignatura: ${fallasAsig(e.id, aid)}</p>` : ''}</div>`;
   }).join('');
@@ -3532,6 +3674,15 @@ function verAvisos() {
   openModal('Avisos', items.length ? `<div class="perfiles">${items.join('')}</div>` : '<p class="muted">No tiene avisos pendientes. Aquí le aparecerán los mensajes nuevos, las autorizaciones por responder y las citas próximas.</p>');
 }
 
+// v0.34: docentes y directivos ven en su inicio los mensajes y citas nuevos (antes solo el número de la campana)
+function novStaffHTML() {
+  const n = S.nov || {}, l = [];
+  if (n.msg) l.push(`<button class="linkbtn" type="button" onclick="go('mensajes')">${n.msg} ${n.msg === 1 ? 'mensaje nuevo' : 'mensajes nuevos'} de familias</button>`);
+  if (n.citasPend) l.push(`<button class="linkbtn" type="button" onclick="go('citas')">${n.citasPend} ${n.citasPend === 1 ? 'solicitud de cita por responder' : 'solicitudes de cita por responder'}</button>`);
+  (n.citasProx || []).filter(c => c.fecha.slice(0, 10) <= sumarDias(hoy(), 1)).forEach(c => l.push(`<button class="linkbtn" type="button" onclick="go('citas')">Cita ${c.fecha.slice(0, 10) === hoy() ? 'hoy' : 'mañana'}: ${fechaHoraCorta(c.fecha)}</button>`));
+  return l.length ? `<div class="note nov-staff"><strong>Novedades:</strong> ${l.join(' · ')}</div>` : '';
+}
+
 /* ---------- "Hoy" para la familia (arriba del inicio) ---------- */
 function hoyFamilia() {
   const e = est(propio()); if (!e) return '';
@@ -3812,15 +3963,21 @@ let horario = [];
 async function prepHorario() {
   if (isDir()) await cargarMiembros().catch(() => {});
   if (isFam()) { const e = est(propio()); sel.hg = e?.grupo_id || ''; }
-  else { const gs = gruposVis(); if (!sel.hg || !(gs.find(g => g.id === sel.hg) || sel.hg === 'mio')) sel.hg = isDoc() ? 'mio' : gs[0]?.id || ''; }
+  else { const gs = gruposVis(); if (!sel.hg || !(gs.find(g => g.id === sel.hg) || sel.hg === 'mio')) sel.hg = isDoc() ? 'mio' : gs.length ? primerConEst(gs).id : ''; }
   horario = !sel.hg ? [] : sel.hg === 'mio' ? await all(() => db.from('horario').select('*').eq('colegio_id', ctx.colegio_id).order('id')) : await all(() => db.from('horario').select('*').eq('grupo_id', sel.hg).order('id'));
 }
-function gridHorario(l, celda) {
+// v0.34: en el celular el horario se ve (y se edita) un día a la vez, con un selector de día; en pantallas grandes y al imprimir, la semana completa
+const diaHoyH = () => { const w = new Date().getDay(); return w >= 1 && w <= 6 ? w : 1; };
+function selDiaH(dias) {
+  const d = dias.includes(sel.hDia) ? sel.hDia : dias.includes(diaHoyH()) ? diaHoyH() : dias[0]; sel.hDia = d;
+  return { d, html: `<label class="field solo-movil"><span>Día</span><select onchange="sel.hDia=+this.value;document.querySelectorAll('.hor-dias').forEach(t=>t.dataset.dia=this.value)">${dias.map(x => opt(x, DIAS[x], d)).join('')}</select></label>` };
+}
+function gridHorario(l, celda, porDia) {
   const sab = l.some(x => x.dia === 6), nb = Math.max(0, ...l.map(x => x.bloque));
   if (!nb) return '<div class="empty">Aún no hay horario registrado.</div>';
-  const dias = [1, 2, 3, 4, 5].concat(sab ? [6] : []);
-  return `<div class="tbl"><table class="planilla"><thead><tr><th>Hora</th>${dias.map(d => `<th>${DIAS[d]}</th>`).join('')}</tr></thead><tbody>
-    ${Array.from({ length: nb }, (_, i) => i + 1).map(b => { const fila = l.filter(x => x.bloque === b); return `<tr><td><strong>${b}</strong>${fila.find(x => x.hora)?.hora ? `<br><span class="muted">${esc(fila.find(x => x.hora).hora)}</span>` : ''}</td>${dias.map(d => `<td>${fila.filter(x => x.dia === d).map(celda).join('<br>') || ''}</td>`).join('')}</tr>${S.k?.horario_cfg?.desc_despues === b && b < nb ? `<tr class="h-desc"><td colspan="${dias.length + 1}">☕ Descanso · ${S.k.horario_cfg.desc_min} minutos</td></tr>` : ''}`; }).join('')}
+  const dias = [1, 2, 3, 4, 5].concat(sab ? [6] : []), sd = porDia ? selDiaH(dias) : null;
+  return `${sd ? sd.html : ''}<div class="tbl"><table class="planilla${sd ? ' hor-dias' : ''}"${sd ? ` data-dia="${sd.d}"` : ''}><thead><tr><th>Hora</th>${dias.map(d => `<th class="hd-${d}">${DIAS[d]}</th>`).join('')}</tr></thead><tbody>
+    ${Array.from({ length: nb }, (_, i) => i + 1).map(b => { const fila = l.filter(x => x.bloque === b); return `<tr><td><strong>${b}</strong>${fila.find(x => x.hora)?.hora ? `<br><span class="muted">${esc(fila.find(x => x.hora).hora)}</span>` : ''}</td>${dias.map(d => `<td class="hd-${d}">${fila.filter(x => x.dia === d).map(celda).join('<br>') || ''}</td>`).join('')}</tr>${S.k?.horario_cfg?.desc_despues === b && b < nb ? `<tr class="h-desc"><td colspan="${dias.length + 1}">☕ Descanso · ${S.k.horario_cfg.desc_min} minutos</td></tr>` : ''}`; }).join('')}
   </tbody></table></div>`;
 }
 function vHorario() {
@@ -3832,7 +3989,7 @@ function vHorario() {
   const celda = x => `<div class="h-cel" style="--c:${colorCurso(x.asignatura_id)}"><strong>${esc(nomAsig(x.asignatura_id) || '—')}</strong>${mio ? `<br><span>${esc(grupo(x.grupo_id)?.nombre || '')}</span>` : x.docente ? `<br><span>${esc(x.docente)}</span>` : ''}</div>`;
   return head('Horario de clases', isFam() ? esc(grupo(sel.hg)?.nombre || '') : 'Horario semanal por curso.', (l.length ? '<button class="btn ghost" type="button" onclick="imprimirHorario()">Imprimir</button>' : '') + (isDir() && sel.hg ? '<button class="btn" type="button" onclick="sel.hEdit=true;render()">Editar horario</button>' : '')) +
     (isFam() ? '' : `<div class="panel"><div class="toolbar"><label class="field"><span>Ver</span><select onchange="sel.hg=this.value;go('horario')">${isDoc() ? opt('mio', 'Mi horario', sel.hg) : ''}${gs.map(g => opt(g.id, g.nombre, sel.hg)).join('')}</select></label></div></div>`) +
-    `<div class="panel">${gridHorario(l, celda)}${mio && !l.length && horario.length ? '<p class="muted">Su nombre no aparece en el horario de ningún curso. Pida a coordinación que lo asigne.</p>' : ''}</div>`;
+    `<div class="panel">${gridHorario(l, celda, true)}${mio && !l.length && horario.length ? '<p class="muted">Su nombre no aparece en el horario de ningún curso. Pida a coordinación que lo asigne.</p>' : ''}</div>`;
 }
 function imprimirHorario() {
   const mio = sel.hg === 'mio', mn = (ctx.nombre || '').toLowerCase().trim(), l = mio ? horario.filter(x => (x.docente || '').toLowerCase().trim() === mn) : horario;
@@ -3854,9 +4011,9 @@ function editorHorario() {
         <label class="field"><span>Descanso después de la hora</span><select id="hjDes">${opt(0, 'Sin descanso', hc.desc_despues)}${Array.from({ length: nb - 1 }, (_, i) => opt(i + 1, `${i + 1}.ª hora`, hc.desc_despues)).join('')}</select></label>
         <label class="field"><span>Duración del descanso</span><select id="hjDm">${[15, 20, 25, 30, 40, 45].map(n => opt(n, n + ' minutos', hc.desc_min)).join('')}</select></label></div>
         <div class="toolbar" style="margin-top:8px"><button class="btn ghost" type="button" onclick="calcularHoras()">Calcular horas</button></div></fieldset>
-    <div class="tbl"><table class="planilla"><thead><tr><th>Hora</th>${dias.map(d => `<th>${DIAS[d]}</th>`).join('')}</tr></thead><tbody>
+    ${(() => { const sd = selDiaH(dias); return `${sd.html}<div class="tbl"><table class="planilla hor-dias" data-dia="${sd.d}">`; })()}<thead><tr><th>Hora</th>${dias.map(d => `<th class="hd-${d}">${DIAS[d]}</th>`).join('')}</tr></thead><tbody>
     ${Array.from({ length: nb }, (_, i) => i + 1).map(b => `<tr><td><strong>${b}</strong><br><input class="hHora" data-b="${b}" style="width:110px" placeholder="7:00 a 7:50" value="${esc(horario.find(x => x.bloque === b && x.hora)?.hora || '')}"></td>
-      ${dias.map(d => { const x = c(d, b); return `<td><select class="hAs" data-d="${d}" data-b="${b}"><option value="">—</option>${as.map(a => opt(a.id, a.nombre, x.asignatura_id || '')).join('')}</select><br>
+      ${dias.map(d => { const x = c(d, b); return `<td class="hd-${d}"><select class="hAs" data-d="${d}" data-b="${b}"><option value="">—</option>${as.map(a => opt(a.id, a.nombre, x.asignatura_id || '')).join('')}</select><br>
         <select class="hDoc" data-d="${d}" data-b="${b}"><option value="">Docente…</option>${[...new Set(docs.concat(x.docente ? [x.docente] : []))].map(n => opt(n, n, x.docente || '')).join('')}</select></td>`; }).join('')}</tr>`).join('')}
     </tbody></table></div>
     <div class="toolbar" style="margin-top:12px"><button class="btn ghost" type="button" onclick="sel.hEdit=false;render()">Cancelar</button><button class="btn" type="button" onclick="guardarHorario()">Guardar horario</button></div></div>`;
@@ -3884,7 +4041,7 @@ async function guardarHorario() {
     const dg = await q(db.from('docente_grupos').select('miembro_id').eq('grupo_id', sel.hg)).catch(() => []);
     const mm = dg.length ? await q(db.from('miembros').select('nombre').in('id', [...new Set(dg.map(x => x.miembro_id))])).catch(() => []) : [];
     const ok0 = new Set(mm.map(x => sinTilde(x.nombre))), sinAsig = [...new Set(filas.filter(f => f.docente && !ok0.has(sinTilde(f.docente))).map(f => f.docente))];
-    if (sinAsig.length && !(await confirmar(`${sinAsig.join(', ')} no ${sinAsig.length === 1 ? 'tiene' : 'tienen'} asignado este curso en Usuarios › Grupos y asignaturas del docente. Si guarda así, no podrá${sinAsig.length === 1 ? '' : 'n'} tomar asistencia ni calificar aquí. ¿Guardar el horario de todas formas?`, 'Sí, guardar'))) return;
+    if (sinAsig.length && !(await confirmar(`${sinAsig.join(', ')} no ${sinAsig.length === 1 ? 'tiene' : 'tienen'} asignado este curso. Se asigna en Usuarios y accesos › (tarjeta del docente) › «Asignar grupos y asignaturas». Si guarda así, no podrá${sinAsig.length === 1 ? '' : 'n'} tomar asistencia ni calificar aquí. ¿Guardar el horario de todas formas?`, 'Sí, guardar'))) return;
   }
   if (cruces.length) return dialogo(`<h3 style="margin-top:0">Hay cruces de horario</h3><p>Estos docentes ya tienen clase a esa hora en otro curso:</p><ul>${cruces.map(c => `<li>${esc(c)}</li>`).join('')}</ul><p class="muted">Cambie el docente o la hora y vuelva a guardar.</p><div class="modal-foot"><button class="btn" type="button" onclick="dlgFin(true)">Entendido</button></div>`);
   const ok = await guard(async () => { await q(db.from('horario').delete().eq('grupo_id', sel.hg)); if (filas.length) await q(db.from('horario').insert(filas)); return true; }, 'Horario guardado');
@@ -3918,7 +4075,7 @@ function vExcusas() {
     const e = est(propio());
     return head('Excusas', `Envíe la excusa cuando ${esc(e?.nombres || 'el estudiante')} falte a clase. Puede adjuntar una foto de la incapacidad o del soporte.`) +
       `<div class="panel"><h2>Nueva excusa</h2><div class="formgrid">${fIn('xDes', 'Desde', hoy(), 'type="date"')}${fIn('xHas', 'Hasta', hoy(), 'type="date"')}
-        ${fTa('xMot', 'Motivo', '', 'Ejemplo: cita médica, incapacidad, calamidad familiar…')}
+        ${fTa('xMot', 'Motivo (máximo 500 caracteres)', '', 'Ejemplo: cita médica, incapacidad, calamidad familiar…')}
         <label class="field full"><span>Soporte (opcional): foto de la incapacidad o constancia</span><input type="file" id="xSop" accept="image/*"></label></div>
         <div class="toolbar" style="margin-top:12px"><button class="btn" type="button" id="xBtn" onclick="enviarExcusa()">Enviar excusa</button></div></div>` +
       (excusas.length ? `<h2>Excusas enviadas</h2><div class="card-list">${excusas.map(x => filaExc(x)).join('')}</div>` : '');
@@ -3929,10 +4086,20 @@ function vExcusas() {
     (pen.length ? `<h2>Por revisar (${pen.length})</h2><div class="card-list">${pen.map(x => filaExc(x, true)).join('')}</div>` : '<div class="panel empty">No hay excusas por revisar.</div>') +
     (rev.length ? `<h2 style="margin-top:20px">Revisadas</h2><div class="card-list">${rev.map(x => filaExc(x, true)).join('')}</div>` : '');
 }
+// v0.34: fechas de excusas dentro de lo razonable (hasta 4 meses atrás y 2 meses adelante) y motivo de máximo 500 caracteres
+function errExcusa(d) {
+  const dd = (f, n) => { const x = new Date(f + 'T12:00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+  if (!fechaReal(d.desde) || !fechaReal(d.hasta)) return 'Revise las fechas';
+  if (d.hasta < d.desde) return 'La fecha final no puede ser anterior a la inicial';
+  if (d.desde < dd(hoy(), -120) || +d.desde.slice(0, 4) < +S.k.anio) return 'La excusa solo puede ser de los últimos 4 meses del año lectivo. Para fechas más antiguas, comuníquese con coordinación';
+  if (d.hasta > dd(hoy(), 60)) return 'La excusa puede ser como máximo para los próximos 2 meses';
+  if (d.motivo.length > 500) return `El motivo es muy largo (${d.motivo.length} caracteres; máximo 500). Resúmalo`;
+  return '';
+}
 async function enviarExcusa() {
   const d = { estudiante_id: propio(), colegio_id: ctx.colegio_id, desde: vv('xDes'), hasta: vv('xHas'), motivo: vv('xMot') };
   if (!d.desde || !d.hasta || !d.motivo) return toast('Complete las fechas y el motivo');
-  if (d.hasta < d.desde) return toast('La fecha final no puede ser anterior a la inicial');
+  { const er = errExcusa(d); if (er) return toast(er); }
   await busy('#xBtn', async () => {
     const r = await guard(async () => { d.soporte = await leerImagen($('#xSop').files[0]); return q(db.from('excusas').insert(d).select(COLS_EXC).single()); }, 'Excusa enviada al colegio');
     if (r) { excusas.unshift(r); render(); }
@@ -3951,7 +4118,7 @@ function formExcusaStaff() {
     <label class="field"><span>Curso</span><select id="xG" onchange="document.getElementById('xE').innerHTML=this.selectedOptions[0].dataset.e">${gs.map(g => `<option value="${g.id}" ${g.id === g0 ? 'selected' : ''} data-e="${esc(estsDe(g.id).map(e => opt(e.id, `${e.apellidos} ${e.nombres}`)).join(''))}">${esc(g.nombre)}</option>`).join('')}</select></label>
     <label class="field"><span>Estudiante</span><select id="xE">${estsDe(g0).map(e => opt(e.id, `${e.apellidos} ${e.nombres}`)).join('')}</select></label>
     ${fIn('xDes', 'Desde', hoy(), 'type="date"')}${fIn('xHas', 'Hasta', hoy(), 'type="date"')}
-    ${fTa('xMot', 'Motivo', '', 'Ejemplo: incapacidad médica presentada por el acudiente')}
+    ${fTa('xMot', 'Motivo (máximo 500 caracteres)', '', 'Ejemplo: incapacidad médica presentada por el acudiente')}
     <label class="field full"><span>Foto del soporte (opcional; se conserva durante el año)</span><input type="file" id="xSop" accept="image/*"></label>
     ${puede('excusas') || (isDoc() && S.grupos.some(g => g.director_miembro_id === ctx.id)) ? `<label class="chk full"><input type="checkbox" id="xApr" ${puede('excusas') ? 'checked' : ''}> Aprobar de una vez y justificar las fallas${puede('excusas') ? '' : ' (solo si es director(a) de ese curso)'}</label>` : ''}</div>
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="xBtn2" onclick="guardarExcusaStaff()">Guardar</button></div>`);
@@ -3959,7 +4126,7 @@ function formExcusaStaff() {
 async function guardarExcusaStaff() {
   const d = { estudiante_id: $('#xE').value, colegio_id: ctx.colegio_id, desde: vv('xDes'), hasta: vv('xHas'), motivo: vv('xMot') };
   if (!d.estudiante_id || !d.desde || !d.hasta || !d.motivo) return toast('Complete el estudiante, las fechas y el motivo');
-  if (d.hasta < d.desde) return toast('La fecha final no puede ser anterior a la inicial');
+  { const er = errExcusa(d); if (er) return toast(er); }
   const aprobar = !!$('#xApr')?.checked && puedeExcusa(d.estudiante_id);
   await busy('#xBtn2', async () => {
     const r = await guard(async () => { d.soporte = await leerImagen($('#xSop').files[0]); return q(db.from('excusas').insert(d).select(COLS_EXC).single()); }, aprobar ? 'Excusa registrada' : 'Excusa registrada. Queda pendiente: la aprueba coordinación o el director(a) de ese curso');
@@ -3994,7 +4161,7 @@ const tagComp = s => `<span class="tag ${s === 'Confirmado' ? '' : s === 'Rechaz
 function panelComprobantes() {
   if (!comps.length) return '';
   return `<div class="panel"><h2>Comprobantes enviados por las familias <span class="badge">${comps.length}</span></h2>
-    <div class="tbl"><table><thead><tr><th>Estudiante</th><th>Fecha</th><th>Valor</th><th>Medio</th><th>Enviado por</th><th></th></tr></thead><tbody>
+    <div class="tbl fija-der"><table><thead><tr><th>Estudiante</th><th>Fecha</th><th>Valor</th><th>Medio</th><th>Enviado por</th><th></th></tr></thead><tbody>
     ${comps.map(c => { const e = est(c.estudiante_id); return `<tr><td><strong>${esc(e ? nom(e) : '')}</strong><br><span class="muted">${esc(grupo(e?.grupo_id)?.nombre || '')}</span></td><td>${fmtF(c.fecha)}</td><td>${cop(c.valor)}</td>
       <td>${esc(c.medio || '')}${c.referencia ? `<br><span class="muted">${esc(c.referencia)}</span>` : ''}${c.nota ? `<br><span class="muted">${esc(c.nota)}</span>` : ''}</td><td>${esc(c.enviado_por || '')}</td>
       <td style="white-space:nowrap"><button class="btn ghost sm" type="button" onclick="verComprobante('${c.id}')">Ver</button> <button class="btn sm" type="button" onclick="confirmarComp('${c.id}')">Confirmar y registrar</button> <button class="btn ghost sm" type="button" onclick="rechazarComp('${c.id}')">Rechazar</button></td></tr>`; }).join('')}
@@ -4011,7 +4178,7 @@ async function confirmarComp(id) {
   compPend = { id, estudiante_id: c.estudiante_id, medio: c.medio };
   await abrirCuenta(c.estudiante_id, anioSig() && new RegExp(`\\b${anioSig()}\\b`).test(c.nota || '') && !new RegExp(`\\b${S.k.anio}\\b`).test(c.nota || '') ? anioSig() : undefined);
   const set = (s, v) => { const el = $(s); if (el && v) el.value = v; };
-  set('#pFec', c.fecha); set('#pRef', c.referencia || ''); set('#pVal', String(c.valor)); previewPago();
+  set('#pFec', c.fecha); set('#pRef', c.referencia || ''); set('#pVal', nf(c.valor)); previewPago();
   if ([...($('#pMed')?.options || [])].some(o => o.value === c.medio)) set('#pMed', c.medio);
   toast(`Revise los datos del comprobante de ${cop(c.valor)} y pulse «Registrar pago». El comprobante queda confirmado cuando el pago se registre; si cierra sin registrar, sigue en la lista`);
 }
@@ -4033,8 +4200,8 @@ function panelPagarFam(venc) {
       ${k.pago_efectivo ? `<div class="medio"><h3>En efectivo en el colegio</h3><p class="muted">${esc(k.pago_efectivo_texto || 'En la tesorería del colegio.')} Le entregan el recibo en el momento.</p></div>` : ''}
     </div></div>
   ${(comps || []).some(c => c.estado === 'Pendiente') ? '<div class="note"><strong>Su comprobante está en revisión.</strong> La tesorería del colegio lo revisa; cuando confirme que el dinero llegó, el pago queda registrado. No necesita enviarlo otra vez.</div>' : ''}
-  ${mediosComprobante().length ? `<div class="panel"><h2>Ya pagué</h2><p class="muted">Si pagó con ${mediosComprobante().join(' o ').toLowerCase().replace('llave bre-b', 'llave Bre-B')}, envíe aquí el comprobante. Cuando el colegio confirme que el dinero llegó, el pago queda registrado y le llega el recibo. Puede pagar una cuota completa o hacer un abono.</p>
-    <div class="formgrid">${fIn('cVal', 'Valor pagado (puede ser un abono)', venc || '', 'type="number" min="1" oninput="this.dataset.manual=1;marcarPorValor()"')}${fIn('cFec', 'Fecha del pago', hoy(), 'type="date"')}
+  ${mediosComprobante().length ? `<div class="panel"><h2>Ya pagué</h2><p class="muted">Si pagó con ${mediosComprobante().join(' o ').toLowerCase().replace('llave bre-b', 'llave Bre-B').replace(/\bbold\b/g, 'Bold').replace(/\bpse\b/g, 'PSE').replace(/\bnequi\b/g, 'Nequi').replace(/\bdaviplata\b/g, 'Daviplata')}, envíe aquí el comprobante. Cuando el colegio confirme que el dinero llegó, el pago queda registrado y le llega el recibo. Puede pagar una cuota completa o hacer un abono.</p>
+    <div class="formgrid">${fIn('cVal', 'Valor pagado (puede ser un abono)', venc || '', DIN + ' oninput="this.dataset.manual=1;marcarPorValor()"')}${fIn('cFec', 'Fecha del pago', hoy(), 'type="date"')}
       <label class="field"><span>Medio de pago</span><select id="cMed">${mediosComprobante().map(m => opt(m, m)).join('')}</select></label>${fIn('cRef', 'Número de referencia o aprobación', '')}
       <div class="field full"><span>¿Qué cuotas pagó? Marque las que corresponden a este pago</span>${cuotasFam().length ? `<div class="cuotas">${cuotasFam().map((x, i) => `<label class="chk"><input type="checkbox" class="cCuota" value="${i}" onchange="sumarCuotas()"${x.vencido ? ' checked' : ''}> ${esc(x.concepto)}${x.mes ? ' ' + MESES[x.mes] : ''} ${x.anioCobro || cuenta.anio} <span class="muted">${cop(x.saldo)}</span></label>`).join('')}</div>` : '<p class="muted">No tiene cuotas pendientes.</p>'}</div>
       <label class="field"><span>Foto o captura del comprobante (se borra al confirmarse; quedan el valor y la referencia)</span><input type="file" id="cImg" accept="image/*"></label></div>
@@ -4052,8 +4219,8 @@ function marcarPorValor() {
   document.querySelectorAll('.cCuota').forEach(c => { const x = cuotasFam()[+c.value]; const ok = resto > 0; c.checked = ok; if (ok) resto -= +x.saldo; });
 }
 window.marcarPorValor = marcarPorValor;
-function sumarCuotas() { const el = $('#cVal'); if (el && !el.dataset.manual) el.value = cuotasMarcadas().reduce((a, x) => a + +x.saldo, 0) || ''; }
-async function enviarComprobante() {
+function sumarCuotas() { const el = $('#cVal'); if (el && !el.dataset.manual) { const t = cuotasMarcadas().reduce((a, x) => a + +x.saldo, 0); el.value = t ? nf(t) : ''; } }
+async function enviarComprobante() { if (dinMalEn()) return;
   const marc = cuotasMarcadas();
   const suma = marc.reduce((a, x) => a + +x.saldo, 0), val = +vv('cVal') || 0;
   const nota = (val > 0 && val < suma ? 'Abono a: ' : '') + marc.map(x => `${x.concepto}${x.mes ? ' ' + MESES[x.mes] : ''} ${x.anioCobro || cuenta.anio}`).join(', ');
@@ -4061,7 +4228,7 @@ async function enviarComprobante() {
   if (cuotasFam().length && !marc.length) return toast('Marque qué cuotas pagó');
   if (d.valor <= 0) return toast('Escriba el valor pagado');
   const totF = cuotasFam().reduce((a, x) => a + +x.saldo, 0);   // v0.31: valor mayor que todo lo pendiente
-  if (totF > 0 && d.valor > totF && !(await confirmar(`El valor (${cop(d.valor)}) es mayor que todo lo pendiente (${cop(totF)}). ¿Lo escribió bien?`, 'Sí, es correcto'))) return;
+  if (totF > 0 && d.valor > totF) return toast(`El valor (${cop(d.valor)}) es mayor que todo lo pendiente (${cop(totF)}). Revise el valor: el colegio no puede registrar más de lo que se debe`);   // v0.34: antes solo preguntaba
   if (fFuturo(d.fecha)) return toast('La fecha del pago no puede ser posterior a hoy');
   if (!$('#cImg').files[0] && !d.referencia) return toast('Adjunte la foto del comprobante o escriba la referencia');
   const rep = comps.find(c => c.estado !== 'Rechazado' && ((d.referencia && c.referencia && c.referencia.trim().toLowerCase() === d.referencia.trim().toLowerCase()) || (+c.valor === d.valor && c.fecha === d.fecha)));
@@ -4073,20 +4240,22 @@ async function enviarComprobante() {
 }
 async function pazYSalvo(eid) {
   if (cuenta.eid !== eid) return toast('Abra primero el estado de cuenta');
-  const mesHoy = +hoy().slice(5, 7), anioHoy = +hoy().slice(0, 4);
-  // vencido, o de un mes anterior al actual aunque el estudiante haya entrado hoy (p. ej. la matrícula de quien llega a mitad de año)
+  // lo que debe a la fecha: vencido o que vence hoy (también la matrícula de quien llega a mitad de año)
   const e = est(eid), vencidas = [...cuenta.prevFilas, ...cuenta.filas.filter(x => esVenc(x, cuenta.anio || S.k.anio))];
   const venc = vencidas.reduce((a, x) => a + +x.saldo, 0);
+  // v0.34: con saldo no hay paz y salvo: se explica antes de mostrar el detalle (constancia de saldo pendiente)
+  if (venc > 0 && isFam() && !(await confirmar(`No se puede expedir el paz y salvo: hay un saldo pendiente a la fecha de ${cop(venc)} (vencido o que vence hoy). ¿Ver el detalle en una constancia de saldo pendiente?`, 'Ver el detalle'))) return;
+  const vHoy = x => !x.vencido && !x.anioCobro;   // en la lista solo está lo que debe a la fecha: lo no vencido vence hoy
   const quien = `el(la) estudiante <strong>${esc(nom(e))}</strong>, identificado(a) con ${e.tipo_doc} ${esc(e.doc)}, del curso <strong>${esc(grupo(e.grupo_id)?.nombre || '')}</strong>`;
   const cuerpo = venc > 0
-    ? `<p style="margin-top:18px">La tesorería de <strong>${esc(S.k.nombre)}</strong> informa que ${quien}, presenta a la fecha un <strong>saldo vencido de ${cop(venc)}</strong>, así:</p>
-       <table><thead><tr><th>Concepto</th><th>Mes</th><th style="text-align:right">Saldo vencido</th></tr></thead><tbody>${vencidas.map(x => `<tr><td>${esc(x.concepto)}</td><td>${MESES[x.mes] || ''}${x.anioCobro ? ' ' + x.anioCobro : ''}</td><td style="text-align:right">${cop(x.saldo)}</td></tr>`).join('')}
-       <tr><td colspan="2"><strong>Total adeudado a la fecha</strong></td><td style="text-align:right"><strong>${cop(venc)}</strong></td></tr></tbody></table>
-       <p>El paz y salvo se expide una vez se cancele el saldo vencido.</p>`
+    ? `<p style="margin-top:18px">La tesorería de <strong>${esc(S.k.nombre)}</strong> informa que ${quien}, presenta a la fecha un <strong>saldo pendiente de ${cop(venc)}</strong>, así:</p>
+       <table><thead><tr><th>Concepto</th><th>Mes</th><th>Estado</th><th style="text-align:right">Saldo</th></tr></thead><tbody>${vencidas.map(x => `<tr><td>${esc(x.concepto)}</td><td>${MESES[x.mes] || ''}${x.anioCobro ? ' ' + x.anioCobro : ''}</td><td>${vHoy(x) ? 'Vence hoy' : 'Vencido'}</td><td style="text-align:right">${cop(x.saldo)}</td></tr>`).join('')}
+       <tr><td colspan="3"><strong>Total adeudado a la fecha</strong></td><td style="text-align:right"><strong>${cop(venc)}</strong></td></tr></tbody></table>
+       <p>El paz y salvo se expide una vez se cancele este saldo.</p>`
     : `<p style="margin-top:18px">La tesorería de <strong>${esc(S.k.nombre)}</strong> certifica que ${quien}, se encuentra a <strong>paz y salvo</strong> por todo concepto vencido a la fecha. Deuda a la fecha: <strong>${cop(0)}</strong>.</p>`;
   const html = `<section class="doc">${docHead(venc > 0 ? 'Constancia de saldo pendiente' : 'Paz y salvo', `${e.estado === 'Activo' ? `Año lectivo ${cuenta.anio || S.k.anio}<br>` : ''}Corte ${fmtF(hoy())}`)}${cuerpo}
     <p>Se expide en ${esc(S.k.ciudad || '')}, el ${fechaLarga()}.</p>
-    ${firmas(['Tesorería', isFam() ? '' : ctx.nombre], ['Rector(a)', S.k.rector_nombre])}</section>`;
+    ${isFam() ? (venc > 0 ? `<p class="dnote">Documento informativo del estado de cuenta, consultado por la familia en Colegio-IA el ${fechaLarga()}. No requiere firma.</p>` : firmas(['Rector(a)', S.k.rector_nombre])) : ctx.rol === 'rector' ? firmas(['Rector(a)', ctx.nombre]) : firmas([ROL_TXT[ctx.rol], ctx.nombre], ['Rector(a)', S.k.rector_nombre])}</section>`;
   // el paz y salvo lleva código de verificación (es el documento que más se falsifica); la constancia de deuda no
   if (venc > 0) return showDocs(html, 'Constancia de saldo pendiente', nomArchivo('Constancia de saldo', e));
   return verDocSellado(html, 'Paz y salvo', nomArchivo('Paz y salvo', e), 'paz_salvo', eid, cuenta.anio || S.k.anio, { deuda_a_la_fecha: cop(0), corte: fmtF(hoy()) });
@@ -4144,6 +4313,10 @@ async function prepAcademico() {
   if (sel.atab === 'estadisticas' || sel.atab === 'avance') {
     const p = sel.app === 'acum' ? S.k.periodo_actual : sel.app;
     acad.p = p; acad.notas = await all(() => db.from('notas').select('estudiante_id,asignatura_id,valor').eq('colegio_id', ctx.colegio_id).eq('anio', S.k.anio).eq('periodo', p).order('estudiante_id').order('asignatura_id'));
+    // v0.34: la recuperación aprobada cuenta en las estadísticas, como en la planilla, el boletín y la lista de riesgo
+    const rcs = await all(() => db.from('recuperaciones').select('estudiante_id,asignatura_id,nota,aprobada').eq('colegio_id', ctx.colegio_id).eq('anio', S.k.anio).eq('periodo', p).not('nota', 'is', null).order('estudiante_id').order('asignatura_id')).catch(() => []);
+    const rm = {}; rcs.forEach(r => { if (r.aprobada !== false) rm[`${r.estudiante_id}|${r.asignatura_id}`] = +r.nota; });
+    acad.notas = acad.notas.map(n => { const r = rm[`${n.estudiante_id}|${n.asignatura_id}`]; return r != null && r > +n.valor ? { ...n, valor: r } : n; });
     if (sel.atab === 'avance') await cargarMiembros();
   }
   if (sel.atab === 'graficos') await prepGraficos();
@@ -4417,7 +4590,7 @@ function tabPedidos() {
     <div class="panel"><div class="toolbar"><label class="field"><span>Ver</span><select onchange="sel.pfil=this.value;go('pedidos')">${[['atender', filtroPedTxt.atender], ...EST_PED.map(s => [s, s]), ['todos', filtroPedTxt.todos]].map(([v, x]) => opt(v, x, sel.pfil)).join('')}</select></label>
       <label class="field"><span>Buscar estudiante o número</span><input type="search" value="${esc(sel.pq || '')}" onchange="sel.pq=this.value;render()"></label>
       <button class="btn ghost" type="button" style="margin-left:auto" onclick="listaPreparar()">Lista para preparar</button></div>
-    ${l.length ? `<div class="tbl"><table><thead><tr><th>No.</th><th>Fecha</th><th>Estudiante</th><th>Artículos</th><th>Total</th><th>Estado</th><th></th></tr></thead><tbody>
+    ${l.length ? `<div class="tbl fija-der"><table><thead><tr><th>No.</th><th>Fecha</th><th>Estudiante</th><th>Artículos</th><th>Total</th><th>Estado</th><th></th></tr></thead><tbody>
       ${l.map(p => { const e = est(p.estudiante_id); return `<tr><td>${p.numero}</td><td>${fmtF(p.creado_en)}</td><td><strong>${esc(e ? nom(e) : '')}</strong><br><span class="muted">${esc(e ? grupo(e.grupo_id)?.nombre || '' : '')}</span></td>
         <td>${esc(itemsTxt(p.id))}${p.nota ? `<br><span class="muted">Nota: ${esc(p.nota)}</span>` : ''}</td><td>${cop(p.total)}<br><span class="muted">${MEDIO_PED[p.medio]}</span></td><td>${tagPed(p.estado)}</td>
         <td><button class="btn sm" type="button" onclick="verPedido('${p.id}')">Atender</button></td></tr>`; }).join('')}</tbody></table></div>` : '<p class="empty">No hay pedidos en esta lista.</p>'}</div>`;
@@ -4480,7 +4653,7 @@ function formProducto(id) {
   const grados = GRADOS_TODOS_FN();
   openModal(id ? 'Editar artículo' : 'Agregar artículo', `<div class="formgrid">
     <label class="field"><span>Categoría</span><select id="prCat">${CATS.map(c => opt(c, c, p.categoria)).join('')}</select></label>
-    ${fIn('prNom', 'Nombre', p.nombre, 'maxlength="120"')}${fIn('prPre', 'Precio (pesos)', p.precio || '', 'type="number" min="1"')}
+    ${fIn('prNom', 'Nombre', p.nombre, 'maxlength="120"')}${fIn('prPre', 'Precio (pesos)', p.precio || '', DIN)}
     ${fIn('prOp', 'Tallas u opciones (opcional): la familia elige una al pedir', p.opciones || '', 'maxlength="300" placeholder="Ej.: tallas 6, 8, 10, 12 · o colores Azul, Blanco · sepárelas con coma"')}
     ${fTa('prDes', 'Descripción (opcional)', p.descripcion || '', 'Qué incluye, fechas, horarios…')}
     <div class="field full"><span>Para qué grados (si no marca ninguno, lo ven todos)</span><div class="cuotas">${grados.map(g => `<label class="chk"><input type="checkbox" class="prG" value="${g}" ${p.grados?.includes(g) ? 'checked' : ''}> ${gradoEtq(g)}</label>`).join('')}</div></div>
@@ -4490,11 +4663,12 @@ function formProducto(id) {
     <div class="modal-foot"><button class="btn ghost" type="button" onclick="closeModal()">Cancelar</button><button class="btn" type="button" id="prBtn" onclick="guardarProducto('${id || ''}')">Guardar</button></div>`);
   if (p.con_imagen) { const im = $('#prPrev'); im.dataset.id = p.id; im.classList.add('prod-ed'); cargarImgs('productos', 'imagen', 'img.prod-ed'); }
 }
-async function guardarProducto(id) {
+async function guardarProducto(id) { if (dinMalEn()) return;
   const d = { categoria: vv('prCat'), nombre: vv('prNom'), precio: Math.round(+vv('prPre') || 0), opciones: vv('prOp') || null, descripcion: vv('prDes') || null,
     grados: [...document.querySelectorAll('.prG:checked')].map(x => +x.value), orden: Math.round(+vv('prOrd') || 0), activo: $('#prAct').checked };
   if ((d.nombre || '').length < 3) return toast('Escriba el nombre del artículo');
   if (!(d.precio > 0)) return toast('Escriba el precio');
+  if (d.precio > 20000000) return toast('El precio máximo de un artículo es $20.000.000. Revise los ceros');   // v0.36
   await busy('#prBtn', async () => {
     const ok = await guard(async () => {
       const f = $('#prImg').files[0];
@@ -5200,13 +5374,12 @@ async function verEntregas(id) {
     const resp = i.tipo === 'tarea' ? (x?.texto || x?.url ? `${x.texto ? `<details><summary>${esc(x.texto.slice(0, 60))}${x.texto.length > 60 ? '…' : ''}</summary><p style="white-space:pre-wrap">${esc(x.texto)}</p></details>` : ''}${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">Abrir trabajo</a>` : ''}` : '<span class="muted">No ha entregado</span>')
       : x?.intentos ? `${x.intentos} ${x.intentos === 1 ? 'intento' : 'intentos'}` : '<span class="muted">No ha respondido</span>';
     const tarde = i.fecha && x?.entregado_en && new Date(x.entregado_en) > new Date(i.fecha);
-    return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}${x?.entregado_en ? `<br><span class="muted" style="font-size:.85rem">${fechaHoraTxt(x.entregado_en)}${tarde ? ' · <span class="err" style="font-weight:400">tardía</span>' : ''}</span>` : ''}</td><td>${resp}</td>
-      <td><input class="actnota" ${NOTA_ATTR} id="en-${e.id}" value="${N(x?.nota)}" ${edita ? '' : 'disabled'} aria-label="Calificación de ${esc(nom(e))}"></td>
-      <td><input id="ec-${e.id}" value="${esc(x?.comentario || '')}" maxlength="1000" placeholder="Comentario" ${edita ? '' : 'disabled'}></td>
-      <td>${edita ? `<button class="btn ghost sm" type="button" onclick="calificarEntrega('${e.id}',this)">Guardar</button>` : ''}<span class="ok" id="eo-${e.id}"></span></td></tr>`; };
+    return `<tr><td>${esc(e.apellidos)} ${esc(e.nombres)}${x?.entregado_en ? `<br><span class="muted" style="font-size:.85rem">${fechaHoraTxt(x.entregado_en)}${tarde ? ' · <span class="err" style="font-weight:400">tardía</span>' : ''}</span>` : ''}</td>
+      <td><div class="ent-cal"><input class="actnota" ${NOTA_ATTR} id="en-${e.id}" value="${N(x?.nota)}" ${edita ? '' : 'disabled'} aria-label="Calificación de ${esc(nom(e))}">${edita ? `<button class="btn ghost sm" type="button" onclick="calificarEntrega('${e.id}',this)">Guardar</button>` : ''}<span class="ok" id="eo-${e.id}"></span></div></td>
+      <td><input id="ec-${e.id}" value="${esc(x?.comentario || '')}" maxlength="1000" placeholder="Comentario" ${edita ? '' : 'disabled'}></td><td>${resp}</td></tr>`; };   // v0.36: calificación, Guardar y ✓ juntos al lado del nombre
   openModal(`${i.tipo === 'tarea' ? 'Entregas' : 'Resultados'}: ${i.titulo}`, `<p class="muted">${i.tipo === 'cuestionario' ? 'La calificación de los cuestionarios es automática (sobre 100). Puede corregirla si es necesario.' : 'Escriba la calificación de 0 a 100 y un comentario; el estudiante y su familia los ven en el campus.'}
       ${i.calificable ? ' La calificación pasa a Calificaciones como actividad del periodo.' : ' Este contenido no cuenta para calificaciones.'}</p>
-    <div class="tbl"><table><thead><tr><th>Estudiante</th><th>${i.tipo === 'tarea' ? 'Entrega' : 'Respuestas'}</th><th>Calificación</th><th>Comentario</th><th></th></tr></thead><tbody>${estsDe(g.id).map(fila).join('')}</tbody></table></div>
+    <div class="tbl fija-der"><table><thead><tr><th>Estudiante</th><th>Calificación</th><th>Comentario</th><th>${i.tipo === 'tarea' ? 'Entrega' : 'Respuestas'}</th></tr></thead><tbody>${estsDe(g.id).map(fila).join('')}</tbody></table></div>
     <div class="modal-foot"><button class="btn" type="button" onclick="closeModal();render()">Cerrar</button></div>`);
 }
 async function calificarEntrega(eid, btn) {
@@ -5325,7 +5498,7 @@ function quiereRegistro() {
   if (modo === 'colegio' && ctx) return openModal('Registre su colegio · 15 días gratis', formRegistroHTML());
   authMode = 'colegio'; authScreen();
 }
-const GR_NIVEL = [['Preescolar', [-2, -1, 0]], ['Primaria', [1, 2, 3, 4, 5]], ['Bachillerato', [6, 7, 8, 9, 10, 11]]];
+const GR_NIVEL = [['Preescolar', [-2, -1, 0]], ['Primaria', [1, 2, 3, 4, 5]], ['Bachillerato', [6, 7, 8, 9, 10, 11]], ['Bachillerato por ciclos para adultos (CLEI)', [23, 24, 25, 26]]];   // v0.34: ciclos desde el registro
 function formRegistroHTML() {
   return `<p class="muted">Usted quedará como rector(a) del colegio con el correo <strong>${esc(me?.email || '')}</strong>. Después podrá invitar a coordinación, secretaría, docentes y familias.</p>
     <div class="formgrid">${fIn('rgNom', 'Nombre del colegio', '', 'maxlength="120" placeholder="Ejemplo: Colegio Nuevo Horizonte"')}${fIn('rgCiu', 'Ciudad o municipio', '', 'maxlength="80"')}
@@ -5347,8 +5520,10 @@ async function registrarColegio() {
   const d = { p_nombre: vv('rgNom'), p_ciudad: vv('rgCiu'), p_telefono: vv('rgTel'), p_plan: mas ? Math.ceil(nm / 100) * 100 : +$('#rgPlan').value, p_grados: [...document.querySelectorAll('.rgGr:checked')].map(x => +x.value) };
   if (d.p_nombre.length < 5) return err('Escriba el nombre completo del colegio');
   if (d.p_ciudad.length < 3) return err('Escriba la ciudad o el municipio');
-  if (d.p_telefono.replace(/\D/g, '').length < 7) return err('Escriba un número de celular o WhatsApp');
+  if (!telOk(d.p_telefono)) return err('Escriba un número de celular o WhatsApp (solo números, de 7 a 13 cifras)');
   if (!d.p_grados.length) return err('Marque los grados que ofrece el colegio');
+  // v0.34: aviso si ya hay un colegio registrado con el mismo nombre en la misma ciudad
+  if (await q(db.rpc('colegio_nombre_existe', { p_nombre: d.p_nombre, p_ciudad: d.p_ciudad })).catch(() => false) && !(await confirmar(`Ya hay un colegio registrado en Colegio-IA con el nombre «${d.p_nombre.toUpperCase()}» en ${d.p_ciudad.toUpperCase()}. Si es su colegio, pida al rector(a) que le dé acceso con un código (no hace falta registrarlo otra vez). ¿Registrar otro colegio con ese nombre?`, 'Sí, es otro colegio'))) return;
   let r;
   await busy('#rgBtn', async () => { try { r = await q(db.rpc('registrar_colegio', d)); } catch (e) { err(msg(e)); } });
   if (!r) return;
@@ -5411,12 +5586,12 @@ async function guardarBoldColegio() {
   if (!l || !s) return toast('Pegue las dos llaves');
   const r = await busy('#bkBtn', () => guard(() => q(db.rpc('bold_colegio_guardar', { p_colegio: ctx.colegio_id, p_llave_id: l, p_secreto: s })), 'Bold del colegio conectado'));
   if (r === undefined) return;
-  closeModal(); S.k = await q(db.from('colegios').select('*').eq('id', ctx.colegio_id).single()); render();
+  closeModal(); S.k = await leerColegio(ctx.colegio_id); render();
 }
 async function quitarBoldColegio() {
   if (!(await confirmar('¿Desconectar el Bold del colegio? Las familias ya no podrán pagar en línea con él.', 'Sí, desconectar'))) return;
   if (await guard(() => q(db.rpc('bold_colegio_quitar', { p_colegio: ctx.colegio_id })), 'Bold desconectado') === undefined) return;
-  S.k = await q(db.from('colegios').select('*').eq('id', ctx.colegio_id).single()); render();
+  S.k = await leerColegio(ctx.colegio_id); render();
 }
 // Familia: pagar las cuotas marcadas
 const ESTADO_ORDEN = { Pendiente: '<span class="tag t2">En verificación</span>', Aprobada: '<span class="tag ok-t">Pagado</span>', Rechazada: '<span class="tag t3">Rechazado por Bold</span>', 'Sin completar': '<span class="tag">Sin completar</span>', Duplicado: '<span class="tag t3">Pagado dos veces: el colegio le devolverá el dinero</span>' };
@@ -5507,6 +5682,7 @@ Object.assign(window, { formBoldColegio, guardarBoldColegio, quitarBoldColegio, 
   imprimirCartera, guardarMediosPago, cambiarAnioCartera, cambiarPerfilDemo, pagarSuscripcion, pagarBoldSusc, copiarTexto, reciboSusc, revisarCompPlat, decidirCompPlat, formPagadoHasta, guardarPagadoHasta, guardarCfgPlat, abrirPiar, guardarPiar, piarHTML, formRetiro,
 });
 Object.assign(window, { marcarPiar, guardarMarcaPiar, calcularHoras, imprimirHorario, bancoPreguntas, ponerTema, toast, dlgFin, previaImg, conFecha, fhTxt, guardarPermisos, permisosDefecto, pedirCambioAut, resolverCambioAut, campusTab, formCurso, guardarCurso, reiniciarCurso, copiarUnidad, hacerCopiaUnidad });
+Object.assign(window, { flashOk, admNombreColegio, cargarRet });   // v0.34
 resetS();
 admTomarEnlace();
 verifTomarEnlace();
@@ -5523,12 +5699,12 @@ const DOC_TIPOS = [
   ['constancia', 'Constancia de estudio', 'Certifica que el estudiante está matriculado este año. Se descarga durante 30 días.'],
   ['certificado', 'Constancia con calificaciones', 'Con las calificaciones del año en curso. Se descarga durante 30 días.'],
   ['anteriores', 'Certificado de un año anterior', 'Calificaciones de un año ya cerrado. Una vez pagado, queda disponible siempre.'],
-  ['pazysalvo', 'Paz y salvo', 'Solo si no tiene saldos vencidos. Se descarga durante 30 días.'],
+  ['pazysalvo', 'Paz y salvo', 'Solo si no tiene saldo pendiente a la fecha (ni vencido ni que venza hoy). Se descarga durante 30 días.'],
   ['retiro', 'Constancia de retiro (SIMAT)', 'Solo para estudiantes retirados. Se descarga durante 30 días.'],
 ];
 const DOC_TXT = Object.fromEntries(DOC_TIPOS.map(([k, l]) => [k, l]));
 const docPrecio = t => Math.max(0, +((S.k?.doc_precios || {})[t] || 0));
-const DOC_COLS = 'id,estudiante_id,tipo,periodo,anio,valor,medio,estado,referencia,con_comprobante,respuesta,bold_orden,creado_nombre,atendido_nombre,creado_en,pagado_en';
+const DOC_COLS = 'id,estudiante_id,tipo,periodo,anio,valor,medio,estado,referencia,con_comprobante,respuesta,bold_orden,creado_nombre,atendido_nombre,creado_en,pagado_en,recibo';
 let docSols = [], docHist = [];
 const docVigente = d => d.estado === 'Pagado' && (['boletin', 'anteriores'].includes(d.tipo) || Date.now() - new Date(d.pagado_en).getTime() < 30 * 864e5);
 const docPagado = (eid, tipo, periodo, anio) => docPrecio(tipo) === 0 || docSols.some(d => d.estudiante_id === eid && d.tipo === tipo && docVigente(d)
@@ -5536,7 +5712,7 @@ const docPagado = (eid, tipo, periodo, anio) => docPrecio(tipo) === 0 || docSols
 async function cargarDocSols(eid) { docSols = await q(db.from('doc_solicitudes').select(DOC_COLS).eq('estudiante_id', eid).order('creado_en', { ascending: false }).limit(60)).catch(() => []); }
 async function prepDocumentos() {
   const e = propio(); if (!e) return;
-  await Promise.all([cargarDocSols(e), cargarOrdenesFam(), q(db.from('historial').select('anio,grado').eq('estudiante_id', e).order('anio')).then(h => docHist = h).catch(() => docHist = [])]);
+  await Promise.all([cargarDocSols(e), cargarOrdenesFam(), est(e)?.grupo_id ? cargarGrupo(est(e).grupo_id).catch(() => {}) : null, q(db.from('historial').select('anio,grado').eq('estudiante_id', e).order('anio')).then(h => docHist = h).catch(() => docHist = [])]);
 }
 const DOC_ESTADO = { 'Por pagar': '<span class="tag t2">Por pagar</span>', 'Por confirmar': '<span class="tag t2">Comprobante enviado: el colegio lo está revisando</span>', Pagado: '<span class="tag ok-t">Pagado</span>', Cancelado: '<span class="tag">Cancelado</span>' };
 const boldPend = d => !!d.bold_orden && boldOrdenes.some(o => o.orden === d.bold_orden && o.estado === 'Pendiente');
@@ -5547,26 +5723,32 @@ function vDocumentos() {
   const fila = ([t, l, d]) => {
     const p = docPrecio(t);
     if (t === 'retiro' && e.estado === 'Activo') return '';
-    const accion = t === 'boletin' ? `<select id="dsP" aria-label="Periodo">${perOpts(Math.max(1, ...perG(grupo(e.grupo_id)).filter(p => perPublicado(grupo(e.grupo_id), p.n)).map(p => p.n)), grupo(e.grupo_id))}</select> <button class="btn sm" type="button" onclick="pedirDoc('boletin')">Pedir</button>`
+    // v0.34: solo se piden (y pagan) boletines de periodos ya publicados
+    // v0.35: y solo de periodos en los que el estudiante tiene calificaciones (no se vende un boletín vacío)
+    const gE = grupo(e.grupo_id), pubs = perG(gE).filter(p => perPublicado(gE, p.n) && conNotas(e.id, p.n)).map(p => p.n);
+    const accion = t === 'boletin' ? (pubs.length ? `<select id="dsP" aria-label="Periodo">${pubs.map(n => opt(n, 'Periodo ' + n, Math.max(...pubs))).join('')}</select> <button class="btn sm" type="button" onclick="pedirDoc('boletin')">Pedir</button>` : '<span class="muted">Aún no hay boletines publicados con calificaciones: cada uno se publica cuando termina su periodo</span>')
       : t === 'anteriores' ? (docHist.length ? `<select id="dsA" aria-label="Año">${docHist.map(h => opt(h.anio, h.anio)).join('')}</select> <button class="btn sm" type="button" onclick="pedirDoc('anteriores')">Pedir</button>` : '<span class="muted">Aún no hay años anteriores</span>')
-      : pend.some(d => d.tipo === t) ? '<span class="muted">Ya lo pidió: está arriba, en «Por pagar o en revisión»</span>' : `<button class="btn sm" type="button" onclick="pedirDoc('${t}')">${p ? 'Pedir' : 'Descargar'}</button>`;
+      : pend.some(d => d.tipo === t) ? '<span class="muted">Ya lo pidió: está arriba, en «Por pagar o en revisión»</span>' : `<button class="btn sm" type="button" onclick="pedirDoc('${t}')">${t === 'pazysalvo' ? 'Obtener el paz y salvo' : p ? 'Pedir' : 'Descargar'}</button>`;
     return `<tr><td><strong>${l}</strong><br><span class="muted">${d}</span></td><td style="white-space:nowrap">${p ? cop(p) : 'Gratis'}</td><td style="white-space:nowrap">${accion}</td></tr>`;
   };
   return head('Documentos', `Documentos de ${esc(nom(e))}. Primero se paga y el documento queda listo para descargar.`) +
     (pend.length ? `<div class="panel"><h2>Por pagar o en revisión</h2><ul class="list">${pend.map(d => `<li><div><strong>${esc(docNombre(d))}</strong> · ${cop(d.valor)} ${DOC_ESTADO[d.estado]}${d.respuesta ? `<br><span class="muted">Respuesta del colegio: ${esc(d.respuesta)}</span>` : ''}</div>
       ${d.estado === 'Por pagar' && boldPend(d) ? '<div class="note" style="margin:6px 0 0">Pago en línea en verificación: si Bold lo aprobó, el documento se libera solo en unos minutos.</div>' : d.estado === 'Por pagar' ? `<div class="toolbar" style="margin:6px 0 0"><button class="btn sm" type="button" onclick="pagarDoc('${d.id}')">Pagar</button><button class="btn ghost sm" type="button" onclick="cancelarDoc('${d.id}')">Cancelar</button></div>` : ''}</li>`).join('')}</ul></div>` : '') +
     (listos.length ? `<div class="panel"><h2>Listos para descargar</h2><ul class="list">${listos.map(d => `<li style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap"><span><strong>${esc(docNombre(d))}</strong> <span class="tag ok-t">${d.medio === 'gratis' ? 'Gratis' : 'Pagado'}</span>${['boletin', 'anteriores'].includes(d.tipo) ? '' : `<br><span class="muted">Disponible hasta el ${fmtF(new Date(new Date(d.pagado_en).getTime() + 30 * 864e5).toISOString().slice(0, 10))}</span>`}</span>
-      <button class="btn sm" type="button" onclick="descargarDoc('${d.tipo}',${d.periodo || 0},${d.anio})">Descargar</button></li>`).join('')}</ul></div>` : '') +
-    `<div class="panel"><h2>Pedir un documento</h2><div class="tbl"><table><thead><tr><th>Documento</th><th>Valor</th><th></th></tr></thead><tbody>${DOC_TIPOS.map(fila).join('')}</tbody></table></div>
+      ${d.tipo === 'boletin' && !perPublicado(grupo(e.grupo_id), d.periodo) ? `<span class="muted">Se publica cuando termine el periodo${(() => { const pp = perG(grupo(e.grupo_id)).find(x => x.n === d.periodo); return pp?.cierre || pp?.fin ? ` (${fmtF(pp.cierre || pp.fin)})` : ''; })()}</span>` : `<button class="btn sm" type="button" onclick="descargarDoc('${d.tipo}',${d.periodo || 0},${d.anio})">${d.tipo === 'pazysalvo' ? 'Obtener el paz y salvo' : 'Descargar'}</button>`}</li>`).join('')}</ul></div>` : '') +
+    `<div class="panel"><h2>Pedir un documento</h2><div class="tbl fija-der"><table><thead><tr><th>Documento</th><th>Valor</th><th></th></tr></thead><tbody>${DOC_TIPOS.map(fila).join('')}</tbody></table></div>
       <p class="muted">${[S.k.pago_bold_auto ? 'Con Bold el documento se libera solo cuando el pago queda aprobado.' : '', S.k.pago_llave && S.k.pago_llave_valor ? 'Con llave Bre-B o transferencia, envíe el comprobante: el documento se libera cuando tesorería lo confirma.' : '', S.k.pago_efectivo ? 'En efectivo, pague en la caja del colegio: el documento se libera cuando tesorería registra el pago.' : ''].filter(Boolean).join(' ')}</p></div>`;
 }
 const mediosDoc = () => [S.k.pago_bold_auto ? ['bold', 'En línea con Bold (PSE, Nequi o tarjeta): se libera solo'] : null, S.k.pago_llave && S.k.pago_llave_valor ? ['llave', 'Llave Bre-B o transferencia: enviar comprobante'] : null, S.k.pago_efectivo ? ['efectivo', 'Efectivo en la caja del colegio'] : null].filter(Boolean);
 async function pedirDoc(tipo, periodo, anio) {
   const eid = propio(); periodo = periodo || (tipo === 'boletin' ? +($('#dsP')?.value || sel.p || 1) : null); anio = anio || (tipo === 'anteriores' ? +$('#dsA')?.value : S.k.anio);
-  if (tipo === 'pazysalvo' && docPrecio(tipo) > 0) {
-    await guard(() => cargarCuenta(eid));
+  if (tipo === 'boletin' && !perPublicado(grupo(est(eid)?.grupo_id), periodo)) return toast('Ese boletín aún no está publicado: se publica cuando termine el periodo y se cierre la digitación de calificaciones');
+  if (tipo === 'boletin' && !conNotas(eid, periodo)) return toast(`El periodo ${periodo} no tiene calificaciones registradas: el boletín saldría vacío`);
+  // v0.35: con saldo, un solo mensaje (la ventana del paz y salvo, que ofrece ver el detalle), sin pedir ni cobrar nada
+  if (tipo === 'pazysalvo') {
+    if (!(await guard(async () => { await cargarCuenta(eid); return true; }))) return;
     const venc = [...(cuenta.prevFilas || []), ...cuenta.filas.filter(x => esVenc(x, cuenta.anio))].reduce((a, x) => a + +x.saldo, 0);
-    if (venc > 0) return toast(`Tiene un saldo vencido de ${cop(venc)}. El paz y salvo se expide cuando esté al día (vea Estado de cuenta)`);
+    if (venc > 0) return pazYSalvo(eid);
   }
   if (docPagado(eid, tipo, periodo, anio)) {
     if (docPrecio(tipo) === 0) await guard(() => q(db.rpc('pedir_documento', { p_est: eid, p_tipo: tipo, p_periodo: periodo, p_anio: anio, p_medio: null })));
@@ -5613,6 +5795,7 @@ async function cancelarDoc(id) {
 async function descargarDoc(tipo, periodo, anio) {
   const eid = propio(), e = est(eid);
   if (!docPagado(eid, tipo, periodo, anio)) return toast('Primero debe pagar este documento');
+  if (tipo === 'boletin' && !perPublicado(grupo(e.grupo_id), periodo)) return toast('Ese boletín aún no está publicado: se publica cuando termine el periodo y se cierre la digitación de calificaciones');
   if (!(await guard(async () => { await prepDocsEst([eid]); if (['boletin', 'certificado'].includes(tipo)) await cargarGrupo(e.grupo_id); return true; }))) return;
   if (tipo === 'boletin') return showDocs(boletinHTML(eid, periodo), 'Boletín', nomArchivo(`Boletín P${periodo}`, e));
   if (tipo === 'constancia') return verDocSellado(constancia(eid, anio), 'Constancia de estudio', nomArchivo('Constancia de estudio', e), 'constancia', eid, anio || S.k.anio, { grado: grupo(e.grupo_id)?.nombre || '', estado: e.estado });
@@ -5647,7 +5830,7 @@ function vDocSol() {
   return head('Documentos pedidos', 'Documentos que las familias pagan antes de descargarlos. Al confirmar el pago, el documento queda listo para la familia.') +
     (precios ? '' : `<div class="note">Todos los documentos están gratis. Fije sus precios en Parametrización › Costos del año. <button class="linkbtn" type="button" onclick="irPtab('costos')">Ir a costos</button></div>`) +
     `<div class="panel"><div class="tabs" role="tablist">${[['pend', 'Por pagar o por confirmar'], ['pagados', 'Pagados'], ['todos', 'Todos']].map(([k, t]) => `<button type="button" role="tab" aria-selected="${f === k}" onclick="sel.dsf='${k}';render()">${t}</button>`).join('')}</div>
-    ${l.length ? `<div class="tbl"><table><thead><tr><th>Estudiante</th><th>Documento</th><th>Valor</th><th>Medio</th><th>Estado</th><th></th></tr></thead><tbody>${l.map(d => { const e = est(d.estudiante_id); return `<tr>
+    ${l.length ? `<div class="tbl fija-der"><table><thead><tr><th>Estudiante</th><th>Documento</th><th>Valor</th><th>Medio</th><th>Estado</th><th></th></tr></thead><tbody>${l.map(d => { const e = est(d.estudiante_id); return `<tr>
       <td>${esc(e ? nom(e) : '')}<br><span class="muted">${esc(grupo(e?.grupo_id)?.nombre || '')} · pidió ${esc(d.creado_nombre || '')} el ${fmtF(d.creado_en)}</span></td>
       <td>${esc(docNombre(d))}</td><td>${cop(d.valor)}</td><td>${{ bold: 'Bold', llave: 'Llave / transferencia', efectivo: 'Efectivo', gratis: 'Gratis' }[d.medio]}${d.referencia ? `<br><span class="muted">${esc(d.referencia)}</span>` : ''}</td>
       <td>${DOC_ESTADO[d.estado] || esc(d.estado)}${d.atendido_nombre && d.estado === 'Pagado' ? `<br><span class="muted">${esc(d.atendido_nombre)}</span>` : ''}</td>
@@ -5665,7 +5848,7 @@ async function confirmarDoc(id) {
   if (await guard(async () => { await q(db.rpc('doc_estado', { p_id: id, p_estado: 'Pagado', p_respuesta: null })); return true; }, 'Pago confirmado: el documento quedó listo para la familia')) {
     await prepDocSol(); render();
     // v0.30: recibo del pago del documento
-    const e = est(d.estudiante_id), n = 'D-' + d.id.replace(/-/g, '').slice(0, 8).toUpperCase();
+    const d2 = docStaff.find(x => x.id === id) || d, e = est(d.estudiante_id), n = d2.recibo ? `D-${d2.recibo}` : 'D-' + d.id.replace(/-/g, '').slice(0, 8).toUpperCase();   // v0.34: consecutivo propio de los recibos de documentos
     showDocs(`<section class="doc">${docHead(`Recibo de pago No. ${n}`, fmtF(hoy()))}
       <div class="dgrid">${dato('Estudiante', e ? nom(e) : '')}${dato('Documento', e ? `${e.tipo_doc} ${e.doc}` : '')}${dato('Concepto', docNombre(d))}${dato('Medio de pago', medio + (d.referencia ? ` (${d.referencia})` : ''))}${dato('Total pagado', cop(d.valor))}</div>
       <p class="dnote">Recibido por ${esc(ctx.nombre || '')} el ${fechaLarga(hoy())}.</p>${firmas(['Recibido por', ctx.nombre])}</section>`, 'Recibo', `Recibo ${n}`);
@@ -5679,10 +5862,10 @@ async function rechazarDoc(id) {
 function panelDocPrecios() {
   const ed = puede('costos');
   return `<div class="panel"><h2>Precio de los documentos</h2><p class="muted">Las familias pagan estos documentos antes de descargarlos (en "Documentos"). Deje 0 si un documento es gratis. El valor mínimo para cobrar es $1.000.</p>
-    <div class="formgrid">${DOC_TIPOS.map(([t, l]) => fIn('dp_' + t, l, docPrecio(t), `type="number" min="0" step="100" ${ed ? '' : 'disabled'}`)).join('')}</div>
+    <div class="formgrid">${DOC_TIPOS.map(([t, l]) => fIn('dp_' + t, l, docPrecio(t), `${DIN} ${ed ? '' : 'disabled'}`)).join('')}</div>
     ${ed ? '<div class="toolbar" style="margin-top:10px"><button class="btn" type="button" onclick="guardarDocPrecios()">Guardar precios</button></div>' : ''}</div>`;
 }
-async function guardarDocPrecios() {
+async function guardarDocPrecios() { if (dinMalEn()) return;
   const p = Object.fromEntries(DOC_TIPOS.map(([t]) => [t, +vv('dp_' + t) || 0]));
   const ok = await guard(async () => { await q(db.rpc('colegio_doc_precios', { p_colegio: S.k.id, p_precios: p })); return true; }, 'Precios de los documentos guardados');
   if (ok) { S.k.doc_precios = p; render(); }
@@ -5717,7 +5900,7 @@ const becasDe = eid => becas.filter(b => b.estudiante_id === eid && b.activa);
 function filasBecas(l, conEst) {
   return `<div class="tbl"><table><thead><tr>${conEst ? '<th>Estudiante</th>' : ''}<th>Tipo</th><th>Descuento</th><th>Motivo</th><th>Registró</th><th></th></tr></thead><tbody>
     ${l.map(b => { const e = est(b.estudiante_id); return `<tr class="${b.activa ? '' : 'dim'}">${conEst ? `<td><strong>${e ? esc(e.apellidos + ' ' + e.nombres) : '—'}</strong><br><span class="muted">${esc(grupo(e?.grupo_id)?.nombre || '')}</span></td>` : ''}
-      <td>${esc(b.tipo)}</td><td>${esc(becaTxt(b))}</td><td>${esc(b.motivo)}</td><td>${esc(b.creado_nombre || '')}<br><span class="muted">${fmtF(String(b.creado_en).slice(0, 10))}</span></td>
+      <td>${esc(b.tipo)}</td><td>${esc(becaTxt(b))}</td><td>${esc(b.motivo)}</td><td>${esc(b.creado_nombre || '')}<br><span class="muted">${fmtF(b.creado_en)}</span></td>
       <td>${b.activa ? (puede('becas') ? `<button class="btn ghost sm" type="button" onclick="anularBeca('${b.id}')">Anular</button>` : '<span class="tag">Vigente</span>') : `<span class="tag t3">Anulada</span><br><span class="muted">${esc(b.anulada_nombre || '')}: ${esc(b.anulada_motivo || '')}${b.mes_corte >= b.mes_desde ? `. Se mantiene hasta ${MESES[Math.min(b.mes_corte, b.mes_hasta)].toLowerCase()}` : ''}</span>`}</td></tr>`; }).join('')}
     </tbody></table></div>`;
 }
@@ -5742,7 +5925,7 @@ async function formBeca(eid) {
     <label class="field"><span>Tipo</span><select id="bTipo">${TIPOS_BECA.map(t => opt(t, t, 'Beca')).join('')}</select></label>
     ${fIn('bMot', 'Motivo o entidad que lo otorga', '', 'maxlength="300" placeholder="Ejemplo: RENDIMIENTO ACADÉMICO, CONVENIO CAJA DE COMPENSACIÓN"')}
     <label class="field"><span>Descuento en</span><select id="bModo" onchange="previewBeca()">${opt('porcentaje', 'Porcentaje (%)', 'porcentaje')}${opt('valor', 'Valor fijo por cuota ($)', '')}</select></label>
-    ${fIn('bVal', 'Valor del descuento', '', 'type="number" min="1" step="1" oninput="previewBeca()"')}
+    ${fIn('bVal', 'Valor del descuento', '', DIN + ' oninput="previewBeca()"')}
     <label class="field"><span>Se aplica a</span><select id="bApl" onchange="previewBeca()">${Object.entries(APLICA_BECA).map(([v, l]) => opt(v, l, 'pension')).join('')}</select></label>
     <label class="field"><span>Pensión desde</span>${mesOpt('bD1', Math.min(ultPag + 1, 12))}</label><label class="field"><span>Pensión hasta</span>${mesOpt('bD2', 12)}</label></div>
     <div id="bPrev" class="note" style="margin-top:10px">Escriba el valor del descuento para ver cómo queda la cuota.</div>
@@ -5759,7 +5942,7 @@ function previewBeca() {
 }
 async function volverBecas() { if (becaVuelve === 'cuenta' && cuenta.eid) { await cargarCuenta(cuenta.eid, cuenta.anio); modalCuenta(); } else modalBecas(); }
 let guardandoBeca = false;
-async function guardarBeca() { if (guardandoBeca) return; guardandoBeca = true; try { await guardarBeca0(); } finally { guardandoBeca = false; } }
+async function guardarBeca() { if (dinMalEn()) return; if (guardandoBeca) return; guardandoBeca = true; try { await guardarBeca0(); } finally { guardandoBeca = false; } }
 async function guardarBeca0() {
   const d = { tipo: vv('bTipo'), motivo: vv('bMot'), modo: vv('bModo'), valor: Math.round(+vv('bVal') || 0), aplica: vv('bApl'), mes_desde: +vv('bD1'), mes_hasta: +vv('bD2') };
   const eid = vv('bEst');
@@ -5815,6 +5998,11 @@ function numLetras(n) {
 }
 const pesosLetras = n => `${numLetras(n).replace(/veintiuno$/, "veintiún").replace(/uno$/, "un")}${Math.round(+n) % 1e6 === 0 && +n >= 1e6 ? ' de' : ''} pesos m/cte`.toUpperCase();
 const raya = (v, w = 220) => v ? `<strong>${esc(v)}</strong>` : `<span style="display:inline-block;min-width:${w}px;border-bottom:1px solid #111">&nbsp;</span>`;
+// v0.36: datos legales que faltan para contratos y acuerdos (se avisa al generar; en el documento no se imprimen huecos)
+const faltaLegal = () => { const c = S.k.contrato_cfg || {}; return [!(c.titular_nit || S.k.nit) && 'el NIT', !(c.rep_nombre || S.k.rector_nombre) && 'el nombre del representante legal', !c.rep_doc && 'la cédula del representante legal'].filter(Boolean); };
+const avisoLegal = doc => confirmar(`Faltan datos legales del colegio: ${faltaLegal().join(', ')}. El ${doc} saldrá sin ellos (no se imprimen espacios vacíos) y puede quedar incompleto como documento legal.\nComplételos en Parametrización › Institución (NIT) y Costos del año › Contrato de matrícula. ¿Generar el ${doc} así?`, 'Sí, generar');
+// v0.36: sin titular aparte, el colegio no se nombra dos veces («X, propietario(a) de X»); sin cédula no se imprime «C.C. No.» vacío
+const titularTxt = (titular, nit, k) => titular && titular !== k.nombre ? `<strong>${esc(titular)}</strong>${nit ? `, NIT ${esc(nit)}` : ''}, propietario(a) del establecimiento educativo <strong>${esc(k.nombre)}</strong>` : `el establecimiento educativo <strong>${esc(k.nombre)}</strong>${nit ? `, NIT ${esc(nit)}` : ''}`;
 function firmaContrato(rol, n, doc, conHuella) {
   return `<div class="fc"><div class="fc-l">${conHuella ? '<div class="fc-h">Huella</div>' : ''}</div><div class="fc-t"><strong>${esc(rol)}</strong><br>${n ? esc(n) : 'Nombre: ______________________________'}<br>${doc ? esc(doc) : 'C.C. No. ____________________'}</div></div>`;
 }
@@ -5836,7 +6024,7 @@ async function generarContrato(eid) {
   });
   if (!r) return;
   if (+r.d.anio > +S.k.anio && !r.d.conceptos.length) return toast(`Los costos del año ${r.d.anio} aún no están: la rectoría o tesorería deben ponerlos en Parametrización › Costos del año (año ${r.d.anio}) antes de generar el contrato`);
-  if (!(S.k.contrato_cfg || {}).rep_doc && !isFam() && !(await confirmar('Faltan los datos del colegio para documentos legales (la cédula del representante legal). El contrato saldrá con ese espacio para llenar a mano.\nPuede completarlos en Parametrización › Costos del año › Contrato de matrícula. ¿Generar el contrato así?', 'Sí, generar'))) return;
+  if (faltaLegal().length && !isFam() && !(await avisoLegal('contrato'))) return;
   let html; try { html = contratoHTML(e, ac, r.d, r.ca); } catch (err) { console.warn(err); return toast('No se pudo armar el contrato: faltan datos del colegio. Complételos en Parametrización › Costos › Contrato de matrícula'); }
   const falta = [];
   const cfg = S.k.contrato_cfg || {};
@@ -5861,19 +6049,23 @@ function contratoHTML(e, ac, d, ca) {
   const total = cs.reduce((a, c) => a + +c.total, 0), totalBase = cs.reduce((a, c) => a + +c.total_base, 0);
   const pen = cs.find(c => c.tipo === 'pension'), mat = cs.find(c => c.tipo === 'matricula');
   const dia = k.dia_limite_pago || 5;
-  const res = ca.resolucion ? `la Resolución No. ${esc(ca.resolucion)}${ca.fecha_resolucion ? ` del ${fechaLarga(ca.fecha_resolucion)}` : ''}${ca.entidad ? ` de la ${esc(ca.entidad)}` : ''}` : 'la resolución de costos educativos expedida por la Secretaría de Educación para el año lectivo';
+  // v0.34: estudiante migrado con pagos «al día hasta» un mes: el contrato dice desde cuándo se cobra (no «total del año»)
+  const migr = e.al_dia_hasta && +String(e.al_dia_hasta).slice(0, 4) === +anio ? +String(e.al_dia_hasta).slice(5, 7) : 0;
+  const rotTot = migr ? `Valor por cobrar desde ${migr < 12 ? MESES[migr + 1].toLowerCase() : 'el año siguiente'} (pagos anteriores al día en el sistema anterior)` : 'Valor total del año lectivo';
+  const resN = String(ca.resolucion || '').replace(/^\s*resoluci[oó]n\s*(n[oº°.]*\s*)?/i, '').trim();   // v0.35: sin «Resolución No. RESOLUCIÓN …»
+  const res = resN ? `la Resolución No. ${esc(resN)}${ca.fecha_resolucion ? ` del ${fechaLarga(ca.fecha_resolucion)}` : ''}${ca.entidad ? ` de la ${esc(ca.entidad)}` : ''}` : 'la resolución de costos educativos expedida por la Secretaría de Educación para el año lectivo';
   const contratantes = a2 ? `${fichaAcud(a1)}; y ${fichaAcud(a2)}` : `${fichaAcud(a1)}; y ${fichaAcud(null)}`;
   const tabla = cs.length ? `<table style="margin:6px 0 8px"><thead><tr><th>Concepto</th><th>Cuotas</th><th style="text-align:right">Valor por cuota</th>${bs.length ? '<th style="text-align:right">Con beca</th>' : ''}<th style="text-align:right">Total del año</th></tr></thead><tbody>
     ${cs.map(c => `<tr><td>${esc(c.nombre)}</td><td>${c.cuotas > 1 ? `${c.cuotas} (${c.meses.map(m => MESES[m].slice(0, 3).toLowerCase()).join(', ')})` : `1 (${MESES[c.meses[0]].toLowerCase()})`}</td><td style="text-align:right">${cop(c.valor_cuota)}</td>${bs.length ? `<td style="text-align:right">${+c.descuento_cuota ? cop(+c.valor_cuota - +c.descuento_cuota) + (c.meses_beca.length < c.cuotas ? `<br><span style="font-size:.85em">(${c.meses_beca.map(m => MESES[m].slice(0, 3).toLowerCase()).join(', ')})</span>` : '') : '—'}</td>` : ''}<td style="text-align:right">${cop(c.total)}</td></tr>`).join('')}
-    <tr><td colspan="${bs.length ? 4 : 3}"><strong>Valor total del año lectivo</strong></td><td style="text-align:right"><strong>${cop(total)}</strong></td></tr></tbody></table>` : `<p>Matrícula: ${raya('', 140)}; pensión mensual: ${raya('', 140)} por ${raya('', 40)} cuotas; otros cobros: ${raya('', 140)}. Valor total del año: ${raya('', 160)}.</p>`;
+    <tr><td colspan="${bs.length ? 4 : 3}"><strong>${rotTot}</strong></td><td style="text-align:right"><strong>${cop(total)}</strong></td></tr></tbody></table>` : `<p>Matrícula: ${raya('', 140)}; pensión mensual: ${raya('', 140)} por ${raya('', 40)} cuotas; otros cobros: ${raya('', 140)}. Valor total del año: ${raya('', 160)}.</p>`;
   const ORD = ['PRIMERA', 'SEGUNDA', 'TERCERA', 'CUARTA', 'QUINTA', 'SEXTA', 'SÉPTIMA', 'OCTAVA', 'NOVENA', 'DÉCIMA', 'UNDÉCIMA', 'DUODÉCIMA', 'DECIMOTERCERA', 'DECIMOCUARTA', 'DECIMOQUINTA', 'DECIMOSEXTA', 'DECIMOSÉPTIMA', 'DECIMOCTAVA', 'DECIMONOVENA', 'VIGÉSIMA'];
   let n = 0; const cl = t => { const o = ORD[n] || `CLÁUSULA ${n + 1}`; n++; return `<p><strong>${o}.</strong> ${t}</p>`; };
   const extra = (cfg.clausulas || '').split(/\n\s*\n/).map(x => x.trim()).filter(Boolean);
   const contrato = `<section class="doc contrato">${docHead('Contrato de prestación de servicios educativos', `No. ${num}<br>Año lectivo ${anio}`)}
-    <p>Entre los suscritos, <strong>${esc(titular)}</strong>${nit ? `, NIT ${esc(nit)}` : ''}, propietario(a) del establecimiento educativo <strong>${esc(k.nombre)}</strong>${k.resolucion ? ` (${esc(k.resolucion)})` : ''}${k.dane ? `, código DANE ${esc(k.dane)}` : ''}, representado(a) por ${raya(rep, 220)}, identificado(a) con C.C. No. ${raya(repDoc, 120)}, en calidad de ${esc(repCargo.toLowerCase())}, quien en adelante se denomina <strong>EL COLEGIO</strong>; y ${contratantes}, quienes obran en nombre propio y en representación del estudiante, y en adelante se denominan <strong>LOS PADRES O ACUDIENTES</strong>; en beneficio de <strong>${esc(nom(e))}</strong>, identificado(a) con ${esc(e.tipo_doc)} ${esc(e.doc)}, matrícula No. ${esc(e.matricula || '')}, folio ${e.folio}, en adelante <strong>EL ESTUDIANTE</strong>, hemos celebrado el presente contrato de prestación de servicios educativos, regido por la Constitución Política, la Ley 115 de 1994, la Ley 1098 de 2006, la Ley 1620 de 2013, el Decreto 1075 de 2015 y las demás normas que los modifiquen, y por las siguientes cláusulas:</p>
+    <p>Entre los suscritos, ${titularTxt(titular, nit, k)}${k.resolucion ? ` (${esc(k.resolucion)})` : ''}${k.dane ? `, código DANE ${esc(k.dane)}` : ''}, representado(a) por ${raya(rep, 220)}${repDoc ? `, identificado(a) con C.C. No. <strong>${esc(repDoc)}</strong>` : ''}, en calidad de ${esc(repCargo.toLowerCase())}, quien en adelante se denomina <strong>EL COLEGIO</strong>; y ${contratantes}, quienes obran en nombre propio y en representación del estudiante, y en adelante se denominan <strong>LOS PADRES O ACUDIENTES</strong>; en beneficio de <strong>${esc(nom(e))}</strong>, identificado(a) con ${esc(e.tipo_doc)} ${esc(e.doc)}, matrícula No. ${esc(e.matricula || '')}, folio ${e.folio}, en adelante <strong>EL ESTUDIANTE</strong>, hemos celebrado el presente contrato de prestación de servicios educativos, regido por la Constitución Política, la Ley 115 de 1994, la Ley 1098 de 2006, la Ley 1620 de 2013, el Decreto 1075 de 2015 y las demás normas que los modifiquen, y por las siguientes cláusulas:</p>
     ${cl(`<u>Objeto.</u> EL COLEGIO prestará a EL ESTUDIANTE el servicio público de educación formal en el grado <strong>${esc(gradoTxt(g?.grado) || g?.nombre || '')}</strong>${g?.nombre ? ` (curso ${esc(g.nombre)})` : ''}${e.jornada ? `, jornada ${esc(e.jornada.toLowerCase())}` : ''}, conforme a su Proyecto Educativo Institucional (PEI), su plan de estudios, su Sistema Institucional de Evaluación (SIEE) y su Manual de Convivencia. LOS PADRES O ACUDIENTES se obligan a pagar el valor del servicio y a cumplir los deberes que les corresponden en la formación de EL ESTUDIANTE.`)}
     ${cl(`<u>Duración.</u> El contrato rige durante el año lectivo ${anio}, ${vigencia}. No se renueva automáticamente: para el año siguiente debe renovarse la matrícula (artículo 95 de la Ley 115 de 1994), renovación que EL COLEGIO puede negar cuando LOS PADRES O ACUDIENTES hayan incumplido de manera injustificada sus obligaciones de pago de este contrato.`)}
-    ${cl(`<u>Valor y forma de pago.</u> El valor del servicio corresponde a las tarifas autorizadas mediante ${res}, así:${tabla}La matrícula se paga al firmar este contrato y las pensiones mensuales a más tardar el día <strong>${dia}</strong> de cada mes, por los medios que EL COLEGIO informe (caja del colegio, transferencia o pago en línea). Cada pago tiene su recibo. El valor total del año es de <strong>${cop(total)} (${pesosLetras(total)})</strong>${totalBase !== total ? `, que ya incluye los descuentos de la cláusula CUARTA (sin ellos sería ${cop(totalBase)})` : ''}. Si EL ESTUDIANTE ingresa después de iniciado el año, solo se cobran los meses que cursa.`)}
+    ${cl(`<u>Valor y forma de pago.</u> El valor del servicio corresponde a las tarifas autorizadas mediante ${res}, así:${tabla}${mat ? 'La matrícula se paga al firmar este contrato y las pensiones' : 'Las pensiones'} mensuales a más tardar el día <strong>${dia}</strong> de cada mes, por los medios que EL COLEGIO informe (caja del colegio, transferencia o pago en línea). Cada pago tiene su recibo. ${migr ? `El valor por cobrar (desde ${migr < 12 ? MESES[migr + 1].toLowerCase() : 'el año siguiente'}) es de` : 'El valor total del año es de'} <strong>${cop(total)} (${pesosLetras(total)})</strong>${totalBase !== total ? `, que ya incluye los descuentos de la cláusula CUARTA (sin ellos sería ${cop(totalBase)})` : ''}. Si EL ESTUDIANTE ingresa después de iniciado el año, solo se cobran los meses que cursa.`)}
     ${bs.length ? cl(`<u>Becas, subsidios y descuentos.</u> EL COLEGIO reconoce a EL ESTUDIANTE: ${bs.map(b => `<strong>${esc(b.tipo)}</strong> de ${esc(becaTxt(b))}, por ${esc(b.motivo.toLowerCase())}${b.activa ? '' : ` (retirada; aplica solo hasta ${MESES[Math.min(b.mes_corte || 1, b.mes_hasta)].toLowerCase()})`}`).join('; ')}. El beneficio es personal e intransferible, rige solo para el año lectivo ${anio}, no constituye derecho adquirido ni se renueva automáticamente, y podrá retirarse para las cuotas siguientes, previo aviso escrito, si dejan de cumplirse las condiciones por las que se otorgó.`) : ''}
     ${cl(`<u>Mora.</u> Si LOS PADRES O ACUDIENTES no pagan dentro del plazo, reconocerán intereses de mora, que se pactan a la tasa máxima legal certificada por la Superintendencia Financiera de Colombia (artículo 884 del Código de Comercio), además de los gastos razonables de cobranza que la ley permita. Los intereses pactados nunca excederán el límite legal (usura). Este contrato podrá prestar mérito ejecutivo en los términos del artículo 422 del Código General del Proceso.`)}
     ${cl(`<u>Garantía.</u> Para respaldar las obligaciones de este contrato, LOS PADRES O ACUDIENTES firman en este acto, como deudores solidarios, un <strong>pagaré con espacios en blanco</strong> y su <strong>carta de instrucciones</strong> (artículo 622 del Código de Comercio), que hacen parte de este contrato. EL COLEGIO solo podrá llenarlo según esa carta. Al terminar el contrato a paz y salvo, el pagaré se devuelve o se anula a solicitud de LOS PADRES O ACUDIENTES.`)}
@@ -5885,7 +6077,7 @@ function contratoHTML(e, ac, d, ca) {
     ${cl(`<u>Datos personales y comunicaciones.</u> LOS PADRES O ACUDIENTES autorizan el tratamiento de los datos personales suyos y de EL ESTUDIANTE para fines académicos, administrativos y de cobro, conforme a la Ley 1581 de 2012 y a la política de tratamiento de datos del colegio. Aceptan recibir comunicaciones, avisos de cobro y estados de cuenta en las direcciones, teléfonos y correos aquí registrados y en la plataforma institucional del colegio; las gestiones de cobro respetarán los horarios y la frecuencia que permite la Ley 2300 de 2023.`)}
     ${extra.map(t => cl(esc(t).replace(/\n/g, '<br>'))).join('')}
     ${cl(`<u>Aceptación.</u> Las partes declaran haber leído y entendido este contrato. Se firma en ${raya(ciudad, 140)}, el ${fechaLarga(hoy())}, en dos ejemplares del mismo valor, uno para cada parte.`)}
-    <div class="firmas-c">${firmaContrato('EL COLEGIO', rep, repDoc ? `C.C. No. ${repDoc} · ${repCargo}` : '', false)}${firmaContrato('PADRE, MADRE O ACUDIENTE', a1.nombres, docAcud(a1), true)}${firmaContrato('PADRE, MADRE O ACUDIENTE', a2?.nombres, docAcud(a2), true)}</div></section>`;
+    <div class="firmas-c">${firmaContrato('EL COLEGIO', rep, repDoc ? `C.C. No. ${repDoc} · ${repCargo}` : repCargo, false)}${firmaContrato('PADRE, MADRE O ACUDIENTE', a1.nombres, docAcud(a1), true)}${firmaContrato('PADRE, MADRE O ACUDIENTE', a2?.nombres, docAcud(a2), true)}</div></section>`;
   const deud = [a1, a2];
   const lineaDeudores = deud.map(a => a?.nombres ? `<strong>${esc(a.nombres)}</strong>, identificado(a) con ${esc(docAcud(a))}` : `${raya('', 240)}, identificado(a) con C.C. No. ${raya('', 110)}`).join(' y ');
   const pagare = `<section class="doc contrato">${docHead('Pagaré', `No. ${num}<br>Respalda el contrato No. ${num}`)}
@@ -5928,6 +6120,8 @@ function panelContrato() {
 async function guardarContratoCfg() {
   const cfg = { titular: vv('ctTit'), titular_nit: vv('ctNit'), rep_nombre: vv('ctRep'), rep_doc: vv('ctRepD'), rep_cargo: vv('ctCar'), ciudad: vv('ctCiu'), cuotas_mora: +vv('ctMora') || 2, clausulas: $('#ctCla').value };
   { const mn = revisarNit(cfg.titular_nit); if (mn) return toast(mn); }
+  if (cfg.rep_doc && !docOk('CC', cfg.rep_doc)) return toast('La cédula del representante legal lleva solo números (sin puntos ni letras)');
+  if (cfg.rep_doc) cfg.rep_doc = cfg.rep_doc.replace(/[\s.]/g, '');
   const r = await guard(() => q(db.rpc('colegio_contrato', { p_colegio: S.k.id, p_cfg: cfg })), 'Datos del contrato guardados');
   if (r) { S.k.contrato_cfg = r; render(); }
 }
@@ -5946,11 +6140,11 @@ window.aprobarAcuerdo = aprobarAcuerdo;
 function formAcuerdo() {
   if (!manejaPagos()) return toast('Los acuerdos de pago los hace quien tenga el permiso "Registrar pagos"');
   const l = deudaVencida(), tot = l.reduce((a, x) => a + +x.saldo, 0);
-  if (tot <= 0) return toast('Este estudiante no tiene saldo vencido');
+  if (tot <= 0) return toast('Este estudiante no tiene deuda a la fecha (nada vencido ni que venza hoy)');
   const [hy, hm] = hoy().split('-').map(Number), f = new Date(hy, hm, Math.min(S.k.dia_limite_pago || 5, 28));
   const fIni = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
-  openModal(`Acuerdo de pago: ${nom(est(cuenta.eid))}`, `<p>Saldo vencido a hoy: <strong>${cop(tot)}</strong> (${pl(l.length, 'cobro', 'cobros')}${cuenta.prevFilas.length ? ', incluye años anteriores' : ''}). Las cuotas que aún no vencen no entran: se siguen pagando normalmente.</p>
-    <div class="formgrid">${fIn('agIni', 'Cuota inicial (al firmar)', 0, `type="number" min="0" step="1000" oninput="previewAcuerdo()"`)}
+  openModal(`Acuerdo de pago: ${nom(est(cuenta.eid))}`, `<p>Deuda a la fecha (vencida o que vence hoy): <strong>${cop(tot)}</strong> (${pl(l.length, 'cobro', 'cobros')}${cuenta.prevFilas.length ? ', incluye años anteriores' : ''}). Las cuotas que aún no vencen no entran: se siguen pagando normalmente.</p>
+    <div class="formgrid">${fIn('agIni', 'Cuota inicial (al firmar)', 0, DIN + ' oninput="previewAcuerdo()"')}
       <label class="field"><span>Número de cuotas para el resto</span><select id="agN" onchange="previewAcuerdo()">${[1, 2, 3, 4, 5, 6, 8, 10, 12].map(n => opt(n, n, 3)).join('')}</select></label>
       ${fIn('agF', 'Fecha de la primera cuota (luego, cada mes)', fIni, 'type="date" onchange="previewAcuerdo()"')}
       <label class="field chk"><input type="checkbox" id="agInt" checked> Sin intereses de mora mientras cumpla el acuerdo</label>
@@ -5978,7 +6172,7 @@ function previewAcuerdo() {
   const el = $('#agPrev'); if (!el) return; const p = planAcuerdo();
   el.innerHTML = p.error ? esc(p.error) : `${p.ini ? `Cuota inicial ${cop(p.ini)} al firmar. ` : ''}${p.cuotas.length ? p.cuotas.map(c => `${c.n}) ${fmtF(c.fecha)}: <strong>${cop(c.valor)}</strong>`).join(' · ') : 'Paga todo al firmar.'}`;
 }
-async function generarAcuerdo() {
+async function generarAcuerdo() { if (dinMalEn()) return;
   const p = planAcuerdo(); if (p.error) return toast(p.error);
   const e = est(cuenta.eid), l = deudaVencida(), sinInt = $('#agInt').checked, obs = vv('agObs');
   const ac = await q(db.from('acudientes').select('*').eq('estudiante_id', cuenta.eid).order('orden')).catch(() => []);
@@ -5989,13 +6183,16 @@ async function generarAcuerdo() {
   // v0.30: numeración propia del colegio (antes usaba el folio del estudiante y parecía compartida entre colegios)
   const nAc = (await q(db.from('acuerdos_pago').select('id').eq('colegio_id', ctx.colegio_id)).catch(() => [])).length + 1;
   const num = `${k.anio}-${String(nAc).padStart(4, '0')}`;
+  // v0.34: el acuerdo cita el número real del contrato de matrícula (año del cobro + folio del estudiante, como en el contrato), no su propio número
+  const aniosD = [...new Set(l.map(x => +x.anioX))].sort(), numC = (aniosD.length ? aniosD : [+(cuenta.anio || k.anio)]).map(a => `${a}-${String(e.folio || 0).padStart(4, '0')}`);
+  const refC = numC.length > 1 ? `de los contratos de prestación de servicios educativos Nos. ${numC.slice(0, -1).join(', ')} y ${numC[numC.length - 1]}` : `del contrato de prestación de servicios educativos No. ${numC[0]}`;
   const deudores = (a1 ? [a1, a2].filter(Boolean) : [null]).map(a => a ? `<strong>${esc(a.nombres)}</strong>, identificado(a) con ${esc(docAcud(a) || '__________')}` : `${raya('', 240)}, identificado(a) con C.C. No. ${raya('', 110)}`).join(' y ');
-  if (!repDoc && !(await confirmar('Faltan los datos del colegio para documentos legales (la cédula del representante legal). El acuerdo saldrá con ese espacio para llenar a mano.\nPuede completarlos en Parametrización › Costos del año › Contrato de matrícula. ¿Generar el acuerdo así?', 'Sí, generar'))) return;
+  if (faltaLegal().length && !(await avisoLegal('acuerdo'))) return;
   let n = 0; const ORD = ['PRIMERA', 'SEGUNDA', 'TERCERA', 'CUARTA', 'QUINTA', 'SEXTA', 'SÉPTIMA', 'OCTAVA', 'NOVENA', 'DÉCIMA'];
   const cl = t => `<p><strong>${ORD[n++] || 'CLÁUSULA ' + n}.</strong> ${t}</p>`;
-  const html = `<section class="doc contrato">${docHead('Acuerdo de pago', `Contrato No. ${num}<br>${fechaLarga(hoy())}`)}
-    <p>Entre <strong>${esc(titular)}</strong>${nit ? `, NIT ${esc(nit)}` : ''}, propietario(a) de <strong>${esc(k.nombre)}</strong>, representado(a) por ${raya(rep, 200)}, C.C. No. ${raya(repDoc, 110)}, en adelante <strong>EL COLEGIO</strong>; y ${deudores}, ${a1 && !a2 ? 'acudiente' : 'acudientes'} de <strong>${esc(nom(e))}</strong> (${esc(e.tipo_doc)} ${esc(e.doc)}), en adelante <strong>LOS DEUDORES</strong>, se celebra el siguiente acuerdo de pago:</p>
-    ${cl(`<u>Reconocimiento de la deuda.</u> LOS DEUDORES reconocen que a la fecha deben a EL COLEGIO la suma de <strong>${cop(p.tot)} (${pesosLetras(p.tot)})</strong> por los siguientes cobros vencidos del servicio educativo:
+  const html = `<section class="doc contrato">${docHead('Acuerdo de pago', `Acuerdo de pago No. ${num}<br>${numC.length > 1 ? 'Contratos' : 'Contrato'} de matrícula No. ${numC.join(', ')}<br>${fechaLarga(hoy())}`)}
+    <p>Entre ${titularTxt(titular, nit, k)}, representado(a) por ${raya(rep, 200)}${repDoc ? `, C.C. No. <strong>${esc(repDoc)}</strong>` : ''}, en adelante <strong>EL COLEGIO</strong>; y ${deudores}, ${a1 && !a2 ? 'acudiente' : 'acudientes'} de <strong>${esc(nom(e))}</strong> (${esc(e.tipo_doc)} ${esc(e.doc)}), en adelante <strong>LOS DEUDORES</strong>, se celebra el siguiente acuerdo de pago:</p>
+    ${cl(`<u>Reconocimiento de la deuda.</u> LOS DEUDORES reconocen que a la fecha deben a EL COLEGIO la suma de <strong>${cop(p.tot)} (${pesosLetras(p.tot)})</strong> por los siguientes cobros del servicio educativo, vencidos o que vencen hoy:
       <table style="margin:6px 0"><thead><tr><th>Año</th><th>Concepto</th><th>Mes</th><th style="text-align:right">Saldo</th></tr></thead><tbody>
       ${l.map(x => `<tr><td>${x.anioX}</td><td>${esc(x.concepto)}</td><td>${MESES[x.mes] || ''}</td><td style="text-align:right">${cop(x.saldo)}</td></tr>`).join('')}
       <tr><td colspan="3"><strong>Total</strong></td><td style="text-align:right"><strong>${cop(p.tot)}</strong></td></tr></tbody></table>
@@ -6009,8 +6206,8 @@ async function generarAcuerdo() {
     ${cl(`<u>Incumplimiento.</u> Si LOS DEUDORES no pagan una cuota de este acuerdo en su fecha, o dejan de pagar ${nMora} o más pensiones siguientes, EL COLEGIO podrá exigir de inmediato todo el saldo pendiente${sinInt ? ', con los intereses de mora causados desde el incumplimiento' : ''}, y llenar el pagaré firmado con el contrato de matrícula, si lo hubiere, conforme a su carta de instrucciones, además de las demás acciones legales de cobro.`)}
     ${cl(`<u>Paz y salvo.</u> EL COLEGIO expedirá el paz y salvo cuando se haya pagado la totalidad de lo acordado y no haya otros cobros vencidos.`)}
     ${obs ? cl(`<u>Observaciones.</u> ${esc(obs).replace(/\n/g, '<br>')}`) : ''}
-    ${cl(`<u>Aceptación.</u> Se firma en ${raya(ciudad, 140)}, el ${fechaLarga(hoy())}, en dos ejemplares, uno para cada parte. Este acuerdo hace parte del contrato de prestación de servicios educativos No. ${num}.`)}
-    <div class="firmas-c">${firmaContrato('EL COLEGIO', rep, repDoc ? `C.C. No. ${repDoc}` : '', false)}${firmaContrato('DEUDOR(A)', a1?.nombres, docAcud(a1), true)}${!a1 || a2 ? firmaContrato('DEUDOR(A)', a2?.nombres, docAcud(a2), true) : ''}</div></section>`;
+    ${cl(`<u>Aceptación.</u> Se firma en ${raya(ciudad, 140)}, el ${fechaLarga(hoy())}, en dos ejemplares, uno para cada parte. Este acuerdo hace parte ${refC}.`)}
+    <div class="firmas-c">${firmaContrato('EL COLEGIO', rep, repDoc ? `C.C. No. ${repDoc}` : 'Representante legal', false)}${firmaContrato('DEUDOR(A)', a1?.nombres, docAcud(a1), true)}${!a1 || a2 ? firmaContrato('DEUDOR(A)', a2?.nombres, docAcud(a2), true) : ''}</div></section>`;
   const g = await guard(() => q(db.rpc('acuerdo_guardar', { p_est: cuenta.eid, p_numero: num, p_total: p.tot, p_inicial: p.ini || 0, p_cuotas: p.cuotas.map(c => ({ fecha: c.fecha, valor: c.valor })) })));
   if (g) { acuerdos = [g, ...acuerdos.filter(a => a.estudiante_id !== cuenta.eid)]; toast(g.aprobado === false ? 'Acuerdo de pago registrado. Queda pendiente del visto bueno de la rectoría: lo verá en su inicio, en «Esperan su aprobación». Mientras tanto, el documento sale como borrador' : `Acuerdo de pago registrado.${+g.inicial ? ' La familia recupera el acceso completo cuando pague la cuota inicial (se registra como un pago normal).' : ' Mientras se cumpla, la familia tiene acceso completo.'}`); }
   const borrador = g && g.aprobado === false;
@@ -6023,7 +6220,7 @@ function acuerdoHTML(eid) {
     <div class="tbl"><table><thead><tr><th>Cuota</th><th>Fecha límite</th><th>Valor</th></tr></thead><tbody>${+a.inicial ? `<tr><td>Inicial</td><td>Al firmar</td><td>${cop(a.inicial)}</td></tr>` : ''}${cs.map((c, i) => `<tr><td>${i + 1}</td><td>${fmtF(c.fecha)}</td><td>${cop(c.valor)}</td></tr>`).join('')}</tbody></table></div>
     <p class="muted">Mientras pague cada cuota en su fecha (hay 5 días de margen), su familia tiene acceso completo. Las pensiones nuevas se siguen pagando cada mes. Los cobros de abajo aparecen como pendientes porque son la deuda que cubre el acuerdo.</p></div>`;
   return `<div class="note"><strong>Acuerdo de pago vigente (No. ${esc(a.numero || '')}, del ${fmtF(a.creado_en)}).</strong>${a.aprobado === false ? ` <span class="tag t2">Pendiente del visto bueno de la rectoría</span>${puede('aprobar_acuerdos') ? ` <button class="btn sm" type="button" onclick="aprobarAcuerdo('${a.id}')">Dar visto bueno</button>` : ''}` : ''} Deuda reconocida ${cop(a.total)}${+a.inicial ? `; cuota inicial ${cop(a.inicial)}` : ''}${cs.length ? `; ${cs.length} ${cs.length === 1 ? 'cuota' : 'cuotas'} hasta el ${fmtF(cs[cs.length - 1].fecha)}` : ''}.
-    Mientras los pagos registrados cubran lo acordado a cada fecha (la cuota inicial, al firmar), la familia tiene acceso completo. Si se atrasa más de 5 días en una cuota, el acuerdo se da por incumplido solo.
+    Con el visto bueno de la rectoría y mientras los pagos registrados cubran lo acordado a cada fecha (la cuota inicial, al firmar), la familia tiene acceso completo y sus boletines no quedan retenidos. Si se atrasa más de 5 días en una cuota, el acuerdo se da por incumplido solo.
     ${puede("aprobar_acuerdos") ? `<div class="toolbar" style="margin:6px 0 0"><button class="btn ghost sm" type="button" onclick="terminarAcuerdo('${a.id}')">Terminar el acuerdo</button></div>` : ''}</div>`;
 }
 async function terminarAcuerdo(id) {
@@ -6207,14 +6404,15 @@ function validarFilaCarga(o, docs) {
   });
   if (o.fecha_matricula && (!fechaReal(o.fecha_matricula) || o.fecha_matricula > hoy())) f.push('Fecha de matrícula (AAAA-MM-DD, que exista y no sea futura)');
   if (o.al_dia_hasta && !(/^\d{1,2}$/.test(o.al_dia_hasta) && +o.al_dia_hasta >= 1 && +o.al_dia_hasta <= 12)) f.push('Pagos al día hasta el mes (un número de 1 a 12)');
-  if (o.doc && !/^[0-9A-Za-z]{5,15}$/.test(o.doc)) f.push('Número de documento (solo números, sin puntos)');
+  if (o.doc && !docOk(o.tipo_doc, o.doc)) f.push(['CC', 'TI', 'RC', 'NUIP'].includes(o.tipo_doc) ? 'Número de documento (solo números, sin puntos ni letras)' : 'Número de documento (letras y números, sin puntos)');
   if (o.doc && docs.has(o.doc)) f.push('Documento repetido en el archivo');
   if (o.fnac && !fechaReal(o.fnac)) f.push('Fecha de nacimiento (AAAA-MM-DD y que exista en el calendario)');
   else if (o.fnac && (o.fnac > hoy() || o.fnac < '1990-01-01')) f.push('Fecha de nacimiento (no puede ser futura ni anterior a 1990)');
-  if (o.a_email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.a_email)) f.push('Correo del acudiente');
-  if (o.a_telefono && !/^[0-9+ ]{7,15}$/.test(o.a_telefono)) f.push('Teléfono del acudiente');
-  if (o.a_doc && !/^[0-9A-Za-z]{5,15}$/.test(o.a_doc)) f.push('Documento del acudiente (sin puntos)');
-  const g = S.grupos.find(x => sinTilde(x.nombre) === sinTilde(o.curso)); if (o.curso && !g) f.push(`Curso "${o.curso}" no existe`); else if (g) o.grupo_id = g.id;
+  if (o.a_email && !correoOk(o.a_email)) f.push('Correo del acudiente');
+  if (o.a_telefono && !telOk(o.a_telefono)) f.push('Teléfono del acudiente');
+  if (o.a_doc && !docOk(o.a_tipo_doc || 'CC', o.a_doc)) f.push('Documento del acudiente (sin puntos; la cédula solo con números)');
+  // v0.35: «CLEI 5» también sirve para el curso «CLEI 5 SEMESTRE 1» si es el único que empieza así
+  const g = S.grupos.find(x => sinTilde(x.nombre) === sinTilde(o.curso)) || (o.curso ? (l => l.length === 1 ? l[0] : null)(S.grupos.filter(x => sinTilde(x.nombre).startsWith(sinTilde(o.curso) + ' '))) : null); if (o.curso && !g) f.push(`Curso "${o.curso}" no existe`); else if (g) o.grupo_id = g.id;
   return f;
 }
 async function leerCarga(file) {
@@ -6289,6 +6487,8 @@ async function descargarTodo(btn) {
       tx('pagos'), tx('observador'), tx('asistencia', '*', 'fecha'), tx('actividades'), tx('notas_act', '*', 'actividad_id'), tx('historial', '*', 'anio'), tx('conceptos'),
       tx('doc_solicitudes', 'id,estudiante_id,tipo,periodo,anio,valor,medio,estado,referencia,atendido_nombre,pagado_en').catch(() => [])]);
     const nts = await tx('notas', 'estudiante_id,asignatura_id,anio,periodo,valor', 'estudiante_id');
+    const gOx = new Map(S.grupos.map(g => [g.nombre, g.grado]));   // v0.35: por grado y por estudiante, como la pantalla de cartera
+    const cart = (await q(db.rpc('cartera', { p_colegio: c, p_anio: S.k.anio })).catch(() => [])).sort((x, y) => (gOx.get(x.grupo) ?? 999) - (gOx.get(y.grupo) ?? 999) || String(x.grupo || '').localeCompare(String(y.grupo || ''), 'es') || String(x.nombre).localeCompare(String(y.nombre), 'es'));   // v0.34: saldos por estudiante
     const nomE = Object.fromEntries(ests.map(e => [e.id, `${e.apellidos} ${e.nombres}`])), gN = id => grupo(id)?.nombre || '', aN = id => S.asigs.find(a => a.id === id)?.nombre || '';
     const actN = Object.fromEntries(act.map(a => [a.id, a])), conN = Object.fromEntries(con.map(x => [x.id, x.nombre]));
     const tabla = (l, cols) => [cols.map(x => x[0]), ...l.map(r => cols.map(x => { const v = x[1](r); return v == null ? '' : typeof v === 'boolean' ? (v ? 'Sí' : 'No') : v; }))];
@@ -6300,12 +6500,13 @@ async function descargarTodo(btn) {
       { nombre: 'Estudiantes', filas: tabla(ests, [['Curso', r => gN(r.grupo_id)], ...campos(ests).filter(k => k !== 'grupo_id').map(k => [ct(k), r => r[k]])]) },
       { nombre: 'Acudientes', filas: tabla(acs, [['Estudiante', r => nomE[r.estudiante_id]], ...campos(acs).filter(k => k !== 'estudiante_id').map(k => [ct(k), r => r[k]])]) },
       { nombre: 'Usuarios', filas: tabla(mie, [['Nombre', r => r.nombre], ['Correo', r => r.email], ['Perfil', r => ROL_TXT[r.rol] || r.rol], ['Estudiante', r => nomE[r.estudiante_id]], ['Activo', r => r.activo], ['Último acceso', r => r.ultimo_acceso]]) },
-      { nombre: 'Calificaciones', filas: tabla(nac, [['Estudiante', r => nomE[r.estudiante_id]], ['Curso', r => gN(actN[r.actividad_id]?.grupo_id)], ['Asignatura', r => aN(actN[r.actividad_id]?.asignatura_id)], ['Año', r => actN[r.actividad_id]?.anio], ['Periodo', r => actN[r.actividad_id]?.periodo], ['Actividad', r => actN[r.actividad_id]?.nombre], ['Calificación', r => +r.valor]]) },
+      { nombre: 'Notas de actividades', filas: tabla(nac, [['Estudiante', r => nomE[r.estudiante_id]], ['Curso', r => gN(actN[r.actividad_id]?.grupo_id)], ['Asignatura', r => aN(actN[r.actividad_id]?.asignatura_id)], ['Año', r => actN[r.actividad_id]?.anio], ['Periodo', r => actN[r.actividad_id]?.periodo], ['Actividad', r => actN[r.actividad_id]?.nombre], ['Calificación', r => +r.valor]]) },
       { nombre: 'Definitivas por periodo', filas: tabla(nts, [['Estudiante', r => nomE[r.estudiante_id]], ['Asignatura', r => aN(r.asignatura_id)], ['Año', r => r.anio], ['Periodo', r => r.periodo], ['Calificación', r => r.valor == null ? '' : +r.valor]]) },
       { nombre: 'Asistencia', filas: tabla(asi, [['Fecha', r => r.fecha], ['Estudiante', r => nomE[r.estudiante_id]], ['Estado', r => ({ P: 'Presente', A: 'Ausente', T: 'Tarde', E: 'Excusa' })[String(r.estado).trim()] || r.estado]]) },
       { nombre: 'Observador', filas: tabla(obs, [['Fecha', r => r.fecha], ['Estudiante', r => nomE[r.estudiante_id]], ['Tipo', r => r.tipo], ['Descripción', r => r.descripcion], ['Compromiso', r => r.compromiso], ['Seguimiento', r => r.seguimiento], ['Registró', r => r.autor_nombre]]) },
       { nombre: 'Pagos', filas: tabla(pag, [['Recibo', r => r.recibo], ['Fecha', r => r.fecha], ['Estudiante', r => nomE[r.estudiante_id]], ['Concepto', r => conN[r.concepto_id]], ['Año', r => r.anio], ['Mes', r => r.mes], ['Valor', r => +r.valor], ['Medio', r => r.medio], ['Referencia', r => r.referencia], ['Anulado', r => r.anulado], ['Registró', r => r.registrado_nombre]]) },
       { nombre: 'Documentos pagados', filas: tabla(dsol.filter(d => d.estado === 'Pagado' && +d.valor > 0), [['Fecha de pago', r => String(r.pagado_en || '').slice(0, 10)], ['Estudiante', r => nomE[r.estudiante_id]], ['Documento', r => DOC_TXT[r.tipo] || r.tipo], ['Periodo', r => r.periodo], ['Año', r => r.anio], ['Valor', r => +r.valor], ['Medio', r => ({ bold: 'Bold', llave: 'Llave Bre-B / transferencia', efectivo: 'Efectivo' })[r.medio] || r.medio], ['Referencia', r => r.referencia], ['Confirmó', r => r.atendido_nombre]]) },
+      { nombre: `Cartera ${S.k.anio}`, filas: tabla(cart, [['Estudiante', r => r.nombre], ['Curso', r => r.grupo], ['Estado', r => r.estado], ['Cobrado en el año', r => +r.cobrado], ['Pagado', r => +r.pagado], ['Saldo vencido', r => +r.saldo_vencido], ['Saldo total del año', r => +r.saldo_total]]) },
       { nombre: 'Historial de años', filas: tabla(hist, [['Año', r => r.anio], ['Estudiante', r => nomE[r.estudiante_id]], ['Curso', r => r.grupo_nombre], ['Resultado', r => r.resultado]]) },
       { nombre: 'Costos', filas: tabla(con, [['Año', r => r.anio], ['Concepto', r => r.nombre], ['Periodicidad', r => r.periodicidad], ['Valor', r => +r.valor], ['Meses', r => (r.meses || []).join(', ')]]) },
       { nombre: 'Acerca de este archivo', filas: [['Colegio', S.k.nombre], ['Fecha', fechaLarga()], ['Generado con', 'Colegio-IA · SkyNet Genesis'], ['Correo', 'contacto@skynetgenesis.com'], ['WhatsApp', '304 437 5758']] },
@@ -6356,7 +6557,7 @@ async function aplicarAmpliar(btn, p) {
   if (!r) return;
   S.estado = await q(db.rpc('estado_colegio', { p_colegio: ctx.colegio_id })).catch(() => S.estado);
   S.susc = await q(db.rpc('mi_suscripcion', { p_colegio: ctx.colegio_id })).catch(() => S.susc);
-  S.k = await q(db.from('colegios').select('*').eq('id', ctx.colegio_id).single()).catch(() => S.k);
+  S.k = await leerColegio(ctx.colegio_id).catch(() => S.k);
   closeModal(); toast(`Plan ampliado: ${planTxt(p)}`); render();
 }
 async function pagarAmpliar(btn, p, total) {
@@ -6396,7 +6597,7 @@ async function guardarCiclo() {
   if (doc) await guard(() => uno(db.from('grupos').update({ director_nombre: doc.nombre, director_miembro_id: doc.id }).eq('id', r.id).select().single()).then(x => Object.assign(r, x)));
   S.grupos.push(r); S.grupos.sort((a, b) => a.grado - b.grado || a.nombre.localeCompare(b.nombre, 'es'));
   if (!S.asigs.some(a => a.nivel === 'ciclos')) S.asigs = await all(() => db.from('asignaturas').select('*').eq('colegio_id', ctx.colegio_id).order('nivel').order('orden'));
-  if (!calCiclos()) S.k = await q(db.from('colegios').select('*').eq('id', ctx.colegio_id).single()).catch(() => S.k);   // el primer curso crea el calendario de los ciclos
+  if (!calCiclos()) S.k = await leerColegio(ctx.colegio_id).catch(() => S.k);   // el primer curso crea el calendario de los ciclos
   closeModal(); render();
 }
 // Cursos de ciclos del primer semestre (periodos 1 y 2) que aún tienen estudiantes: se cierran a mitad de año
@@ -6448,7 +6649,9 @@ function admTomarEnlace() {
     if (c) { store.set('adm', c.trim().toUpperCase()); u.searchParams.delete('admision'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); if (authMode === 'login') authMode = 'registro'; }
   } catch {}
 }
-const admAviso = () => store.get('adm') ? `<div class="note adm-aviso"><strong>Solicitud de admisión.</strong> Para llenar la solicitud, cree su cuenta con su correo y una contraseña (o inicie sesión si ya tiene una). Así podrá ver después en qué va su solicitud.</div>` : '';
+// v0.34: el aviso nombra al colegio antes de crear la cuenta (consulta pública solo del nombre)
+async function admNombreColegio() { const c = store.get('adm'), el = $('#admCol'); if (!c || !el) return; try { const n = await q(db.rpc('admision_colegio', { p_codigo: c })); if (n && $('#admCol')) $('#admCol').textContent = ` a ${n}`; } catch {} }
+const admAviso = () => store.get('adm') ? `<div class="note adm-aviso"><strong>Solicitud de admisión<span id="admCol"></span>.</strong> Para llenar la solicitud, cree su cuenta con su correo y una contraseña (o inicie sesión si ya tiene una). Así podrá ver después en qué va su solicitud.</div>` : '';
 async function cargarAdmision() {
   const box = $('#admBox'); if (!box) return;
   try { admInfo = await q(db.rpc('admision_info', { p_codigo: store.get('adm') })); }
@@ -6510,6 +6713,15 @@ async function enviarAdmision() {
     direccion: g(`ad${n}Dir`), ocupacion: g(`ad${n}Ocu`), responsable_pago: $(`#ad${n}Resp`).checked })).filter(a => a.nombres);
   if (+g('adGr') < 21 && (!acs[0] || !acs[0].doc || !acs[0].telefono)) return authErr('Escriba los datos del acudiente: nombre, documento y celular');
   if (acs[1] && (!acs[1].doc || !acs[1].telefono)) return authErr('Del acudiente 2 escriba también el documento y el celular, o deje su nombre en blanco');
+  // v0.35: las mismas validaciones de la matrícula (la base también las aplica)
+  if (datos.doc && !docOk(datos.tipo_doc, datos.doc)) return authErr(['CC', 'TI', 'RC', 'NUIP'].includes(datos.tipo_doc) ? 'El número de documento del aspirante lleva solo números (sin puntos, letras ni guiones)' : 'Revise el número de documento del aspirante (letras y números, sin puntos)');
+  if (datos.telefono && !telOk(datos.telefono)) return authErr('Revise el teléfono del aspirante: solo números, de 7 a 13 cifras');
+  for (const [i, a] of acs.entries()) {
+    if (a.doc && !docOk(a.tipo_doc, a.doc)) return authErr(`Acudiente ${i + 1}: el documento ${['CC', 'TI', 'RC', 'NUIP'].includes(a.tipo_doc) ? 'lleva solo números' : 'no es válido'} (sin puntos)`);
+    if (a.telefono && !telOk(a.telefono)) return authErr(`Acudiente ${i + 1}: escriba un celular válido (solo números, de 7 a 13 cifras)`);
+    if (a.email && !correoOk(a.email)) return authErr(`Acudiente ${i + 1}: escriba un correo válido`);
+  }
+  datos.doc = datos.doc.replace(/[\s.]/g, ''); acs.forEach(a => { a.doc = (a.doc || '').replace(/[\s.]/g, ''); });
   await busy('#admBox button[type=submit]', async () => {
     try {
       await q(db.rpc('admision_enviar', { p_codigo: store.get('adm'), p_grado: +g('adGr'), p_datos: datos, p_acudientes: acs, p_comentarios: g('adCom') }));
@@ -6536,8 +6748,21 @@ async function revisarBloqueo() {
 }
 async function cargarMisAdm() {
   const box = $('#misAdm'); if (!box) return;
-  const l = await q(db.rpc('mis_admisiones')).catch(() => []);
+  const [l, inv] = await Promise.all([q(db.rpc('mis_admisiones')).catch(() => []), ctxs.length ? true : q(db.rpc('tengo_invitacion')).catch(() => true)]);
   box.innerHTML = admMiasHTML(l, true);
+  // v0.34: quien no tiene accesos, ni invitación, ni solicitudes de admisión casi siempre estaba registrando su colegio: se le ofrece primero
+  if (!ctxs.length && !inv && !l.length && $('#regArriba')) {
+    $('#regArriba').innerHTML = `<div class="demo-box reg-box reg-arriba"><strong>¿Estaba registrando su colegio?</strong><br><span class="muted">Continúe con el paso 2 (datos del colegio) y empiece sus 15 días gratis.</span><br><button class="btn" type="button" onclick="quiereRegistro()">Registrar mi colegio gratis</button></div><p class="muted" style="margin:10px 0 4px">¿El colegio le entregó un código? Escríbalo aquí:</p>`;
+    document.querySelector('.reg-abajo')?.remove();
+  }
+  // v0.34: el aspirante que vuelve a entrar ve primero sus solicitudes (no «Active su acceso»)
+  if (l.length && !ctxs.length) {
+    const h = $('#auth h2'); if (h) h.textContent = 'Sus solicitudes de admisión';
+    const hi = $('#actHola'); if (hi) hi.textContent = `Hola${me?.name ? ', ' + primero(me.name) : ''}. Aquí ve en qué va cada solicitud. Cuando el colegio matricule al aspirante, entrará como acudiente con esta misma cuenta.`;
+    const ab = l.find(a => a.codigo && ['Recibida', 'Entrevista', 'Admitida'].includes(a.estado)) || l.find(a => a.codigo);
+    if (ab) box.insertAdjacentHTML('beforeend', `<div class="toolbar"><button class="btn ghost" type="button" onclick="store.set('adm','${esc(ab.codigo)}');setAuth('admision')">Abrir la página de admisiones de ${esc(ab.colegio)}</button></div>`);
+    const f = $('#actForm'); if (f) { f.hidden = true; f.insertAdjacentHTML('beforebegin', `<p class="muted"><button class="linkbtn" type="button" onclick="this.parentElement.remove();$('#actForm').hidden=false">Tengo un código de activación del colegio</button></p>`); }
+  }
 }
 
 // --- Colegio: Admisiones y matrícula en línea ---
@@ -6574,7 +6799,7 @@ function admStaffHTML() {
       <div class="toolbar" style="margin:8px 0 0"><button class="btn ghost sm" type="button" onclick="copiarTexto('${esc(admLink())}')">Copiar enlace</button> <a class="btn wa sm" href="https://wa.me/?text=${encodeURIComponent(txt)}" target="_blank" rel="noopener">Compartir por WhatsApp</a></div></div>`
       : '<p class="muted">Marque «Admisiones abiertas» y guarde para obtener el enlace.</p>'}</div>
     <div class="panel"><div class="tabs" role="tablist">${[['abiertas', 'En proceso'], ['Matriculada', 'Matriculadas'], ['No admitida', 'No admitidas'], ['Retirada', 'Retiradas'], ['todas', 'Todas']].map(([x, t]) => `<button type="button" role="tab" aria-selected="${f === x}" onclick="sel.amf='${x}';render()">${t}</button>`).join('')}</div>
-    ${l.length ? `<div class="tbl"><table><thead><tr><th>Aspirante</th><th>Grado</th><th>Acudiente</th><th>Estado</th><th></th></tr></thead><tbody>${l.map(a => { const c = a.acudientes?.[0] || {}; return `<tr>
+    ${l.length ? `<div class="tbl fija-der"><table><thead><tr><th>Aspirante</th><th>Grado</th><th>Acudiente</th><th>Estado</th><th></th></tr></thead><tbody>${l.map(a => { const c = a.acudientes?.[0] || {}; return `<tr>
       <td><strong>${esc(a.datos.nombres)} ${esc(a.datos.apellidos)}</strong><br><span class="muted">${esc(a.datos.tipo_doc)} ${esc(a.datos.doc)} · enviada el ${fmtF(a.creado_en)}</span></td>
       <td>${esc(gradoTxt(a.grado))} ${a.anio}</td><td>${esc(c.nombres || '')}<br><span class="muted">${esc(c.telefono || '')}</span></td>
       <td>${admChip(a.estado)}${a.entrevista && a.estado === 'Entrevista' ? `<br><span class="muted">${esc(fhTxt2(a.entrevista))}</span>` : ''}</td>
@@ -6643,7 +6868,7 @@ function mlStaffHTML() {
       ${rec ? '<button class="btn" type="button" onclick="guardarMlCfg()">Guardar</button>' : '<span class="muted">Solo el rector o la rectora la abren o la cierran.</span>'}</div></div>
     ${k.matricula_anio ? `<div class="panel"><div class="tabs" role="tablist">${[['todos', `Todos (${act.length})`], ['Sin empezar', `Sin empezar (${cnt('Sin empezar')})`], ['Datos actualizados', `Datos actualizados (${cnt('Datos actualizados')})`], ['Contrato aceptado', `Por confirmar (${cnt('Contrato aceptado')})`], ['Confirmada', `Confirmadas (${cnt('Confirmada')})`]].map(([x, t]) => `<button type="button" role="tab" aria-selected="${f === x}" onclick="sel.mlf='${x}';render()">${t}</button>`).join('')}</div>
     <div class="toolbar"><button class="btn ghost sm" type="button" onclick="exportarMl()">Descargar lista (CSV)</button></div>
-    ${l.length ? `<div class="tbl"><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Datos</th><th>Contrato</th><th>Estado</th><th></th></tr></thead><tbody>${l.map(e => { const x = m[e.id], s = mlEstado(x); return `<tr>
+    ${l.length ? `<div class="tbl fija-der"><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Datos</th><th>Contrato</th><th>Estado</th><th></th></tr></thead><tbody>${l.map(e => { const x = m[e.id], s = mlEstado(x); return `<tr>
       <td><strong>${esc(nom(e))}</strong></td><td>${esc(grupo(e.grupo_id)?.nombre || '')}</td>
       <td>${x?.datos_en ? `✓ ${fmtF(x.datos_en)}<br><span class="muted">${esc(x.datos_por || '')}</span>` : '<span class="muted">—</span>'}</td>
       <td>${x?.contrato_en ? `✓ ${fmtF(x.contrato_en)}<br><span class="muted">${esc(x.firma_nombre || '')} · ${esc(x.firma_doc || '')}</span>` : '<span class="muted">—</span>'}</td>
@@ -6758,7 +6983,7 @@ const verifAviso = () => store.get('verif') ? `<div class="note adm-aviso"><stro
 async function cargarVerificacion() {
   const box = $('#verBox'); if (!box) return;
   const c = store.get('verif');
-  const otro = `<form class="toolbar" onsubmit="event.preventDefault();store.set('verif',$('#vCod').value.trim().toUpperCase());cargarVerificacion()"><label class="field"><span>Verificar otro código</span><input id="vCod" style="text-transform:uppercase" placeholder="XXXX-XXXX-XXXX"></label><button class="btn" type="submit">Verificar</button></form>
+  const otro = `<form class="toolbar" onsubmit="event.preventDefault();store.set('verif',$('#vCod').value.trim().toUpperCase());cargarVerificacion()"><label class="field"><span>Verificar otro código</span><input id="vCod" style="text-transform:uppercase" placeholder="Ej.: AB12-CD34-EF56 (del documento)"></label><button class="btn" type="submit">Verificar</button></form>
     <p class="muted">Sesión: ${esc(me?.email || '')}. ${ctxs.length ? '<button class="linkbtn" type="button" onclick="salirVerificacion()">Ir a Colegio-IA</button> · ' : ''}<button class="linkbtn" type="button" onclick="store.del(\'verif\');doLogout()">Cerrar sesión</button></p>`;
   let r; try { r = await q(db.rpc('verificar_documento', { p_codigo: c })); } catch (e) { box.innerHTML = `<p class="err">${esc(msg(e))}</p>` + otro; return; }
   const R = r.resumen || {};
@@ -6785,13 +7010,13 @@ function informeFinalHTML(eid) {
     : 'Cumple los requisitos de promoción al grado siguiente.';
   return `<section class="doc">${docHead('Informe final', `${esCiclo(g) && g.periodos?.length ? esc(gradoTxt(g.grado)) + ', ' + semTxt(g) + ' · ' : ''}Año lectivo ${S.k.anio}`)}
   ${fotoDoc(eid)}<div class="dgrid"><div><span>Estudiante</span>${esc(nom(e))}</div><div><span>Documento</span>${e.tipo_doc} ${esc(e.doc)}</div><div><span>Grado y grupo</span>${esc(g.nombre)}</div>
-  <div><span>Director(a) de grupo</span>${esc(g.director_nombre || '')}</div><div><span>${porClase() ? 'Fallas (horas de clase)' : 'Fallas en el año'}</span>${fallas(eid)}</div></div>
+  ${g.director_nombre ? `<div><span>Director(a) de grupo</span>${esc(g.director_nombre)}</div>` : ''}<div><span>${porClase() ? 'Fallas (horas de clase)' : 'Fallas en el año'}</span>${fallas(eid)}</div></div>
   <table><thead><tr><th>${pre ? 'Dimensión' : 'Asignatura'}</th><th>IH</th>${pre ? '' : ps.map(p => `<th>P${p.n}</th>`).join('') + '<th>Definitiva</th>'}<th>Desempeño</th></tr></thead><tbody>
   ${filas.map(({ a, v }) => `<tr><td>${esc(a.nombre)}</td><td>${a.ih}</td>${pre ? '' : ps.map(p => { const x = nota(eid, a.id, p.n); return `<td>${x == null ? '—' : N(x)}</td>`; }).join('') + `<td><strong>${v == null ? '—' : N(v)}</strong></td>`}<td>${v == null ? '—' : desem(v)}</td></tr>`).join('')}</tbody></table>
   <div class="dobs"><span>Resultado del año</span><p>${esc(res)}</p></div>
   ${sinNota.length && !fa.incompleto && !pre ? `<p class="dnote">Sin calificación: ${sinNota.map(x => esc(x.a.nombre)).join(', ')}.</p>` : ''}
   ${pre ? '' : `<p class="dnote">Escala institucional: ${escala().map(s => `${s.d} de ${N(s.min)} a ${N(s.max)}`).join(', ')}. Definitiva: promedio ponderado de los periodos (Decreto 1290 de 2009).</p>`}
-  ${firmas(['Rector(a)', S.k.rector_nombre], ['Director(a) de grupo', g.director_nombre])}</section>`;
+  ${firmas(...[['Rector(a)', S.k.rector_nombre], ['Director(a) de grupo', g.director_nombre]].filter(f => f[0] !== 'Director(a) de grupo' || f[1]))}</section>`;
 }
 const resFinal = eid => { const g = grupo(est(eid)?.grupo_id); if (!g || g.nivel === 'preescolar') return 'Promovido(a)'; const as = asigsDe(g); if (faltaAnio(eid).incompleto) return 'Parcial'; const bajo = escala().slice().sort((a, b) => a.min - b.min)[0]?.d || 'Bajo'; const n = as.filter(a => { const v = defin(eid, a.id); return v != null && desem(v) === bajo; }).length; return n >= (S.k.max_perdidas || 1) ? `No cumple (${n} en ${bajo.toLowerCase()})` : 'Cumple'; };
 async function verInformeFinal(eid) {
@@ -6799,7 +7024,10 @@ async function verInformeFinal(eid) {
   await verDocSellado(informeFinalHTML(eid), 'Informe final', nomArchivo('Informe final', e), 'informe_final', eid, S.k.anio, { grado: grupo(e.grupo_id)?.nombre || '', resultado: resFinal(eid) });
 }
 async function informesFinalesGrupo() {
-  const l = estsDe(sel.g).filter(e => !(S.ret || new Set()).has(e.id)); if (!l.length) return toast('No hay estudiantes en el grupo');
+  await cargarRet(); const l = estsDe(sel.g).filter(e => !S.ret.has(e.id));
+  // v0.36: igual que «Generar boletines del grupo», se avisa si faltan calificaciones
+  { const gI = grupo(sel.g), sinN = l.filter(e => !perG(gI).some(p => conNotas(e.id, p.n))), inc = gI?.nivel === 'preescolar' ? [] : l.filter(e => faltaAnio(e.id).incompleto);
+    if (l.length && (sinN.length || inc.length) && !(await confirmar(sinN.length === l.length ? `Ningún estudiante de este grupo tiene calificaciones en el año: los informes finales saldrán con guiones. ¿Generarlos de todas formas?` : `${pl(sinN.length || inc.length, 'estudiante no tiene', 'estudiantes no tienen')} ${sinN.length ? 'ninguna calificación' : 'todas sus calificaciones'} del año (por ejemplo ${(sinN.length ? sinN : inc).slice(0, 3).map(e => nom(e)).join(', ')}). Sus informes saldrán con guiones. ¿Generarlos de todas formas?`, 'Sí, generar'))) return; } if (!l.length) return toast('No hay estudiantes en el grupo');
   toast('Preparando los informes finales…');
   await guard(() => cargarFotoEst(l.map(e => e.id)));
   const hs = []; for (const e of l) hs.push(await sellar(informeFinalHTML(e.id), 'informe_final', e.id, S.k.anio, 'Informe final', { grado: grupo(e.grupo_id)?.nombre || '', resultado: resFinal(e.id) }));
@@ -6811,7 +7039,9 @@ const CGTABS = { grados: 'Grados', comision: 'Actas de comisión', libro: 'Libro
 let CG = { grados: [], emit: [], hist: [], anios: [], acta: null };
 async function prepCertGrados() {
   if (!CGTABS[sel.cgt]) sel.cgt = 'grados';
-  if (sel.cgt === 'grados') CG.grados = await all(() => db.from('grados').select('*').eq('colegio_id', ctx.colegio_id).order('acta'));
+  if (sel.cgt === 'grados') { CG.grados = await all(() => db.from('grados').select('*').eq('colegio_id', ctx.colegio_id).order('acta'));
+    const ugM = ultimoGrado(), cands = S.ests.filter(e => e.estado === 'Graduado' || (e.estado === 'Activo' && [11, 26, ugM].includes(grupo(e.grupo_id)?.grado))).map(e => e.id);
+    CG.deuda = new Map(cands.length ? (await q(db.rpc('deudas_estudiantes', { p_colegio: ctx.colegio_id, p_ests: cands })).catch(() => [])).map(x => [x.estudiante_id, +x.deuda]) : []); }   // v0.34: saldo pendiente de cada graduando
   if (sel.cgt === 'emitidos') CG.emit = await all(() => db.from('documentos_emitidos').select('*').eq('colegio_id', ctx.colegio_id).gte('emitido_en', new Date(Date.now() - 400 * 864e5).toISOString()).order('emitido_en', { ascending: false }));
   if (sel.cgt === 'libro') {
     CG.anios = [S.k.anio, ...(await q(db.from('anios_cerrados').select('anio').eq('colegio_id', ctx.colegio_id).order('anio', { ascending: false })).catch(() => [])).map(x => x.anio)];
@@ -6848,7 +7078,7 @@ function cgGradosHTML() {
       <label class="field"><span>Primera acta</span><input type="number" id="grA" min="1" value="${sig}"></label>
       <label class="field"><span>Primer folio</span><input type="number" id="grFo" min="1" value="${sig}"></label></div>
     ${cand.length ? `<p><label class="chk"><input type="checkbox" onchange="document.querySelectorAll('.grE').forEach(x=>x.checked=this.checked)"> Marcar todos</label></p>
-      <ul class="list">${cand.map(e => `<li><label class="chk"><input type="checkbox" class="grE" value="${e.id}"> <strong>${esc(nom(e))}</strong> <span class="muted">${e.estado === 'Graduado' ? `<span class="tag">Ya cerró su año: graduado(a) ${S.k.anio - 1}</span>` : esc(grupo(e.grupo_id)?.nombre || '')} · ${e.tipo_doc} ${esc(e.doc)}</span></label></li>`).join('')}</ul>
+      <ul class="list">${cand.map(e => `<li><label class="chk"><input type="checkbox" class="grE" value="${e.id}"> <strong>${esc(nom(e))}</strong>${CG.deuda?.get(e.id) ? ` <span class="tag t3">Debe ${cop(CG.deuda.get(e.id))}</span>` : ''} <span class="muted">${e.estado === 'Graduado' ? `<span class="tag">Ya cerró su año: graduado(a) ${S.k.anio - 1}</span>` : esc(grupo(e.grupo_id)?.nombre || '')} · ${e.tipo_doc} ${esc(e.doc)}</span></label></li>`).join('')}</ul>
       <div class="toolbar"><button class="btn" type="button" onclick="registrarGrados()">Registrar grados</button></div>`
       : `<p class="muted">No hay graduandos pendientes. Aparecen aquí los estudiantes activos del último grado (${ug != null ? esc(gradoTxt(ug)) : '—'}, 11.º o CLEI 6) cuando el año está en su último periodo, y los graduados sin acta.</p>`}</div>
     <div class="panel"><h2>Grados registrados</h2>${CG.grados.length ? `<div class="toolbar"><button class="btn ghost sm" type="button" onclick="libroActas()">Libro de actas de grado</button></div>
@@ -6869,16 +7099,13 @@ async function registrarGrados() {
   if (malos.length) { const gs = [...new Set(malos.map(x => x.e.grupo_id))]; const ac = await q(db.from('actas_comision').select('grupo_id').eq('colegio_id', ctx.colegio_id).eq('anio', S.k.anio).eq('periodo', 0).in('grupo_id', gs)).catch(() => []); sinActa = gs.filter(g => !ac.some(a => a.grupo_id === g)).map(g => grupo(g)?.nombre || ''); }
   if (malos.length && sinActa.length && !(await confirmar(`No hay acta de la comisión de evaluación y promoción (definitivas del año) para ${sinActa.join(', ')}. Guárdela en Certificados, grados y actas › Actas de comisión antes de graduar a quien no cumple. ¿Seguir de todas formas?`, 'Seguir'))) return;
   if (malos.length && !(await confirmar(`Atención: ${malos.length === 1 ? 'este graduando no cumple' : 'estos graduandos no cumplen'} los requisitos de promoción o ${malos.length === 1 ? 'le faltan' : 'les faltan'} calificaciones:\n${malos.slice(0, 12).map(x => `• ${nom(x.e)}: ${x.r === 'Parcial' ? 'faltan calificaciones' : x.r}`).join('\n')}${malos.length > 12 ? `\n… y ${malos.length - 12} más` : ''}\n\n¿Registrar el grado de todas formas? Hágalo solo si la comisión de evaluación y promoción lo aprobó.`, 'Sí, la comisión lo aprobó'))) return;
-  if (vePagos()) { // información: graduandos con pagos vencidos (el colegio decide)
-    const cart = await q(db.rpc('cartera', { p_colegio: ctx.colegio_id, p_anio: S.k.anio })).catch(() => []);
-    const deben = cart.filter(x => ids.includes(x.estudiante_id) && +x.saldo_vencido > 0);
-    if (deben.length && !(await confirmar(`Para su información: ${deben.length === 1 ? 'este graduando tiene' : 'estos graduandos tienen'} pagos vencidos:\n${deben.slice(0, 12).map(x => `• ${x.nombre}: ${cop(x.saldo_vencido)}`).join('\n')}${deben.length > 12 ? `\n… y ${deben.length - 12} más` : ''}\n\n¿Continuar con el registro de grados?`, 'Sí, continuar'))) return;
-  }
-  if (!(await confirmar(`¿Registrar ${ids.length} ${ids.length === 1 ? 'graduando' : 'graduandos'} con el título ${$('#grT').value.trim().toUpperCase()}? Se asignan actas y folios consecutivos.`, 'Sí, registrar'))) return;
+  // v0.35: una sola confirmación final, que incluye a quien tiene saldo pendiente con el colegio (antes eran dos o tres ventanas seguidas)
+  const dd = ids.filter(i => CG.deuda?.get(i));
+  if (!(await confirmar(`¿Registrar ${ids.length} ${ids.length === 1 ? 'graduando' : 'graduandos'} con el título ${$('#grT').value.trim().toUpperCase()}? Se asignan actas y folios consecutivos.${dd.length ? `\n\nPara su información, ${dd.length === 1 ? 'este graduando tiene' : 'estos graduandos tienen'} saldo pendiente con el colegio:\n${dd.slice(0, 12).map(i => `• ${nom(est(i))}: ${cop(CG.deuda.get(i))}`).join('\n')}${dd.length > 12 ? `\n… y ${dd.length - 12} más` : ''}` : ''}`, 'Sí, registrar'))) return;
   const n = await guard(() => q(db.rpc('registrar_grados', { p_colegio: ctx.colegio_id, p_ests: ids, p_titulo: $('#grT').value, p_fecha: $('#grF').value, p_libro: $('#grL').value, p_acta_desde: +$('#grA').value || 1, p_folio_desde: +$('#grFo').value || 1 })));
   if (n == null) return;
   toast(`${n} ${n === 1 ? 'grado registrado' : 'grados registrados'}`);
-  S.k = await q(db.from('colegios').select('*').eq('id', ctx.colegio_id).single()).catch(() => S.k);
+  S.k = await leerColegio(ctx.colegio_id).catch(() => S.k);
   await prepCertGrados(); render();
 }
 async function quitarGrado(id) {
@@ -6906,8 +7133,10 @@ function diplomaHTML(x) {
     <p class="muted">Acta de grado No. ${x.acta} · Diploma No. ${esc(x.diploma || '')} · Libro ${esc(x.libro || '')}, folio ${esc(x.folio || '')}</p></div>
     ${firmas(['Rector(a)', k.rector_nombre], ['Secretaría académica', k.secretaria_nombre])}</section>`;
 }
-async function actaGrado(id) { const x = CG.grados.find(g => g.id === id), e = est(x.estudiante_id); await verDocSellado(actaGradoHTML(x), `Acta de grado No. ${x.acta}`, nomArchivo(`Acta de grado ${x.acta}`, e), 'acta_grado', e.id, x.anio, { titulo_otorgado: x.titulo, acta: String(x.acta), fecha_de_grado: fmtF(x.fecha) }); }
-async function diplomaGrado(id) { const x = CG.grados.find(g => g.id === id), e = est(x.estudiante_id); await verDocSellado(diplomaHTML(x), 'Diploma', nomArchivo('Diploma', e), 'diploma', e.id, x.anio, { titulo_otorgado: x.titulo, diploma: x.diploma, fecha_de_grado: fmtF(x.fecha) }); }
+// v0.36: al imprimir el acta o el diploma de quien tiene saldo pendiente, se avisa (decide el colegio)
+const avisoDeudaGrado = (e, doc) => !e || !CG.deuda?.get(e.id) ? Promise.resolve(true) : confirmar(`${nom(e)} tiene un saldo pendiente con el colegio de ${cop(CG.deuda.get(e.id))}. ¿Expedir ${doc} de todas formas? Es decisión del colegio.`, 'Sí, expedir');
+async function actaGrado(id) { const x = CG.grados.find(g => g.id === id), e = est(x.estudiante_id); if (!(await avisoDeudaGrado(e, 'el acta de grado'))) return; await verDocSellado(actaGradoHTML(x), `Acta de grado No. ${x.acta}`, nomArchivo(`Acta de grado ${x.acta}`, e), 'acta_grado', e.id, x.anio, { titulo_otorgado: x.titulo, acta: String(x.acta), fecha_de_grado: fmtF(x.fecha) }); }
+async function diplomaGrado(id) { const x = CG.grados.find(g => g.id === id), e = est(x.estudiante_id); if (!(await avisoDeudaGrado(e, 'el diploma'))) return; await verDocSellado(diplomaHTML(x), 'Diploma', nomArchivo('Diploma', e), 'diploma', e.id, x.anio, { titulo_otorgado: x.titulo, diploma: x.diploma, fecha_de_grado: fmtF(x.fecha) }); }
 function libroActas() {
   const l = CG.grados; if (!l.length) return;
   showDocs(`<section class="doc">${docHead('Libro de actas de grado', `${l.length} ${l.length === 1 ? 'graduado' : 'graduados'}`)}<table><thead><tr><th>Acta</th><th>Fecha</th><th>Graduado(a)</th><th>Documento</th><th>Título</th><th>Diploma</th><th>Libro / folio</th></tr></thead><tbody>

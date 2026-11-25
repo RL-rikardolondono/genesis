@@ -114,7 +114,10 @@ export function leerCsv(txt) {
 }
 export function descargarBlob(blob, nombre) {
   // nombre sin caracteres que algunos navegadores rechazan (si los rechaza, el archivo queda como «download» sin extensión)
-  const ext = (nombre.match(/\.[a-z0-9]+$/i) || [''])[0], base = nombre.slice(0, nombre.length - ext.length).replace(/[^\wáéíóúñÁÉÍÓÚÑüÜ .-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (base || 'archivo') + ext; a.type = blob.type || ''; document.body.appendChild(a); a.click();
+  // v0.34: sin tildes ni eñes (con ellas algunos Chrome descargan el archivo como «download», sin extensión)
+  const ext = (nombre.match(/\.[a-z0-9]+$/i) || [''])[0], base = nombre.slice(0, nombre.length - ext.length).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w .-]/g, '').replace(/\s+/g, ' ').trim();
+  const fin = base.slice(-23).trim(), ini = base.slice(0, 96).replace(/\s+\S*$/, '').trim();   // v0.36: se corta en un espacio (no a mitad de palabra)
+  const corto = base.length > 120 ? `${ini} ${fin.includes(' ') && !/^\d/.test(fin) ? fin.replace(/^\S*\s+/, '') : fin}` : base;   // v0.35: si es largo se corta en medio y se conserva el final (la fecha)
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (corto || 'archivo') + ext; a.type = blob.type || ''; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
 }
