@@ -621,3 +621,67 @@ body{background:linear-gradient(180deg,#EEF5FB 0,var(--paper) 320px) no-repeat,v
 .verif-pedir form,.verif-pedir .field{min-width:0;max-width:100%;flex-wrap:wrap}
 #vCod0,#vCod{width:100%;max-width:100%;box-sizing:border-box;min-width:0}
 .juego .jg-quien{color:inherit;opacity:.95;font-weight:700}
+/* v0.34 (Prueba Ácida, 7.ª vuelta) */
+/* cifras de dinero de las tarjetas: el tamaño se ajusta al ancho de la tarjeta y la cifra no se parte */
+.stat{container-type:inline-size}
+.stat .n{overflow-wrap:break-word;font-size:clamp(1.05rem,13cqi,2rem)}
+@media (max-width:480px){.stat .n{font-size:clamp(1.05rem,13cqi,1.8rem)}}
+/* textos largos sin espacios (p. ej. el motivo de una excusa) no ensanchan la página */
+p,li,.note,.dobs p{overflow-wrap:anywhere}
+/* señal «✓ Guardado» fija arriba en el celular (la columna de estado queda fuera de la pantalla) */
+.flash-ok{display:none}
+@media (max-width:760px){
+  .flash-ok{display:block;position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:95;background:#0E8571;color:#fff;padding:6px 14px;border-radius:999px;font-weight:700;font-size:.9rem;box-shadow:0 4px 14px rgba(0,0,0,.2);opacity:0;transition:opacity .2s;pointer-events:none}
+  .flash-ok.on{opacity:1}
+  /* las pestañas de Parametrización no quedan fijas arriba tapando el contenido */
+  #view > .tabs,.panel > .tabs{position:static}
+  /* aviso emergente abajo, a todo lo ancho y sin tapar el formulario */
+  .toast{left:12px!important;right:12px!important;transform:none!important;max-width:none!important;bottom:calc(env(safe-area-inset-bottom,0px) + 12px)!important;font-size:.95rem!important;padding:10px 14px!important}
+  /* con el menú abierto, el nombre del colegio ocupa a lo sumo dos líneas */
+  .side.open .who strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  /* v0.35: tablas anchas: el nombre (primera columna) queda fijo a la izquierda y angosto, y el resto se desliza;
+     así siempre se ve a quién se aplica la acción y las cifras no se tapan (en v0.34 la columna fija de la derecha tapaba la tabla) */
+  .tbl.fija-der tr > :first-child{position:sticky;left:0;background:var(--surface,#fff);box-shadow:6px 0 8px -6px rgba(28,43,57,.25);z-index:1;min-width:110px;max-width:150px;white-space:normal;overflow-wrap:break-word;word-break:normal}
+  .tbl.fija-der.fija-2 tr > :first-child{min-width:54px;max-width:54px;width:54px;box-shadow:none;overflow:hidden}
+  .tbl.fija-der.fija-2 tr > :nth-child(2){position:sticky;left:54px;background:var(--surface,#fff);box-shadow:6px 0 8px -6px rgba(28,43,57,.25);z-index:1;min-width:110px;max-width:150px;white-space:normal;overflow-wrap:break-word;word-break:normal}
+  .tbl.fija-der td:not(:first-child),.tbl.fija-der th:not(:first-child){white-space:nowrap}
+  .tbl.fija-der.fija-2 td:nth-child(2),.tbl.fija-der.fija-2 th:nth-child(2){white-space:normal}
+  .tbl.fija-der td input:not([type=checkbox]):not([type=radio]){min-width:70px}
+  .tbl.fija-der td textarea{min-width:160px}
+  /* horario: un día a la vez */
+  .hor-dias [class^="hd-"]{display:none}
+  .hor-dias[data-dia="1"] .hd-1,.hor-dias[data-dia="2"] .hd-2,.hor-dias[data-dia="3"] .hd-3,.hor-dias[data-dia="4"] .hd-4,.hor-dias[data-dia="5"] .hd-5,.hor-dias[data-dia="6"] .hd-6{display:table-cell}
+  .hor-dias select{max-width:100%;width:100%}
+  /* vista previa de documentos en la ventana: letra más pequeña para que la tabla de notas quepa */
+  #mb .doc{font-size:.82rem;overflow-x:auto}
+  #mb .doc table{font-size:.72rem;display:table;width:100%;table-layout:auto}
+  #mb .doc th,#mb .doc td{padding:3px 3px;overflow-wrap:anywhere}
+  /* v0.35: las firmas bajan una debajo de otra en la vista previa (no se cortan a la derecha) */
+  #mb .doc .firmas{flex-wrap:wrap;gap:22px}
+  #mb .doc .firmas div,#mb .doc .firma-l{min-width:0;max-width:100%}
+}
+.solo-movil{display:none}
+@media (max-width:760px){.field.solo-movil{display:flex;max-width:220px;margin-bottom:8px}}
+/* nombre largo del colegio en la barra lateral: se ve completo, en varias líneas */
+.side .who,.side .who strong{overflow-wrap:anywhere;max-width:100%}
+.side .ctx{max-width:100%;white-space:normal}
+/* v0.35: valor de dinero no válido: queda como se escribió, en rojo y con el motivo debajo */
+input.din-mal{border-color:var(--red,#B42318)!important;background:#FDF0EE}
+.din-msg{display:block;color:var(--red,#B42318);font-size:.82rem;margin-top:3px}
+/* v0.35: botones de acciones que bajan de línea (p. ej. WhatsApp en la cartera a 1280 px) */
+.acc-btns{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+/* v0.36 (Prueba Ácida 9) */
+.ent-cal{display:flex;gap:6px;align-items:center;white-space:nowrap}
+.ent-cal input{width:72px;min-width:72px}
+.ent-cal .ok{white-space:nowrap}
+@media (max-width:760px){
+  /* la primera columna fija ya no parte las palabras a la mitad («Fol/io», «PRIMER/O A») */
+  .tbl.fija-der.fija-2 tr > :first-child{overflow-wrap:normal;word-break:keep-all}
+  .cart-doc{display:none}
+  #mb .doc table{font-size:.66rem}
+  #mb .doc th,#mb .doc td{padding:2px 2px}
+}
+@media (max-width:440px){.topbar .tb-perfil{overflow:hidden;min-width:0}.topbar .tb-perfil .rol-chip{max-width:150px;overflow:hidden;text-overflow:ellipsis;display:inline-block;vertical-align:middle}}
+/* v0.36: fila recién guardada (celular): verde un momento con ✓, sin tapar nada */
+tr.ok-flash > td{background:#E3F6F2!important;transition:background .3s}
+tr.ok-flash > td:first-child::after{content:" ✓";color:#0E8571;font-weight:700}
